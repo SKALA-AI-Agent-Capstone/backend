@@ -46,3 +46,13 @@
 → 임베딩 → 키워드와 벡터 검색 → 출처 원문 반환 → 검색 평가 → Agent MCP 통합.
 search_rules, search_cases와 get_evidence는 현재 NOT_IMPLEMENTED이며 가짜 근거를 반환하지 않는다.
 구체적인 시작 절차는 docs/06-rag-start.md를 따른다.
+
+## 입력 흐름과 분업 보완
+
+- 2026-10-19 사용자 요청으로 입력, PDF 파싱, OCR, Vision, MCP와 HITL 및 보존까지 설명용 인터랙션을 작성한다. 실제 업무 UI나 유료 API 호출은 요청 범위가 아니다.
+- 노션은 Vision 또는 OCR + LLM을 열어두었다. 기준 구현안은 business-mcp의 공통 문서 준비와 Agent의 Vision adapter다. prepare_input은 아직 없는 제안 도구다.
+- 텍스트 PDF는 로컬 파서로 읽고 스캔 PDF와 이미지는 렌더 또는 이미지 정규화 후 Vision으로 읽는다. 정밀 좌표는 로컬 OCR 확장이 필요하다.
+- 로컬 파서와 로컬 OCR은 외부 키가 없고 Vision 및 텍스트 LLM 키는 Agent 서버에만 둔다. 특정 공급자와 모델 확정은 별도다.
+- 판독 불명은 WAITING_INPUT, API 미조회와 장애는 각각 NOT_FOUND와 LOOKUP_FAILED로 구분하는 후속 계약을 제안했다. 기존 코드의 응답으로 과장하지 않는다.
+- 원본을 폐기하면 새 승인자와 과거 이력의 이미지 열람을 항상 지원할 수 없다. 같은 해시의 원본 재업로드 또는 승인 종료까지의 수명 변경을 팀이 결정해야 한다.
+- Git 운영안과 PR 템플릿을 보완하며 실제 분업은 docs/10-work-breakdown.md의 역할, 작업 카드와 통합 순서를 따른다.

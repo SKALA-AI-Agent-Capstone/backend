@@ -20,8 +20,9 @@ flowchart TB
     AGENT["FastAPI / LangGraph / Guardrail / Recovery / HITL"]
   end
   subgraph Tool
-    BUSINESS["business-mcp / 증빙, 식약처, 특허"]
+    BUSINESS["business-mcp / 입력 준비, 증빙, 식약처, 특허"]
     RAG["rag-mcp / rules와 cases 분리 검색"]
+    PARSER["로컬 문서 준비 / PDF 파서, 페이지 렌더, 선택 OCR"]
   end
   subgraph Data
     APP[("PostgreSQL / 제품과 검토 이력")]
@@ -42,16 +43,22 @@ flowchart TB
   AGENT -->|"MCP"| BUSINESS
   AGENT -->|"MCP"| RAG --> VECTOR
   BUSINESS -->|"내부 API"| API
+  BUSINESS --> PARSER
   BUSINESS --> EXT
   AGENT -->|"유일한 직접 DB 접근 예외: checkpointer"| STATE
   AGENT -->|"진행과 결과 이벤트"| API
-  AGENT --> LLM["외부 LLM API"]
+  AGENT -->|"준비된 이미지와 텍스트 / HTTPS"| LLM["Vision과 텍스트 LLM API / 서버 키"]
   INDEX["공개 문서 수집 / 파싱 / 청킹 / 임베딩"] --> VECTOR
 ~~~
 
 과금 이벤트의 정확한 전달 방식과 Worker 라이브러리는 후속 설계 항목이다.
 과금 판단과 원장 갱신을 LLM이나 MCP 도구에 맡기지 않는다.
 잔액 사전확인은 병렬 요청의 중복 소비를 막는 예약과 동일하지 않으므로 과금 구현 시 별도로 설계한다.
+
+입력 파서의 구체적 배치와 Vision adapter는 이번에 보완한 팀 검토용 구현안이다.
+business-mcp가 인증된 asset을 Backend에서 받아 공통 파서로 준비하고 Agent가 Vision 호출과 결과 검증을 조율한다.
+파일 바이트를 Agent가 Redis에서 직접 읽는 경로를 추가하지 않는다.
+PDF 문자 추출, 이미지 OCR과 Vision 분석의 차이는 [입력 처리 설계](09-input-pipeline.md)에 정의했다.
 
 ## 현재 실행 기반
 
@@ -69,6 +76,8 @@ flowchart TB
 
 LangGraph는 선택 의존성으로 잠갔지만 그래프와 체크포인터는 아직 없다.
 JWT, SSE, Redis 파일 업로드, 큐 발행, 과금도 실행환경 준비와 구분한다.
+pdfplumber의 고객 입력 연동, PDF 렌더와 OCR, Vision SDK와 API 호출은 미구현이다.
+입력 처리 예시 화면은 외부 API를 호출하지 않는 설명용 탐색 화면이며 제품 Frontend가 아니다.
 
 ## 책임과 데이터 접근
 
@@ -76,12 +85,28 @@ JWT, SSE, Redis 파일 업로드, 큐 발행, 과금도 실행환경 준비와 �
 - Backend는 로그인과 기업 권한, 검토 이력 조회 및 삭제, 광고 버전 관리를 소유한다. 이력 CRUD를 MCP에 추가하지 않는다.
 - Agent는 처리 순서, 도구 선택과 판단, HITL 중단과 재개를 소유한다. 업무 데이터는 MCP로 접근한다.
 - Agent의 DB 직접 접근은 LangGraph 실행 상태와 HITL 체크포인트에만 허용한다. 현재 agent_user도 agent 스키마에만 권한이 있다.
-- business-mcp는 증빙 구조화, 제품 대조와 식약처 및 특허 검증을 전담한다. 업무 DB에 직접 접근하지 않는다.
+- business-mcp는 입력 준비 공통 모듈, 증빙 구조화, 제품 대조와 식약처 및 특허 검증을 담당한다. 업무 DB와 Redis에 직접 접근하지 않는다.
 - rag-mcp는 법령과 기준, 보조 사례를 검색하고 출처와 버전을 반환한다. 특허 검증을 중복 구현하지 않는다.
 - 임시 원본 캐시와 영구 큐는 Redis 인스턴스를 나눠 원본 파일이 큐 AOF에 남지 않게 준비했다. 이는 노션 요구를 구현하기 위한 기반 선택이다.
 - 공개 문서 색인은 사용자 요청과 별도 배치다. 문서와 임베딩을 Git에 저장하지 않는다.
 
 ## 단건과 다건 목표 흐름
+
+| 단계 | 화면과 상태 | 서버 처리 | 실패 또는 예외 |
+| --- | --- | --- | --- |
+| 1. 입력 | 제품, 광고와 증빙 입력 | Backend가 형식, 크기와 파일 유효성 확인 | 암호, 손상과 형식 오류는 INPUT_REJECTED |
+| 2. 접수 | 접수 완료 | 기업 권한과 잔액 확인, asset 해시와 광고 버전, Redis 임시 저장 | 권한 또는 잔액 문제는 실행 전 중단 |
+| 3. 실행 | 처리 중 또는 다건 대기 | 단건 내부 HTTP, 다건 Queue와 Worker | 중복 command_id 통제, 실패 건만 재시도 |
+| 4. 읽기 | 페이지별 추출과 확인 | business-mcp 문서 준비, Agent Vision 호출 | 불명확한 숫자와 각주는 WAITING_INPUT |
+| 5. 주장 | 원문과 각주가 연결된 주장 | Agent가 블록과 시각 관찰을 구조화 | 추측한 수치와 불완전한 원문을 확정하지 않음 |
+| 6. 검색 | 근거 검색 중 | rag-mcp가 rules와 cases를 분리 조회 | NO_RELEVANT_EVIDENCE와 SEARCH_ERROR 구분 |
+| 7. 대조 | 증빙과 공식 조회 확인 | business-mcp가 제품과 시험자료, 식약처와 특허 대조 | 자료 누락, 정상 미조회와 API 장애 구분 |
+| 8. 초안 | 미승인 검토 초안 | Agent가 근거, 확인 사항과 리라이트 생성 | 미확인 항목을 남긴 부분 결과 표시 |
+| 9. 승인 | 담당자 검토 | Backend 권한과 버전 재확인, Graph interrupt 재개 | 원본 필요 시 재업로드, 변경 광고는 새 버전 |
+| 10. 보존 | 결과와 PDF, 과거 이력 | Backend 영구 저장, 원본 정리 확인과 별도 과금 이벤트 | 중복 이벤트 차감 방지, 실패 과금 정책은 미확정 |
+
+원본 정리는 필요한 추출과 초안 저장 완료 시점에 수행하는 기준안을 제안한다.
+마지막 단계는 정리 완료 확인과 잔여 파일 정리도 포함한다. 승인까지 원본을 유지할지는 팀 결정 사항이다.
 
 ~~~mermaid
 sequenceDiagram
@@ -90,6 +115,7 @@ sequenceDiagram
   participant Q as Queue / Worker
   participant A as Agent
   participant M as MCP 서버
+  participant L as Vision / LLM API
   U->>B: 제품, 광고와 증빙 입력
   B->>B: 인증, 기업 권한, 잔액 확인
   alt 단건
@@ -98,6 +124,19 @@ sequenceDiagram
     B->>Q: 건별 작업 적재
     B-->>U: 202와 작업 ID
     Q->>A: Worker가 작업 실행
+  end
+  A->>M: business prepare_input 제안
+  M->>B: 인증된 asset 읽기
+  M->>M: 로컬 PDF 파싱, 렌더와 선택 OCR
+  M-->>A: 문자 블록과 분석용 이미지
+  A->>L: 필요한 이미지와 문자, 서버 API 키
+  L-->>A: 문자와 시각 관찰, 주장 후보
+  opt 판독 불명
+    A-->>B: WAITING_INPUT과 확인할 영역
+    B-->>U: 수정 또는 재업로드 요청
+    U->>B: 원문 보정 또는 같은 파일 재업로드
+    B->>A: 영향받는 입력 노드 재개
+    A->>A: 판독 조건 재확인
   end
   A->>M: 기준 검색, 증빙과 공공 API 대조
   M-->>A: 출처, 버전, 조회 상태
@@ -112,6 +151,34 @@ sequenceDiagram
 
 이 시퀀스는 목표 설계다. 현재 작업 엔드포인트는 501이며 작업 실행을 흉내 내지 않는다.
 단건 HTTP 응답 종료와 SSE 및 HITL 대기 간 수명 정책은 Agent와 Backend 담당자가 합의한다.
+HITL 대기 때문에 브라우저 HTTP 요청이나 Worker 한 개를 계속 점유하지 않는다.
+대기 상태를 저장하고 요청을 종료한 뒤 승인 명령으로 재개한다. 재개 작업의 전달 방식은 후속 합의다.
+
+## 리포트와 이력
+
+Agent의 마지막 노드는 주장, 인용 근거, 증빙 대조와 사람의 결정을 보고서 데이터로 묶는다.
+Backend는 해당 광고 버전과 근거 버전을 고정해 영구 저장하고 다운로드 및 이력 API를 제공한다.
+PDF 출력은 노션의 WeasyPrint 후보를 사용하는 Python 렌더 adapter를 제안한다.
+이 adapter는 모델 추론과 분리된 템플릿 렌더링이며 아직 구현하거나 의존성을 설치하지 않았다.
+Backend가 보관한 보고서 스냅샷을 받아 렌더하고 업무 DB를 직접 조회하지 않는 경계를 사용한다.
+같은 데이터를 다시 내려받을 때 LLM 재판정이나 새 법령으로 근거 교체를 자동 수행하지 않는다.
+렌더 adapter의 내부 엔드포인트와 실행 서비스 배치는 Agent 및 Backend 담당자가 계약 PR에서 확정한다.
+
+## 통신과 비밀 정보
+
+| 구간 | 방식 | 인증과 키 |
+| --- | --- | --- |
+| Vue → Backend | HTTPS REST와 SSE | 사용자 로그인과 기업 권한 |
+| Backend → Agent | 내부 HTTP | 내부 서비스 인증과 서버가 만든 실행 문맥 |
+| Agent → 두 MCP | MCP Streamable HTTP | 내부 서비스 인증, 필요한 기업 범위 |
+| business-mcp → Backend | 내부 HTTP | asset과 task의 기업 소유 검증 |
+| Agent → Vision과 LLM | 공급자 HTTPS API | Agent 서버의 API 키 |
+| business-mcp → 식약처와 특허 | 공식 외부 API | 해당 서비스의 인증 정보 |
+| rag-mcp → knowledge | PostgreSQL 질의 | 읽기 전용 계정 |
+| Agent → agent 스키마 | PostgreSQL | 체크포인트 전용 계정 |
+
+로컬 PDF 파서와 로컬 OCR에는 LLM API 키가 필요하지 않다.
+MCP는 모델 공급자 호출 방식이나 OCR 엔진을 대신하지 않는다.
 
 ## 네트워크
 

@@ -3,6 +3,7 @@
 - 제품 요구사항의 원본은 https://app.notion.com/p/Agent-3fe616ab8fec80bfb92df115c66aa83d 이다. 작업 전에 docs/00-project-context.md와 docs/08-project-memory.md를 읽는다.
 - 노션과 오래된 그림 또는 대화가 다르면 최신 노션을 우선한다. 노션 미확정 항목을 확정 사실로 바꾸지 않는다.
 - Git 작업 흐름은 docs/05-collaboration.md를 따른다. 원격 main 병합과 브랜치 보호 변경은 별개 작업이다.
+- 입력과 OCR 변경 전 docs/09-input-pipeline.md, 분업과 통합 작업 전 docs/10-work-breakdown.md를 읽는다. 설명용 탐색 화면과 제품 기능 구현을 구분한다.
 - 모든 직접 작성 자료에서 중앙점을 사용하지 않는다.
 - 기능 구현 요청이 없으면 광고 판정, 검색, 결제, 승인 업무를 임의로 완성하지 않는다.
 - 기존 파일의 수정은 원래 파일에 반영한다. 별도 제출용 복사본을 만들지 않는다.
@@ -12,6 +13,7 @@
 - Agent의 DB 직접 접근은 agent 스키마의 체크포인트만 예외로 허용한다. 검토 이력 CRUD는 Backend, 특허 조회와 대조는 business-mcp 소관이다.
 - 원본 업로드는 처리 중 Redis 임시 보관 후 폐기하고 결과는 PostgreSQL에 보존한다. 과금은 Agent 및 MCP 밖의 별도 서비스다.
 - rag-mcp는 rules와 cases를 분리한다. 사례는 보조 참고이며 출처 검증 상태를 명시한다.
+- 광고와 증빙의 공통 파일 준비는 business-mcp, Vision 호출과 입력 흐름은 Agent, 공개 근거 PDF 수집은 RAG 배치가 소유하는 제안 경계를 따른다. 새 계약은 구현 전 상태를 명시한다.
 - 공개 근거 문서만 knowledge 스키마에 수집한다. 고객 자료는 기업별 권한이 구현된 뒤 별도 설계한다.
 - 모델 설명과 원문 인용을 구분한다. 검색 실패나 자료 부족을 적합 판정으로 바꾸지 않는다.
 - .env, 고객 파일, 모델 가중치와 DB 덤프를 커밋하지 않는다.

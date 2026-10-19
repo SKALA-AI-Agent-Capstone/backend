@@ -43,6 +43,8 @@ docker compose --profile web up --build --wait
 | [RAG 시작점](docs/06-rag-start.md) | 수집, 색인, 검색, 출처와 평가 준비 |
 | [검증 기록](docs/07-validation.md) | 확인한 내용과 실행 환경의 제한 |
 | [프로젝트 메모리](docs/08-project-memory.md) | 최신 결정, 폐기한 가정, 다음 작업 |
+| [입력 처리](docs/09-input-pipeline.md) | PDF와 이미지 분기, OCR와 Vision, 키, 원본 수명과 예외 |
+| [담당별 개발 계획](docs/10-work-breakdown.md) | 작업 카드, 입출력, 코드 배치와 통합 순서 |
 
 제품 요구사항은 노션, 실행 코드의 계약은 packages/shared와 contracts가 원본이다.
 docs는 두 저장소의 공통 구현 안내다. 프론트엔드에 문서 내용을 복사하지 않는다.
@@ -73,3 +75,14 @@ PostgreSQL 안에 벡터를 저장하므로 별도 Vector DB 서비스는 없다
 
 개발용 정적 서비스 토큰은 사용자 인증이 아니다. 공개 배포 전에 사용자 인증과 기업별 권한을 구현해야 한다.
 실제 문서, 모델 가중치, 원본 광고와 자격증명은 Git에 올리지 않는다.
+
+## 팀원이 처음 읽을 순서
+
+1. [프로젝트 맥락](docs/00-project-context.md)에서 노션 요구와 현재 구현 범위를 확인한다.
+2. [아키텍처](docs/01-architecture.md)와 [입력 처리](docs/09-input-pipeline.md)에서 파일 입력부터 승인까지 경로를 확인한다.
+3. [담당별 개발 계획](docs/10-work-breakdown.md)에서 작업과 선행 계약을 선택한다.
+4. [공통 계약](docs/03-contracts.md)의 현재 계약과 제안 계약을 구분한다.
+5. [Git 협업 가이드](docs/05-collaboration.md)를 따라 기능별 브랜치와 PR을 만든다.
+
+chore/dev-foundation은 초기 환경 작업 이름이다. Vue, Java 업무 서버, Python Agent와 두 MCP의 기반을 각각 포함한다.
+입력 처리 설계에서 제안한 PDF 렌더, OCR와 Vision 호출은 아직 구현되지 않았다.

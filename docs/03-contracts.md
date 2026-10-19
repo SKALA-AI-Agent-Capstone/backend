@@ -75,9 +75,12 @@ contracts의 JSON Schema는 scripts/export_contracts.py로 갱신한다.
 단건도 내부 큐로 통일할지는 노션의 대안이며 미확정이다.
 지금은 501이며 임의 task_id를 생성하지 않는다.
 
-예정된 상태:
-QUEUED → RUNNING → WAITING_REVIEW → COMPLETED.
-추가 상태는 NEEDS_REVISION, FAILED, CANCELLED다.
+예정된 실행 상태:
+RECEIVED → QUEUED 또는 RUNNING → WAITING_INPUT 또는 WAITING_REVIEW → COMPLETED.
+실패와 취소는 FAILED와 CANCELLED다. QUEUED는 다건 대기 등 큐에 실제 적재된 경우에만 사용한다.
+
+승인 상태는 실행 상태와 구분해 NOT_REQUESTED, PENDING, APPROVED, REJECTED, CHANGES_REQUESTED와 INVALIDATED를 제안한다.
+승인 거부와 API 오류를 같은 상태로 표현하지 않는다. 위 상태는 후속 구현 계약이며 현재 코드의 enum이 아니다.
 
 예정된 SSE:
 
@@ -94,6 +97,57 @@ QUEUED → RUNNING → WAITING_REVIEW → COMPLETED.
 
 SSE 인증, 이벤트 저장과 재접속, 승인 권한, command_id 멱등성은 후속 구현 항목이다.
 미구현 명세를 실제 동작으로 표시하지 않는다.
+
+## 입력 처리 후속 계약
+
+다음 이름과 필드는 설계안이며 현재 서버의 라우트와 도구 목록에는 없다.
+상세한 데이터와 예외 처리는 docs/09-input-pipeline.md를 따른다.
+
+| 계약 | 입력 | 출력과 보장할 경계 |
+| --- | --- | --- |
+| 광고와 증빙 업로드 | 파일, 역할, 제품 참조와 광고 버전 | asset_id, 해시와 유효성 결과, 인증된 기업 소유 |
+| 내부 asset 읽기 | task_id와 asset_id, 서버 인증 | 소유 범위를 검증한 제한된 원본 또는 페이지 |
+| business.prepare_input 제안 | asset_id와 자료 역할, 페이지 선택 | 문자 블록, 페이지 정보, 품질과 필요 이미지 콘텐츠 |
+| SourceBlock 제안 | 파서 또는 Vision 결과 | asset_id, page, block_id, text, 추출 방법, nullable bbox와 좌표 출처 |
+| Claim 제안 | SourceBlock과 문맥 | claim_id, 원문, 주변 문구와 각주, source_block_ids |
+| Finding 제안 | 주장과 도구 결과 | 근거 ID, 검토 상태와 미확인 이유, 별도의 모델 설명과 리라이트 |
+| 담당자 결정 제안 | task_id, ad_version_id, decision과 command_id | 권한과 광고 버전 재검증, 재개 또는 버전 충돌 |
+
+prepare_input은 Agent가 업무 데이터를 MCP를 통해 받기 위한 제안이다.
+파서가 읽은 텍스트와 Vision이 추정한 내용은 추출 방법으로 구분한다.
+Vision 결과의 좌표를 정밀 OCR 좌표로 표시하지 않는다. bbox가 null이어도 유효한 페이지 단위 결과다.
+사용자 확인 후 수정된 원문은 수정 이력을 남기고 영향받는 주장부터 다시 처리한다.
+task와 기업 범위는 Backend가 검증한 실행 문맥에 고정한다. 모델이 tool argument로 tenant를 선택하지 않는다.
+공개 규정의 원문 인용과 고객 광고의 원문 블록은 서로 다른 ID와 페이지 체계를 사용한다.
+
+### 오류 응답 제안
+
+~~~json
+{
+  "code": "INPUT_UNREADABLE",
+  "stage": "INPUT_EXTRACTION",
+  "task_id": "task-demo-01",
+  "asset_id": "asset-demo-01",
+  "retryable": false,
+  "required_action": "CONFIRM_TEXT",
+  "message": "숫자와 각주를 확인해 주세요."
+}
+~~~
+
+| code | 의미 | 다음 행동 |
+| --- | --- | --- |
+| INPUT_REJECTED | 손상, 암호화 또는 지원하지 않는 입력 | 유효한 파일 업로드 |
+| INPUT_UNREADABLE | 필요한 문자나 숫자를 판독하지 못함 | 확인 또는 재업로드 |
+| INPUT_EXPIRED | 필요한 임시 원본이 사라짐 | 해시와 버전을 확인해 재업로드 |
+| PROVIDER_UNAVAILABLE | 모델 공급자 일시 장애 | 해당 노드의 제한된 재시도 |
+| PROVIDER_CONFIGURATION_ERROR | 키나 모델 설정 오류 | 운영 담당자가 수정 |
+| EVIDENCE_MISSING | 필요한 증빙이 없음 | 자료 보완, 다른 검토 결과 유지 |
+| LOOKUP_FAILED | 외부 API 호출 실패 | 실패한 조회만 재시도 |
+| NOT_FOUND | 정상 조회에서 품목 또는 항목 미발견 | 조회 조건과 원자료 확인 |
+| VERSION_CONFLICT | 승인 대상과 현재 광고 버전이 다름 | 새 버전 재검토 |
+
+NO_RELEVANT_EVIDENCE와 SEARCH_ERROR는 현재 RAG 계약의 상태다.
+위 오류는 서비스 간 새 계약으로 제안한 항목이며 현재 API가 이미 반환한다고 설명하지 않는다.
 
 ## 담당별 후속 계약
 
