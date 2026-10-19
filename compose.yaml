@@ -1,0 +1,157 @@
+name: beauty-capstone-dev
+
+x-python: &python
+  image: beauty-capstone-python:dev
+  build:
+    context: .
+    dockerfile: infra/Dockerfile.python
+  environment: &python-env
+    SERVICE_HOST: 0.0.0.0
+    INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?Run python3 scripts/bootstrap.py}
+  init: true
+
+services:
+  postgres:
+    image: beauty-capstone-postgres:dev
+    build: ./infra/postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-beauty_capstone}
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run python3 scripts/bootstrap.py}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Run python3 scripts/bootstrap.py}
+      AGENT_DB_PASSWORD: ${AGENT_DB_PASSWORD:?Run python3 scripts/bootstrap.py}
+      RAG_READER_DB_PASSWORD: ${RAG_READER_DB_PASSWORD:?Run python3 scripts/bootstrap.py}
+      RAG_INGEST_DB_PASSWORD: ${RAG_INGEST_DB_PASSWORD:?Run python3 scripts/bootstrap.py}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: ./services/api
+    environment:
+      APP_DB_JDBC_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-beauty_capstone}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Run python3 scripts/bootstrap.py}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?Run python3 scripts/bootstrap.py}
+      AGENT_BASE_URL: http://agent:8001
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/actuator/health/readiness"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  business-mcp:
+    <<: *python
+    command: ["uv", "run", "--no-sync", "business-mcp"]
+    environment:
+      <<: *python-env
+      SERVICE_PORT: "8002"
+      BACKEND_BASE_URL: http://api:8080
+    ports:
+      - "127.0.0.1:8002:8002"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/app/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health/live')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  rag-mcp:
+    <<: *python
+    command: ["uv", "run", "--no-sync", "rag-mcp"]
+    environment:
+      <<: *python-env
+      SERVICE_PORT: "8003"
+      RAG_DATABASE_URL: postgresql://rag_reader:${RAG_READER_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-beauty_capstone}
+    ports:
+      - "127.0.0.1:8003:8003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/app/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health/ready')"]
+      interval: 5s
+      timeout: 4s
+      retries: 20
+
+  agent:
+    <<: *python
+    command: ["uv", "run", "--no-sync", "capstone-agent"]
+    environment:
+      <<: *python-env
+      SERVICE_PORT: "8001"
+      AGENT_DATABASE_URL: postgresql://agent_user:${AGENT_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-beauty_capstone}
+      BUSINESS_MCP_URL: http://business-mcp:8002/mcp
+      RAG_MCP_URL: http://rag-mcp:8003/mcp
+    ports:
+      - "127.0.0.1:8001:8001"
+    depends_on:
+      business-mcp:
+        condition: service_healthy
+      rag-mcp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/app/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health/ready')"]
+      interval: 5s
+      timeout: 4s
+      retries: 20
+
+  web:
+    profiles: ["web"]
+    build:
+      context: ../frontend
+      target: development
+    environment:
+      API_PROXY_TARGET: http://api:8080
+    ports:
+      - "127.0.0.1:5173:5173"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  redis-cache:
+    image: redis:7.4-alpine
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?Run python3 scripts/bootstrap.py}
+    command: ["sh", "-c", "exec redis-server --save '' --appendonly no --requirepass \"$$REDISCLI_AUTH\""]
+    ports:
+      - "127.0.0.1:${REDIS_CACHE_PORT:-56379}:6379"
+    tmpfs:
+      - /data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis-queue:
+    profiles: ["queue"]
+    image: redis:7.4-alpine
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?Run python3 scripts/bootstrap.py}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --save '' --requirepass \"$$REDISCLI_AUTH\""]
+    ports:
+      - "127.0.0.1:${REDIS_QUEUE_PORT:-56380}:6379"
+    volumes:
+      - redis-queue-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  postgres-data:
+  redis-queue-data:
