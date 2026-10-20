@@ -175,3 +175,18 @@ compose.yaml, 공통 계약과 DB 스키마는 다른 작업에 영향이 크므
 요구사항 변경은 노션을 먼저 확인한다. 구현 중 합의한 기술 결정은 관련 문서에 근거와 상태를 적는다.
 팀 합의가 필요한 내용은 임의로 노션 확정 요구사항으로 바꾸지 않는다.
 관련 작업이 끝나면 docs/08-project-memory.md의 오래된 가정과 다음 작업도 함께 갱신한다.
+
+## 12. 최신 노션 반영 작업을 나누는 법
+
+이번 기반 브랜치는 공통 실행환경과 문서까지만 준비한다. 역할별 기능 브랜치는 아래 계약부터 진행한다.
+
+| 첫 PR | 소유 역할 | 함께 검토할 역할 |
+| --- | --- | --- |
+| PDF와 이미지 multipart, review_id와 batch_id, 오류 및 SSE 예제 | Frontend와 Backend | Agent |
+| search_regulations와 search_precedents의 버전 있는 입출력 전환 | RAG | Agent와 Backend |
+| 입력 파싱, Vision와 도구선택 loop의 State | Agent | Business MCP와 RAG |
+| structure_evidence와 외부 조회의 표준 결과 | Business MCP | Agent |
+| 다건 접수 → Agent API 발행 → RabbitMQ → Worker 상태 반영 | Agent와 Backend | 공통 환경 담당 |
+
+실제 업무 계약은 노션 초안을 합의해 코드와 JSON Schema로 고정한다. 초안과 현재 실행 코드를 같은 상태라고 표시하지 않는다.
+Frontend 업무 기능은 별도 feat 브랜치에서 만든다. 현재 README의 업로드 UX 목표만으로 구현 완료를 선언하지 않는다.

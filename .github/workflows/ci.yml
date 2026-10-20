@@ -43,9 +43,9 @@ jobs:
       - run: docker compose config --quiet
       - run: docker compose --profile queue up --build --wait --wait-timeout 240
       - run: uv sync --all-packages --frozen
-      - run: uv run --all-packages --frozen --env-file .env python scripts/smoke.py
+      - run: uv run --all-packages --frozen --env-file .env python scripts/smoke.py --include-queue
       - run: docker compose exec -T redis-cache redis-cli ping
-      - run: docker compose --profile queue exec -T redis-queue redis-cli ping
+      - run: docker compose --profile queue exec -T rabbitmq rabbitmq-diagnostics -q check_running
       - if: always()
         run: docker compose --profile queue logs --tail=100
       - if: always()

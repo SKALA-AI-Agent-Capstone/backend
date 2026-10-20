@@ -136,22 +136,26 @@ services:
       timeout: 3s
       retries: 20
 
-  redis-queue:
+  rabbitmq:
     profiles: ["queue"]
-    image: redis:7.4-alpine
+    image: rabbitmq:4.3.6-management-alpine
+    hostname: rabbitmq
     environment:
-      REDISCLI_AUTH: ${REDIS_PASSWORD:?Run python3 scripts/bootstrap.py}
-    command: ["sh", "-c", "exec redis-server --appendonly yes --save '' --requirepass \"$$REDISCLI_AUTH\""]
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME:-capstone}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Run python3 scripts/bootstrap.py}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-capstone}
     ports:
-      - "127.0.0.1:${REDIS_QUEUE_PORT:-56380}:6379"
+      - "127.0.0.1:${RABBITMQ_PORT:-5672}:5672"
+      - "127.0.0.1:${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
     volumes:
-      - redis-queue-data:/data
+      - rabbitmq-data:/var/lib/rabbitmq
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping && rabbitmq-diagnostics -q check_port_connectivity"]
+      interval: 10s
+      timeout: 10s
       retries: 20
+      start_period: 20s
 
 volumes:
   postgres-data:
-  redis-queue-data:
+  rabbitmq-data:

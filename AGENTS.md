@@ -21,3 +21,11 @@
 - 검증한 범위와 실제 실행하지 못한 범위를 구분해 보고한다.
 - Python 검증은 pytest와 계약 JSON 확인, Java 검증은 Maven test/package를 사용한다.
 - 실행 중인 사용자 서비스나 DB를 초기화하지 않는다.
+
+## 2026-10-20 노션 반영
+
+- 다건 경로는 Backend → Agent API → RabbitMQ → Agent Worker를 목표로 한다. 단건 큐 통일은 미확정이다.
+- Redis는 원본 임시 캐시다. RabbitMQ만으로 업무 재시도와 DLQ, 멱등성이 완성됐다고 표시하지 않는다.
+- 탐지, 검색과 대조는 최신 Graph 초안의 한도 있는 도구선택 loop를 따른다.
+- MCP와 REST 초안 및 현재 v0.1 실행 계약의 차이는 docs/03-contracts.md에 있다. 계약 PR 없이 이름만 바꾸지 않는다.
+- Frontend 드래그앤드롭과 시작 버튼은 이번에는 frontend/README.md의 목표만 관리한다.

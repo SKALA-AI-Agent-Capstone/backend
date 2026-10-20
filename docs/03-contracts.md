@@ -156,3 +156,33 @@ NO_RELEVANT_EVIDENCE와 SEARCH_ERROR는 현재 RAG 계약의 상태다.
 - 과금: 별도 서비스의 잔액 사전확인과 사용량 이벤트, 원장. LLM 도구로 노출하지 않는다.
 - 사용량 이벤트는 event_id, task_id, ad_version_id, 인증된 tenant 범위, 텍스트 및 이미지 사용량을 후보 필드로 삼는다. 형식은 미확정이다.
 - 과금 중복 차감 방지, 예약과 동시성, 중도 실패 및 HITL 대기의 과금 시점은 후속 결정이며 현재 동작을 제공하지 않는다.
+
+## 최신 노션 초안과 실행 계약의 차이
+
+2026-10-20에 확인한 [REST 초안](https://app.notion.com/p/Backend-REST-API-3ff616ab8fec81d3b650f8e3186bcf48),
+[MCP 초안](https://app.notion.com/p/MCP-business-mcp-rag-mcp-API-1-3ff616ab8fec804eba66e8a7b2bd99e8)과
+[Graph 초안](https://app.notion.com/p/Agent-Graph-3ff616ab8fec8127ad6ed17eff1e81b0)을 제품 목표로 참조한다.
+위의 실행 계약 v0.1을 최신 노션과 동일하다고 설명하지 않는다. 이번 초기 설정은 실행 계약을 바꾸지 않는다.
+
+| 경계 | 최신 노션 목표 | 현재 코드와 다음 작업 |
+| --- | --- | --- |
+| 검토 접수 | POST /api/reviews, 단건과 다건 공통 | 라우트는 있으나 501. multipart 필드와 PDF 및 이미지 입력을 먼저 합의 |
+| 상태와 진행 | GET /api/reviews/{review_id}, GET /api/reviews/stream?batch_id= | 미구현. task_id 등 이전 제안 이름과 review_id, batch_id를 계약 PR에서 통일 |
+| 승인 | POST /api/reviews/{review_id}/decision | 미구현. 권한과 광고 버전, 멱등성까지 합의 |
+| 이력과 리포트 | GET 및 DELETE /api/reviews, 개별 조회, report와 re-review | 미구현. Backend가 업무 DB를 소유 |
+| 법령 검색 | search_regulations(query_text, top_k=5), RegulationHit | 현재 search_rules(query)와 입출력이 다름. 이름만 바꾸거나 같은 계약이라고 처리하지 않음 |
+| 사례 검색 | search_precedents(query_text, top_k=3), PrecedentHit | 현재 search_cases(query)와 다름. 노션 초안의 verified=False 및 보조 표시를 전환 계약에 반영 |
+| 증빙 및 외부 검증 | structure_evidence, match_product_claims, verify_functional_approval, verify_patent, match_patent_claims | 실제 업무 도구 미구현. 외부 API 응답과 필드 의미 확인 후 Business MCP 담당자가 계약 작성 |
+| 실행 흐름 | 입력 파싱 → 한도 있는 도구선택 loop → 리라이트 → HITL → 리포트 | Graph와 업무 State 미구현 |
+| 다건 전달 | Backend → Agent API → RabbitMQ → Agent Worker | RabbitMQ 실행환경만 준비. 업무 publisher와 Worker는 후속 |
+
+노션 REST 초안에는 ad_text와 ad_images가 있지만 사용자는 광고 입력을 PDF와 이미지 파일로 한정했다.
+ad_text는 추출 텍스트로 서버에서 만들고, PDF를 포함할 파일 필드와 건별 묶음을 Frontend와 Backend가 확정하는 안이다.
+파일만 떨어뜨렸을 때 검토를 자동 실행하지 않고 시작 버튼에서 제출하는 UX는 frontend/README.md의 목표다.
+신규 업무 OpenAPI와 Mock은 아직 제공하지 않는다.
+
+다건 메시지는 review_id, batch_id, ad_version_id, command_id와 인증된 asset 참조를 후보로 한다.
+원본 바이트와 API 키를 넣지 않는다. 메시지 스키마 버전, 확정 발행 시점과 유실 복구는 Agent 및 Backend 담당자가 함께 정한다.
+Publisher confirm은 브로커 수신 확인이고 Worker의 업무 완료 ack와 다르다.
+업무 상태 영구 저장 후 ack, 제한된 재시도와 DLQ, 중복 처리 방지는 구현해야 한다.
+공식 참고: [Consumer acknowledgements와 publisher confirms](https://www.rabbitmq.com/docs/confirms).

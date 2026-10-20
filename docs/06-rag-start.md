@@ -71,3 +71,12 @@ Agent 담당에게 claim_id, claim_text, surrounding_text, product_type, review_
 - 임베딩 후보: https://huggingface.co/BAAI/bge-m3
 
 위 링크의 실제 개정 여부와 파일 내용은 수집 담당자가 다시 확인한다. 아직 DB에 수집한 자료는 없다.
+
+## 최신 MCP 초안에 맞출 계약 작업
+
+[노션 MCP 초안](https://app.notion.com/p/MCP-business-mcp-rag-mcp-API-1-3ff616ab8fec804eba66e8a7b2bd99e8)은
+search_regulations(query_text, top_k)와 search_precedents(query_text, top_k)를 제안한다.
+현재 코드의 search_rules와 search_cases는 v0.1 기반이므로 구현 전에 Agent 담당자와 전환 계약을 합의한다.
+출처, 버전, 적용 범위, 원문과 유사도, 사례의 보조 표시를 유지하고 오류와 빈 검색 결과도 구분한다.
+기존 review_date와 인용 ID, 페이지 등 추적 필드를 어떻게 보존할지도 같은 PR에서 정한다.
+이번 환경 작업은 빈 목록을 성공으로 반환하는 신규 검색 도구를 임의로 추가하지 않는다.

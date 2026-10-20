@@ -45,6 +45,8 @@ GitHub Actions는 같은 검증을 수행하도록 구성했다. 원격 CI 결�
 
 2026-10-19에 실제 제품 화면과 별개인 설명용 인터랙션을 검증했다.
 설계 분기를 합성 데이터로 탐색하며 파일 업로드, OCR와 유료 API 호출은 실행하지 않는다.
+아래 입력 6종과 직접 카피 경로는 초기 시안의 검증 이력이다. 현재 범위는 PDF와 이미지 두 종류이며,
+직접 카피 입력은 제외한다. PDF 세부 유형과 긴 이미지는 서버 내부 처리 분기다.
 
 - 입력 6종: 직접 카피, PNG/JPEG, 텍스트 PDF, 스캔 PDF, 혼합 PDF와 긴 상세페이지.
 - 단건 내부 HTTP와 다건 202, Queue 및 Worker 경로 변경.
@@ -56,3 +58,50 @@ GitHub Actions는 같은 검증을 수행하도록 구성했다. 원격 CI 결�
 
 docs/09-input-pipeline.md의 prepare_input, SourceBlock과 오류 코드는 제안 계약이며 코드에 구현하지 않았다.
 이번 보완은 Markdown과 PR 템플릿 변경이다. 기존 서버 기능 테스트를 신규 OCR 기능 검증으로 해석하지 않는다.
+
+## 2026-10-20 재점검
+
+| 항목 | 이번 결과 |
+| --- | --- |
+| 원격 Backend PR #1 | OPEN Draft, Head 2e25626, python과 java 및 integration SUCCESS |
+| 원격 Frontend PR #1 | OPEN Draft, Head 27ba483, build SUCCESS |
+| Python pytest | 10개 통과 |
+| 계약 JSON Schema | 일치 |
+| Frontend 타입 검사와 빌드 | 통과 |
+| Spring Boot Maven verify | 테스트와 패키징 통과 |
+| Compose config --quiet | 통과 |
+
+원격 CI는 2026-10-19 실행 결과를 2026-10-20에 확인했다. 이번에 원격 workflow를 새로 실행하지 않았다.
+Java 오프라인 실행은 로컬 Maven 캐시 부족으로 중단됐고, 일반 모드에서 의존성 확보 후 verify를 통과했다.
+이번에는 전체 컨테이너 기동과 HTTP/MCP smoke를 다시 실행하지 않았다. 해당 통합 검증은 기존 기록과 원격 CI를 근거로 한다.
+업무용 HTTP 명세와 Frontend Mock, 로그인과 업무 화면, 실제 Graph와 검색은 여전히 미구현이다.
+
+## 2026-10-20 최신 노션 전체 구조 반영과 재실행
+
+기획서 본문과 REST, MCP, Graph, RabbitMQ 시퀀스 초안을 브라우저에서 확인했다.
+노션 API 연동은 해당 페이지를 찾지 못했으며 브라우저 공개 본문을 근거로 사용했다. 노션 원문은 수정하지 않았다.
+앞의 두 Redis 검증은 2026-10-19의 이력이다. 현재 큐는 RabbitMQ이고 Redis는 원본 캐시 하나다.
+
+| 검증 | 이번 결과 |
+| --- | --- |
+| Python pytest | 12개 통과, 기존 자격증명 보존과 bootstrap 재실행 및 신규 파일 권한 포함 |
+| 계약 JSON Schema | 기존 v0.1과 일치, 최신 노션 초안으로 런타임 계약을 임의 변경하지 않음 |
+| Java Maven verify | 테스트 2개와 패키징 통과 |
+| Frontend 타입 검사와 빌드 | 통과, 변경 파일은 README.md뿐 |
+| Compose queue 프로필 설정 | 통과 |
+| 별도 검증 프로젝트 전체 기동 | Vue, API, Agent, 두 MCP, PostgreSQL, Redis와 RabbitMQ 8개 실행 |
+| Vue /api 프록시 | Backend, Agent와 두 MCP 연결 상태 모두 정상 |
+| HTTP와 MCP smoke | 내부 인증 거부, 두 MCP 실제 호출과 미구현 상태 확인 |
+| pgvector | 1024차원 연산, 스키마와 읽기 전용 권한 확인 |
+| Redis 캐시 | snapshot과 appendonly 비활성 확인 |
+| RabbitMQ AMQP | 합성 임시 큐에서 publisher confirm, 수신, nack/requeue, 재전달과 manual ack 확인 |
+| Markdown | 로컬 링크, fence, 중앙점 부재와 git diff --check 확인 |
+
+검증용 프로젝트는 beauty-capstone-audit-20261020이다. 테스트 메시지는 합성 데이터이며
+연결 종료 시 임시 큐가 사라진다. 실제 광고 파일이나 공개 근거 문서를 업로드 또는 적재하지 않았다.
+검증 후 이 프로젝트의 컨테이너만 종료하며 기존 사용자 서비스와 DB 볼륨을 삭제하지 않는다.
+
+업무 publisher와 Worker, durable 업무 큐 및 DLQ, 제한 재시도와 멱등 상태는 미구현이다.
+브로커의 confirm과 ack 검증을 업무 배치와 장애 복구 구현 완료로 해석하지 않는다.
+업로드 UI, OCR와 Vision, Graph와 HITL, SSE와 공공 API 및 실제 검색, 과금도 후속이다.
+원격 CI 결과는 이 변경을 push한 뒤 PR Checks에서 별도로 확인한다.

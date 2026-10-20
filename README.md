@@ -4,7 +4,7 @@
 현재 범위는 실행환경, 서비스 연결, 공통 계약과 문서다. 실제 광고 판정과 검색은 미구현 상태를 반환한다.
 
 제품 요구사항 원본은 [노션 기획서](https://app.notion.com/p/Agent-3fe616ab8fec80bfb92df115c66aa83d)다.
-2026-10-19에 최신 내용을 확인했으며, 노션 미확정 항목과 구현 선택은 문서에서 구분한다.
+2026-10-20에 기획서 본문과 연결된 REST, MCP, Graph 및 실행 시퀀스 초안을 확인했으며, 노션 미확정 항목과 구현 선택은 문서에서 구분한다.
 
 ## 시작
 
@@ -28,7 +28,8 @@ docker compose --profile web up --build --wait
 ~~~
 
 화면은 http://localhost:5173 이다. 기본 Redis는 원본 파일용 비영구 캐시 준비다.
-다건 처리용 별도 Redis를 추가하려면 queue 프로필을 켠다. 작업 발행과 Worker는 아직 구현하지 않았다.
+다건 처리용 RabbitMQ를 추가하려면 queue 프로필을 켠다. 작업 발행과 Worker는 아직 구현하지 않았다.
+전체 환경은 docker compose --profile web --profile queue up --build --wait로 함께 확인한다.
 
 ## 공통 문서
 
@@ -59,7 +60,7 @@ docs는 두 저장소의 공통 구현 안내다. 프론트엔드에 문서 내�
 | services/rag-mcp | FastMCP 4.1.1 | 8003 |
 | infra/postgres | PostgreSQL 17, pgvector 0.8.7 | 55432 |
 | redis-cache | Redis 7.4, 원본 캐시 준비 | 56379 |
-| redis-queue | Redis 7.4, queue 프로필 | 56380 |
+| rabbitmq | RabbitMQ 4.3.6, queue 프로필 | 5672, 관리 UI 15672 |
 | packages/shared | Pydantic 공통 계약과 연결 도우미 | 실행 서비스 아님 |
 
 PostgreSQL 안에 벡터를 저장하므로 별도 Vector DB 서비스는 없다.
@@ -86,3 +87,13 @@ PostgreSQL 안에 벡터를 저장하므로 별도 Vector DB 서비스는 없다
 
 chore/dev-foundation은 초기 환경 작업 이름이다. Vue, Java 업무 서버, Python Agent와 두 MCP의 기반을 각각 포함한다.
 입력 처리 설계에서 제안한 PDF 렌더, OCR와 Vision 호출은 아직 구현되지 않았다.
+
+## 초기 세팅의 범위
+
+서비스 분할은 Vue, Spring Boot, Agent, Business MCP와 RAG MCP다. RabbitMQ는 다건 작업 전달,
+Redis는 원본 임시 보관, PostgreSQL은 업무와 실행 상태, pgvector는 공개 근거 검색을 맡는다.
+과금은 별도 후속 서비스다. RabbitMQ를 모든 API, MCP 호출이나 파일 저장에 사용하지 않는다.
+
+노션 상세 문서의 도구 이름과 기존 v0.1 계약의 차이는 docs/03-contracts.md에 표시했다.
+업무 기능 구현 전에 담당자끼리 계약 PR로 맞춘다. Frontend의 드래그앤드롭과 시작 버튼은
+frontend/README.md의 개발 목표만 추가했으며 이번에 화면 기능을 구현하지 않았다.
