@@ -6,7 +6,7 @@ from pathlib import Path
 
 from capstone_shared.contracts import SearchRulesInput, SearchRulesResult
 from capstone_shared.rag_contracts import PrecedentSearchResult, RegulationSearchResult
-from capstone_shared.review_contracts import RunRequest, ResumeRequest, RewriteRequest, RewriteSuggestion, TextAssessment, VisualAssessment
+from capstone_shared.review_contracts import RunRequest, ResumeRequest, RewriteRequest, RewriteSuggestion, VerifyRewriteRequest, RewriteVerification, TextAssessment, VisualAssessment
 
 root = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
@@ -21,6 +21,8 @@ for name, model in [
     ("mvp-agent-resume.input.schema.json", ResumeRequest),
     ("mvp-agent-rewrite.input.schema.json", RewriteRequest),
     ("mvp-agent-rewrite.output.schema.json", RewriteSuggestion),
+    ("mvp-agent-rewrite-verify.input.schema.json", VerifyRewriteRequest),
+    ("mvp-agent-rewrite-verify.output.schema.json", RewriteVerification),
     ("mvp-text-assessment.schema.json", TextAssessment),
     ("mvp-visual-assessment.schema.json", VisualAssessment),
 ]:

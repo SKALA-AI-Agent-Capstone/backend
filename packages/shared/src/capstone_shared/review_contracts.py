@@ -70,3 +70,18 @@ class RewriteRequest(BaseModel):
 
 class RewriteSuggestion(BaseModel):
     text: str
+
+
+class VerifyRewriteRequest(BaseModel):
+    """Backend가 rewritten_manual로 확정하기 전에 사람이 쓴 문구를 검증받는 입력.
+    app.violations.final_text_validated=true가 되려면 이 호출이 먼저 통과해야 한다."""
+    model_config = ConfigDict(extra="forbid")
+    reviewId: str
+    tenantId: str
+    text: str = Field(min_length=1, max_length=2000)
+    reason: str = Field(default="", max_length=4000)
+
+
+class RewriteVerification(BaseModel):
+    passed: bool
+    reasoning: str

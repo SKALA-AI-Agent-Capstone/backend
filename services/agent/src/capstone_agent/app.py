@@ -13,8 +13,8 @@ from capstone_shared.settings import (
     required_env,
     valid_internal_authorization,
 )
-from .review_models import RunRequest, ResumeRequest, RewriteRequest
-from .review_engine import Provider, prepare_assets, build_graph, progress, rewrite_phrase
+from .review_models import RunRequest, ResumeRequest, RewriteRequest, VerifyRewriteRequest
+from .review_engine import Provider, prepare_assets, build_graph, progress, rewrite_phrase, verify_rewrite
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.types import Command
 
@@ -111,6 +111,18 @@ def create_app() -> FastAPI:
         if not text:
             raise HTTPException(status_code=502,detail="REWRITE_PROVIDER_FAILED")
         return {"text":text}
+
+    @app.post("/internal/rewrites/verify", dependencies=[Depends(require_internal)])
+    async def verify(request: VerifyRewriteRequest) -> dict:
+        provider=Provider()
+        if not provider.client:
+            raise HTTPException(status_code=503,detail="TEXT_MODEL_NOT_CONFIGURED")
+        try:
+            async with asyncio.timeout(60):
+                result=await verify_rewrite(provider,request.text,request.reason)
+        except Exception:
+            raise HTTPException(status_code=502,detail="REWRITE_VERIFICATION_FAILED") from None
+        return {"passed":result.passed,"reasoning":result.reasoning}
 
     @app.post("/internal/runs/delete", dependencies=[Depends(require_internal)])
     async def delete_runs(request: ResumeRequest) -> dict:
