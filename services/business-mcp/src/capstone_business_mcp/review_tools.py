@@ -20,12 +20,31 @@ def now():
     return datetime.now(timezone.utc).isoformat()
 
 
-def endpoint(name, hostname):
-    value=os.getenv(name,"").strip()
+def endpoint(name, hostname, default=""):
+    value=os.getenv(name,"").strip() or default
     parsed=urlsplit(value)
     if parsed.scheme!="https" or parsed.hostname!=hostname or parsed.query or parsed.fragment:
         return None
     return value
+
+
+def normalize_items(body):
+    items=body.get("items",[])
+    if isinstance(items,dict):items=items.get("item",[items])
+    if isinstance(items,dict):items=[items]
+    if not isinstance(items,list):raise ValueError("INVALID_ITEMS")
+    return items
+
+
+def functional_item(row):
+    functions=[label for field,label in [("EFFECT_YN1","미백"),("EFFECT_YN2","주름개선"),("EFFECT_YN3","자외선차단")]
+               if str(row.get(field,"")).strip().upper()=="Y"]
+    return {"productName":row.get("ITEM_NAME"),"reportSequence":row.get("COSMETIC_REPORT_SEQ"),
+            "receiptNo":row.get("DEPT_RECEIPT_NO"),"functions":functions,"reportedAt":row.get("REPORT_DATE"),
+            "efficacyText":row.get("EE_DOC_DATA", ""),"spf":row.get("SPF"),"pa":row.get("PA"),
+            "manufacturer":row.get("MANUF_NAME"),"company":row.get("ENTP_NAME"),
+            "scopeFields":{key:row.get(key) for key in ["EFFECT_YN1","EFFECT_YN2","EFFECT_YN3","EE_CODE","EE_NAME","WATER_PROOFING_FLAG"]},
+            "note":"공식 보고품목의 필드를 반환한 보조 정보이며 광고 적법성이나 시험자료 충족 판정은 아닙니다."}
 
 
 async def functional_report(functional_approval_no, product_name):
@@ -33,32 +52,32 @@ async def functional_report(functional_approval_no, product_name):
     result={"status":"error","source":source,"checkedAt":now(),"reportNo":functional_approval_no,
             "error":"API_NOT_CONFIGURED","data":None}
     key=os.getenv("MFDS_SERVICE_KEY","")
-    url=endpoint("MFDS_REPORT_URL","apis.data.go.kr")
-    if not key or not url:
-        return result
+    url=endpoint("MFDS_REPORT_URL","apis.data.go.kr",
+        "https://apis.data.go.kr/1471000/FtnltCosmRptPrdlstInfoService01/getRptPrdlstInq01")
+    if not key or not url:return result
     try:
+        matches=[];total=0;seen=0
         async with httpx.AsyncClient(timeout=12,follow_redirects=False) as client:
-            response=await client.get(url,params={"serviceKey":unquote(key),"type":"json","pageNo":1,"numOfRows":100,"item_name":product_name})
-            response.raise_for_status()
-            data=response.json()
-        header=data.get("header",data.get("response",{}).get("header",{}))
-        body=data.get("body",data.get("response",{}).get("body",{}))
-        if str(header.get("resultCode")) not in {"00","0"}:
-            return {**result,"error":"PROVIDER_REJECTED_REQUEST"}
-        items=body.get("items",[])
-        if isinstance(items,dict):items=items.get("item",[items])
-        if isinstance(items,dict):items=[items]
-        if not items and int(body.get("totalCount",0))==0:
-            return {**result,"status":"not_found","error":None}
-        # Identifier mapping is intentionally conservative until an approved sample is verified.
-        matching=[i for i in items if str(i.get("ITEM_NAME",""))==product_name and
-                  functional_approval_no in [str(i.get(k,"")) for k in ("COSMETIC_REPORT_SEQ","DEPT_RECEIPT_NO")]]
-        if len(matching)!=1:
-            return {**result,"status":"ambiguous","error":"IDENTIFIER_MAPPING_REQUIRES_CONFIRMATION"}
-        row=matching[0]
-        return {**result,"status":"found","error":None,"data":{"productName":row.get("ITEM_NAME"),
-            "functions":[],"efficacyText":row.get("EE_DOC_DATA",""),"reportedAt":row.get("REPORT_DATE"),
-            "note":"효능 범위 필드는 실제 응답 검증 전이므로 자동 확정하지 않습니다."}}
+            for page in range(1,4):
+                params={"serviceKey":unquote(key),"type":"json","pageNo":page,"numOfRows":100,"item_name":product_name}
+                if re.fullmatch(r"[0-9]+",functional_approval_no):params["cosmetic_report_seq"]=functional_approval_no
+                response=await client.get(url,params=params)
+                response.raise_for_status();data=response.json()
+                envelope=data.get("response",data)
+                if str(envelope.get("header",{}).get("resultCode")) not in {"00","0"}:
+                    return {**result,"error":"PROVIDER_REJECTED_REQUEST"}
+                body=envelope.get("body",{});items=normalize_items(body)
+                total=int(body.get("totalCount",0));seen+=len(items)
+                matches.extend(row for row in items if str(row.get("ITEM_NAME","")).strip()==product_name.strip() and
+                    functional_approval_no.strip() in [str(row.get(k,"")).strip() for k in ("COSMETIC_REPORT_SEQ","DEPT_RECEIPT_NO")])
+                if seen>=total or not items:break
+        if seen==0 and total==0:return {**result,"status":"not_found","error":None}
+        if len(matches)!=1 or seen<total:
+            return {**result,"status":"ambiguous","error":"IDENTIFIER_MAPPING_OR_PAGINATION_REQUIRES_CONFIRMATION"}
+        row=matches[0]
+        if str(row.get("CANCEL_APPROVAL_YN","")).upper()=="Y":
+            return {**result,"status":"cancelled","error":"REPORTED_ITEM_CANCELLED","data":functional_item(row)}
+        return {**result,"status":"found","error":None,"data":functional_item(row)}
     except Exception:
         return {**result,"error":"PROVIDER_REQUEST_FAILED"}
 

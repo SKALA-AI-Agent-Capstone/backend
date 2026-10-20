@@ -80,3 +80,55 @@ async def test_public_api_configuration_is_not_a_product_absence(monkeypatch):
     monkeypatch.delenv("MFDS_SERVICE_KEY",raising=False)
     result=await functional_report("synthetic","합성 제품")
     assert result["status"]=="error" and result["error"]=="API_NOT_CONFIGURED"
+
+
+def test_source_preview_preserves_original_spans_and_page_boundaries():
+    from capstone_rag_mcp.preview import chunk_pages
+    pages=['제1조 본문\n'+'조건과 예외를 함께 확인한다.\n'*100, '제2조 별도 페이지']
+    chunks=chunk_pages(pages)
+    assert all(c['body']==pages[c['page']-1][c['start']:c['end']] for c in chunks)
+    first=[c for c in chunks if c['page']==1]
+    assert first[0]['start']==0 and first[-1]['end']==len(pages[0])
+    assert all(a['end']>b['start'] for a,b in zip(first,first[1:]))
+    assert chunks[-1]['page']==2
+
+
+def test_public_functional_fields_never_invent_unknown_scope():
+    from capstone_business_mcp.review_tools import functional_item
+    data=functional_item({'ITEM_NAME':'합성 제품','EFFECT_YN1':'Y','EFFECT_YN2':'N','EFFECT_YN3':'unknown','SPF':'50+'})
+    assert data['functions']==['미백']
+    assert data['spf']=='50+'
+    assert data['scopeFields']['EFFECT_YN3']=='unknown'
+
+
+async def test_functional_lookup_uses_official_operation_and_catches_cancelled_items(monkeypatch):
+    import httpx
+    import capstone_business_mcp.review_tools as tools
+    original=httpx.AsyncClient
+    def handler(request):
+        assert request.url.path.endswith('/FtnltCosmRptPrdlstInfoService01/getRptPrdlstInq01')
+        assert request.url.params['cosmetic_report_seq']=='123'
+        return httpx.Response(200,json={'header':{'resultCode':'00'},'body':{'totalCount':1,'items':[
+            {'ITEM_NAME':'합성 제품','COSMETIC_REPORT_SEQ':'123','CANCEL_APPROVAL_YN':'Y'}]}})
+    monkeypatch.setenv('MFDS_SERVICE_KEY','synthetic-test-key')
+    monkeypatch.delenv('MFDS_REPORT_URL',raising=False)
+    monkeypatch.setattr(tools.httpx,'AsyncClient',lambda **kw:original(transport=httpx.MockTransport(handler),**kw))
+    result=await tools.functional_report('123','합성 제품')
+    assert result['status']=='cancelled' and result['error']=='REPORTED_ITEM_CANCELLED'
+
+
+async def test_functional_lookup_does_not_treat_truncated_pages_as_product_absence(monkeypatch):
+    import httpx
+    import capstone_business_mcp.review_tools as tools
+    original=httpx.AsyncClient
+    pages=[]
+    def handler(request):
+        pages.append(request.url.params['pageNo'])
+        return httpx.Response(200,json={'header':{'resultCode':'00'},'body':{'totalCount':1000,'items':[
+            {'ITEM_NAME':'다른 제품','COSMETIC_REPORT_SEQ':'987'}]}})
+    monkeypatch.setenv('MFDS_SERVICE_KEY','synthetic-test-key')
+    monkeypatch.delenv('MFDS_REPORT_URL',raising=False)
+    monkeypatch.setattr(tools.httpx,'AsyncClient',lambda **kw:original(transport=httpx.MockTransport(handler),**kw))
+    result=await tools.functional_report('123','합성 제품')
+    assert pages==['1','2','3']
+    assert result['status']=='ambiguous'

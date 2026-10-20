@@ -22,7 +22,7 @@ docker compose --profile web up --build -d --wait --wait-timeout 240
 bootstrap은 .env의 누락된 설정만 보충하고 기존 비밀번호를 바꾸지 않는다.
 앱은 http://localhost:5173 이며 처음에는 기업 작업공간을 만든다. 공개 데모 계정이나 공용 비밀번호는 없다.
 회사 관리자는 /api/v1/users/team으로 같은 기업의 author 또는 reviewer 계정을 만들 수 있다. 팀원 관리 UI는 후속이다.
-현재 기능 작업은 두 저장소의 `feat/non-vector-mvp`에 있으며 원격 main 병합과 별개다.
+팀원의 시작 기준은 두 저장소의 main이다. 기능 작업은 main에서 새 feat 브랜치를 만들어 진행한다.
 
 ## 키와 환경변수
 
@@ -32,17 +32,17 @@ bootstrap은 .env의 누락된 설정만 보충하고 기존 비밀번호를 바
 | --- | --- | --- |
 | OPENAI_API_KEY | Agent | 실제 문구 모델과 사진 VLM 호출 |
 | TEXT_MODEL, VISION_MODEL | Agent | 기본 gpt-5.4-mini, 사용 계정의 모델 권한 확인 필요 |
-| MFDS_SERVICE_KEY, MFDS_REPORT_URL | Business MCP | 승인받은 기능성 보고품목 오퍼레이션과 실응답 매핑 확인 후 설정 |
+| MFDS_SERVICE_KEY, MFDS_REPORT_URL | Business MCP | 공식 getRptPrdlstInq01 기본 주소 제공, 키와 정상 실응답 검증 필요 |
 | KIPRIS_SERVICE_KEY | Business MCP | KIPRIS Plus 해당 오퍼레이션 이용 권한 |
 | KIPRIS_WORD_SEARCH_URL | Business MCP | 공식 getWordSearch 경로 기본값, 청구항 원문 경로가 아님 |
 | JWT_SECRET | Backend | bootstrap이 생성하는 로컬 서명 키 |
 | INTERNAL_SERVICE_TOKEN | 서버 간 | bootstrap이 생성하는 내부 인증 토큰 |
 | DB 및 REDIS 비밀번호 | 서비스별 | bootstrap이 생성, 프론트에 전달하지 않음 |
-| LAW_OC | 향후 RAG 수집 배치 | 아직 수집 adapter에 연결하지 않은 계획값 |
+| LAW_OC | 향후 RAG 수집 배치 | 법제처 XML 수집을 선택하는 경우 |
 
 PDF 문자 추출, Tesseract 한국어 OCR와 Pillow 타일 분할에는 외부 API 키가 없다.
 키가 없어도 로그인, 업로드, 로컬 추출, 저장과 승인 연결을 확인할 수 있다. AI 분석 성공을 흉내 내지는 않는다.
-식약처 URL은 추정 주소를 채우지 않았다. 공식 조회 권한과 응답 필드를 확인하기 전까지 API_NOT_CONFIGURED가 정상적인 미연결 표시다.
+식약처 기본 주소와 컬럼은 공식 포털의 Swagger에서 확인했다. 키가 없으면 API_NOT_CONFIGURED로 표시한다.
 KIPRIS adapter도 승인키를 이용한 실제 정상 응답 검증은 남아 있다.
 
 .env 수정 후 실행 중인 서비스에 설정을 적용한다.
@@ -124,3 +124,22 @@ RabbitMQ는 `docker compose --profile queue up -d --wait rabbitmq`로 켤 수 �
 업무 큐와 Worker, DLQ, SSE와 과금은 후속이며 기본 단건 흐름에 필요하지 않다.
 현재 실행 중인 API를 재시작하면 메모리 실행 풀의 대기 작업은 자동 복구되지 않는다.
 원본 만료나 분석 실패 시 새 파일을 제출한다. 결과 항목별 재시도 버튼을 가짜 성공으로 연결하지 않는다.
+
+## 검증 관리자와 실제 광고 파일 점검
+
+```sh
+python3 scripts/bootstrap.py
+uv run --all-packages --frozen python scripts/setup_demo.py
+uv run --all-packages --frozen python scripts/acceptance.py --input /path/to/ad.png /path/to/ad.pdf --include-pdf
+uv run --all-packages --frozen python scripts/audit_sources.py --download --probe-without-key
+```
+
+검증용 이메일 기본값은 master@beauty-review.local이다. DEV_ADMIN_PASSWORD는 실행자별로 자동 생성하고
+로그인 정보는 Git에서 제외된 data/demo-access.md에 권한 0600으로 저장한다. 프로그램이 계정과 API 키 값을 로그에 출력하지 않는다.
+이 계정은 자기 검증 작업공간의 관리자이며 다른 기업 자료에 대한 우회 권한이 없다.
+재실행 시 기존 계정으로 로그인하며 다른 비밀번호로 기존 계정을 임의 초기화하지 않는다.
+
+API가 기본 8080이 아니면 --api-url을 지정한다. 별도 자격증명 파일은 --env-file /path/to/local.env로 전달할 수 있다.
+키 값은 프로그램이 직접 읽고 HTTP 요청에 사용한다. 채팅이나 커밋에는 넣지 않는다.
+acceptance 보고서는 reports/acceptance.json이며 실제 입력, 계정 비밀번호와 보고서 원문은 Git에 포함하지 않는다.
+광고 파일은 파일당 25 MiB, 전체 제출 75 MiB다. 픽셀, 페이지 및 타일 한도는 별도로 유지한다.

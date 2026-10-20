@@ -58,7 +58,7 @@ def tile_image(image: Image.Image, asset_id: str, name: str, page=1,
 
 
 def prepare_document(raw: bytes, asset: dict) -> tuple[list[dict], list[Tile]]:
-    if len(raw) > 10*1024*1024:
+    if len(raw) > 25*1024*1024:
         raise ValueError("FILE_TOO_LARGE")
     blocks, tiles = [], []
     if raw.startswith(b"%PDF-"):

@@ -8,10 +8,10 @@
 | 원본 | 사용할 내용과 주의점 |
 | --- | --- |
 | [기획서](https://app.notion.com/p/Agent-3fe616ab8fec80bfb92df115c66aa83d) | FR와 NFR, 저장 정책과 서비스 책임 |
-| [MCP 명세](https://app.notion.com/p/MCP-business-mcp-rag-mcp-API-3fe616ab8fec818bb82efebe45ca502f) | Business 5개, RAG 2개 도구의 인자, 반환 타입과 외부 API 규칙 |
+| [MCP 명세](https://app.notion.com/p/MCP-business-mcp-rag-mcp-API-1-3ff616ab8fec804eba66e8a7b2bd99e8) | Business 5개, RAG 2개 도구의 인자, 반환 타입과 외부 API 규칙 |
 | [MCP 명세 사본](https://app.notion.com/p/MCP-business-mcp-rag-mcp-API-1-3ff616ab8fec804eba66e8a7b2bd99e8) | 확인한 7개 도구의 이름, 인자와 반환 필드는 본문과 같다. 다른 API로 중복 구현하지 않음 |
 | [REST 초안](https://app.notion.com/p/Backend-REST-API-3ff616ab8fec81d3b650f8e3186bcf48) | 요청과 응답 및 ReviewResult 설명. 경로는 아직 /api/reviews이고 snake_case 예시가 남아 있음 |
-| [API 명세 등록부](https://app.notion.com/p/AI-API-3ff616ab8fec80359149e3682589ca85) | /api/v1 경로와 reviewId, batchId, 회원 API 및 협의 항목. 아래 HTTP 목표 경로는 이 표기를 사용 |
+| [API 명세 등록부](https://app.notion.com/p/AI-API-3ff616ab8fec8047bf0ec0ec5e508560) | /api/v1 경로와 reviewId, batchId, 회원 API 및 협의 항목. 아래 HTTP 목표 경로는 이 표기를 사용 |
 | [Graph 초안](https://app.notion.com/p/Agent-Graph-3ff616ab8fec8127ad6ed17eff1e81b0) | Agent 단일 서비스, 입력 파싱과 도구선택 loop, HITL와 리포트 |
 | [실행 시퀀스와 흐름 이미지](https://app.notion.com/p/Agent-RabbitMQ-3ff616ab8fec81c1a513df26b980b638) | 다건 접수와 발행, 승인 대기 저장 후 ACK, 승인 명령 재발행과 재개 |
 
@@ -259,5 +259,18 @@ retrievalStatus=not_connected, legalStatus=not_evaluated를 표시하며 basis�
 JSON Schema는 contracts/mvp-*.schema.json이다. runToken은 서버 전용이고 모델 입력 및 checkpoint에 넣지 않는다.
 Business MCP의 structure_evidence는 실행 문맥을 서버 HTTP 헤더에서 받는 최소 구현이다.
 verify_functional_approval와 verify_patent는 실제 HTTP adapter와 설정/오류 처리를 추가했지만 승인키를 사용한 정상 응답 검증은 미완료다.
-MFDS_REPORT_URL은 승인 가이드 확인 전까지 비워두며 인증 실패를 제품 미조회로 바꾸지 않는다.
+MFDS_REPORT_URL은 공식 getRptPrdlstInq01 경로를 기본값으로 제공한다. 인증 실패와 페이지 조회 한도를 제품 미조회로 바꾸지 않는다.
 match_product_claims와 match_patent_claims, 두 목표 RAG 검색은 이번 최소 기능에서 구현하지 않았다.
+
+
+## 공식 API 명세 재확인
+
+2026-10-20 공공데이터포털의 inline Swagger JSON을 직접 읽고 contracts/external에 저장했다.
+보고품목은 getRptPrdlstInq01이며 getRptEntpInq01은 업체 조회이므로 구분한다.
+cosmetic_report_seq, item_name 필터와 COSMETIC_REPORT_SEQ, DEPT_RECEIPT_NO를 정확히 맞추고
+EFFECT_YN1~3, SPF와 PA 및 취하승인여부를 원본 필드로 반환한다. 기능은 Y로 명시된 경우만 표시한다.
+최대 3페이지 조회로 전체 결과를 확인하지 못하면 ambiguous를 반환한다. 취하 품목은 cancelled다.
+정상 실응답 검증 완료 여부는 docs/07-validation.md를 따르며 명세 확보를 실응답 검증으로 표현하지 않는다.
+
+/api/v1/reference-sources는 기존 sources와 함께 apis 배열도 반환한다. 문서 9건과 API 4종의 역할을 섞지 않는다.
+GMP와 성분 규제정보는 참고 데이터이며 현재 Agent 업무 도구로 추가 등록하지 않았다.

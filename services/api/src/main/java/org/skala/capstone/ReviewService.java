@@ -64,14 +64,14 @@ public class ReviewService implements AutoCloseable {
             no=ReviewStore.latest(doc).path("no").asInt()+1;
         }
         List<MultipartFile> all=new ArrayList<>(files);all.addAll(evidence);
-        if(all.stream().mapToLong(MultipartFile::getSize).sum()>30L*1024*1024)
-            throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE,"TOTAL_LIMIT_30_MIB");
+        if(all.stream().mapToLong(MultipartFile::getSize).sum()>75L*1024*1024)
+            throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE,"TOTAL_LIMIT_75_MIB");
         ArrayNode ads=json.createArrayNode(),docs=json.createArrayNode(),assets=json.createArrayNode();
         List<String> cached=new ArrayList<>();
         try{
             for(int i=0;i<all.size();i++){
                 MultipartFile file=all.get(i);
-                if(file.isEmpty() || file.getSize()>10L*1024*1024)throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE,"FILE_LIMIT_10_MIB");
+                if(file.isEmpty() || file.getSize()>25L*1024*1024)throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE,"FILE_LIMIT_25_MIB");
                 byte[] raw=file.getBytes();String contentType=mime(raw),assetId=UUID.randomUUID().toString();
                 String name=Objects.toString(file.getOriginalFilename(),"upload").replaceAll("[\\r\\n\\\\/]","_");
                 if(name.length()>200)name=name.substring(name.length()-200);

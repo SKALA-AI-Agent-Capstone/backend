@@ -2,7 +2,7 @@
 
 기준은 [노션 기획서](https://app.notion.com/p/Agent-3fe616ab8fec80bfb92df115c66aa83d)와 연결된 MCP, REST, Graph 및 RabbitMQ 문서다.
 이번 구현은 제공된 Vue 화면을 연결한 단건 MVP다. RAG DB 계획은 `Cosmetic_RAG_AI_Handoff`를 반영한다.
-이 문서는 현재 동작과 최종 목표를 구분한다. 현재 기능 브랜치는 `feat/non-vector-mvp`이며 main 병합이나 원격 반영을 뜻하지 않는다.
+이 문서는 현재 동작과 최종 목표를 구분한다. 팀원의 통합 기준은 두 저장소의 main이며 기능별 feat 브랜치와 PR로 작업한다.
 
 ## 현재 실행 구조
 
@@ -101,3 +101,11 @@ RAG를 호출하지 않으므로 `retrievalStatus=not_connected`, `legalStatus=n
 공개 PDF와 법제처 API 원문을 검증하고 knowledge에 미리 색인한다. 제품 및 특허 조회 API는 Business MCP 실시간 경로로 남긴다.
 S01~S09와 미확인 개정일은 출처 후보이며 이번에 수집한 법률 자료가 아니다.
 자세한 표와 단계는 [데이터 계획](04-data.md), [RAG 시작점](06-rag-start.md), 실제 입출력은 [공통 계약](03-contracts.md)에 있다.
+
+
+## 노션 ERD v2 연결
+
+[최신 ERD](https://app.notion.com/p/Data-ERD-App-State-Vector-DB-3ff616ab8fec81c7b57ac75358ced570)는 주요 DB 한 개의 app/state/vector 분리와 별도 과금 DB를 명시한다.
+현재 물리 스키마 app/agent/knowledge와 목표 테이블의 대응은 [데이터 모델](04-data.md)에 있다.
+RAG의 knowledge는 Handoff 기준을 유지하고 Agent의 광고 파싱과 Business MCP의 증빙 처리를 섞지 않는다.
+키가 없으면 모델과 공식 API를 실행한 것으로 표시하지 않는다. 원문 수집 및 기본 청킹 점검은 검색 색인과 분리한다.

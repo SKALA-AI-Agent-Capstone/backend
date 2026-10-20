@@ -32,7 +32,7 @@ def synthetic_image():
 
 
 def main():
-    base=os.getenv("MVP_API_URL","http://127.0.0.1:18080")+"/api/v1"
+    base=os.getenv("MVP_API_URL","http://127.0.0.1:8080")+"/api/v1"
     client=httpx.Client(base_url=base,timeout=45)
     checks=[];suffix=uuid.uuid4().hex[:10]
     password="Synthetic-Only-Password-2026"

@@ -46,18 +46,17 @@ main 직접 push와 공유 브랜치 force push는 하지 않는다. main 병합
 
 ## 3. 처음 개발환경 받기
 
-기반 PR이 아직 main에 병합되지 않았다면 두 저장소 모두 같은 기반 브랜치를 받는다.
+두 저장소의 main을 같은 상위 폴더에 clone한다. README의 시작 절차를 따른다.
 
-~~~sh
-git clone --branch chore/dev-foundation https://github.com/SKALA-AI-Agent-Capstone/backend.git
-git clone --branch chore/dev-foundation https://github.com/SKALA-AI-Agent-Capstone/frontend.git
+```sh
+git clone --branch main https://github.com/SKALA-AI-Agent-Capstone/backend.git
+git clone --branch main https://github.com/SKALA-AI-Agent-Capstone/frontend.git
 cd backend
 python3 scripts/bootstrap.py
-docker compose --profile web up --build --wait
-~~~
+docker compose --profile web up --build -d --wait
+```
 
-main에 기반이 병합된 뒤에는 일반 clone과 main을 사용한다.
-실행 상세와 담당별 호스트 개발은 docs/02-development.md를 따른다.
+개인 .env, DB와 관리자 비밀번호는 clone에 포함되지 않는다. 실제 실행한 범위는 docs/07-validation.md를 확인한다.
 
 ## 4. 기능 작업의 순서
 
@@ -80,7 +79,7 @@ git commit -m "feat(rag): retrieve rules with source citations"
 git push -u origin feat/rag-rule-search
 ~~~
 
-기반 PR 병합 전에는 chore/dev-foundation에서 기능 브랜치를 만들고 Draft PR의 base를 해당 기반 브랜치로 둔다.
+초기 기반 병합 전에는 chore/dev-foundation을 base로 사용한 이력이 있다. 현재 후속 작업은 main을 기준으로 한다.
 기반 병합 후 main을 통합하고 PR의 base를 main으로 바꿔 기반 변경이 중복 표시되지 않는지 확인한다.
 다른 사람이 공유한 브랜치를 임의로 rebase하거나 force push하지 않는다.
 
@@ -178,7 +177,7 @@ compose.yaml, 공통 계약과 DB 스키마는 다른 작업에 영향이 크므
 
 ## 12. 최신 노션 반영 작업을 나누는 법
 
-이번 기반 브랜치는 공통 실행환경과 문서까지만 준비한다. 역할별 기능 브랜치는 아래 계약부터 진행한다.
+초기 기반 이후 단건 MVP까지 확장했다. 구현된 코드를 재작성하지 말고 docs/10-work-breakdown.md의 다음 작업과 아래 소비자 계약을 확인한다.
 
 | 첫 PR | 소유 역할 | 함께 검토할 역할 |
 | --- | --- | --- |
@@ -189,4 +188,4 @@ compose.yaml, 공통 계약과 DB 스키마는 다른 작업에 영향이 크므
 | 다건 접수 → Agent API 발행 → RabbitMQ → Worker 상태 반영 | Agent와 Backend | 공통 환경 담당 |
 
 실제 업무 계약은 노션 초안을 합의해 코드와 JSON Schema로 고정한다. 초안과 현재 실행 코드를 같은 상태라고 표시하지 않는다.
-Frontend 업무 기능은 별도 feat 브랜치에서 만든다. 현재 README의 업로드 UX 목표만으로 구현 완료를 선언하지 않는다.
+Frontend 업무 화면과 실제 단건 API는 이미 연결돼 있다. 후속 기능은 별도 feat 브랜치에서 검증하고 미구현 기능을 가짜 성공으로 표시하지 않는다.

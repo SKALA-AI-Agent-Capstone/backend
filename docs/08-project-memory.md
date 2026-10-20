@@ -93,7 +93,7 @@ Java 21, Python 3.12, FastMCP 4.1.1, PostgreSQL 17과 pgvector, RabbitMQ 4.3.6�
 OpenAI API 기준 구현을 선택했다. 별도 원문이나 API 키를 전달받은 것은 아니다.
 문구 경로와 사진 경로는 독립 분석하고 결과에서만 합류한다.
 Cosmetic_RAG_AI_Handoff는 로컬 PostgreSQL/pgvector의 RAG 자료와 계획 기준이며 원문 및 완성 DB가 아니다.
-기존 두 저장소의 feat/non-vector-mvp에서 작업하며 현재 원격 main 또는 기반 PR을 병합하지 않는다.
+이 단계에서는 feat/non-vector-mvp에 작업했다. 아래 최신 요청에 따라 main 반영까지 진행한다.
 기능별 구현과 검증 결과는 이번 작업 완료 후 docs/07-validation.md에 기록한다.
 
 ## 현재 연결 수준
@@ -102,4 +102,16 @@ Cosmetic_RAG_AI_Handoff는 로컬 PostgreSQL/pgvector의 RAG 자료와 계획 �
 - 회원과 기업 및 세션, 파일 임시 보관, 문구와 사진 분리 Graph, 증빙 추출 MCP, 공식 조회 adapter, 승인 재개와 버전 및 삭제가 현재 범위다.
 - 로컬 Docker 검증에서 합성 HTTP 전체 경로와 pgvector 및 역할 권한을 확인했다. 실제 키를 이용한 외부 추론이나 정상 공공 API 조회는 실행하지 않았다.
 - 모델 미설정과 RAG 미연결은 명시적으로 표시한다. SSE와 다건 Worker, 의미 대조와 과금은 후속이다.
-- Handoff는 원문 없는 9개 후보 자료 목록이다. knowledge는 빈 상태이며 S06 확보부터 다음 RAG 작업을 시작한다.
+- Handoff는 원문 없는 9개 후보 자료 목록이었다. 후속 점검에서 공개 PDF 6건과 기본 청크 294개를 확보했다. knowledge는 빈 상태이며 임베딩과 검색 연결은 후속이다.
+
+
+## 최신 사용자 요청: main 반영과 실제 입력 검증
+
+- 사용자는 단건 최소 기능과 공통 문서를 GitHub main에 반영하라고 명시했다. 이전 로컬 커밋까지만 진행한다는 범위보다 최신 지시를 우선한다.
+- 노션 기획서와 ERD v2를 다시 확인했다. 주요 PostgreSQL 1개와 별도 과금 DB의 목표, refresh/reset과 잠금 및 감사 기능의 미구현 차이를 docs/04-data.md에 기록한다.
+- 팀원은 두 저장소의 main을 clone해 이어서 개발한다. Desktop 폴더를 필수 입력으로 요구하지 않고 manifest, API schema 및 기본 점검 코드를 Git에 둔다.
+- 제공한 실제 긴 이미지 2장과 모공 비교 이미지 1장을 사용한다. 25 MiB 파일과 전체 75 MiB 한도로 보완했다. 이미지 원본은 Git에 올리지 않는다.
+- 검증 관리자 계정은 자기 기업의 admin이다. 공용 비밀번호나 타 기업 권한 우회용 backdoor를 만들지 않는다.
+- 키 파일을 프로그램이 직접 읽는 것은 허용됐지만 실제 키가 전달되거나 설정됐다고 가정하지 않는다. 값은 채팅이나 로그에 출력하지 않는다.
+- 노션의 근거 문서 9건과 API 4종은 별개 목록이다. HTTP 200, 문서 다운로드 및 기본 청킹, API 승인키 실응답을 구분한다.
+- 실제 원문 수집 및 기본 청킹 미리보기는 추가했지만 임베딩, knowledge 적재와 RAG 검색은 여전히 미연결이다.
