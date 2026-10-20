@@ -116,12 +116,15 @@ dependencies = [
     { name = "capstone-shared" },
     { name = "fastapi" },
     { name = "fastmcp" },
+    { name = "langgraph" },
+    { name = "pdfplumber" },
+    { name = "pillow" },
+    { name = "pypdfium2" },
     { name = "uvicorn" },
 ]
 
 [package.optional-dependencies]
 graph = [
-    { name = "langgraph" },
     { name = "langgraph-checkpoint-postgres" },
 ]
 
@@ -130,8 +133,11 @@ requires-dist = [
     { name = "capstone-shared", editable = "packages/shared" },
     { name = "fastapi", specifier = "==0.146.0" },
     { name = "fastmcp", specifier = "==4.1.1" },
-    { name = "langgraph", marker = "extra == 'graph'", specifier = ">=1,<2" },
+    { name = "langgraph", specifier = ">=1,<2" },
     { name = "langgraph-checkpoint-postgres", marker = "extra == 'graph'", specifier = ">=3,<4" },
+    { name = "pdfplumber", specifier = ">=0.11,<1" },
+    { name = "pillow", specifier = ">=13,<14" },
+    { name = "pypdfium2", specifier = ">=5,<6" },
     { name = "uvicorn", specifier = ">=0.38,<1" },
 ]
 provides-extras = ["graph"]
