@@ -241,6 +241,17 @@ Agent 및 MCP 밖의 별도 Application 서비스가 책임진다. 중도 실패
 
 - POST /api/v1/users/signup: email, password, name, tenantName. 새 기업 관리자만 생성하며 임의 tenantId와 role은 받지 않는다.
 - POST /api/v1/users/login, GET /api/v1/users/me, DELETE /api/v1/users/logout: 서버 JWT와 세션, 기업 및 역할.
+- POST /api/v1/users/refresh: Access Token 재발급. 아래 인증 토큰 절을 따른다.
+
+### 인증 토큰 (feat/jwt-refresh-token)
+
+- signup, login, refresh 응답 본문: `user`, `tenant`, `accessToken`, `expiresIn`(초). Access JWT는 기본 15분이며 클레임은 sub, sid(세션), tenantId, role이다.
+- 같은 응답의 `Set-Cookie: refresh_token=...; HttpOnly; Secure; SameSite=Strict; Path=/api/v1/users`, 기본 14일. 본문에는 Refresh Token을 넣지 않는다.
+- DB에는 Refresh Token의 SHA-256 해시만 `app.refresh_tokens`에 저장한다. 재발급할 때마다 새 토큰으로 회전하고 세션 만료를 연장한다.
+- refresh 401의 message: `REFRESH_TOKEN_MISSING`, `INVALID_REFRESH_TOKEN`, `REFRESH_TOKEN_EXPIRED`, `REFRESH_TOKEN_REUSED`(이미 회전된 토큰 재사용 → 세션 전체 폐기), `REFRESH_TOKEN_ROTATED`(30초 안의 탭 간 동시 재발급 → 쿠키를 유지하므로 한 번 재시도).
+- login과 signup은 요청에 기존 Refresh 쿠키가 있으면 그 세션을 먼저 폐기한다. Access JWT 만료는 clock skew 없이 적용한다.
+- logout은 Access Token이 만료돼도 호출할 수 있다. 쿠키와 유효한 Bearer의 세션을 모두 폐기하고 쿠키를 지운다. 세션이 지워지면 그 세션의 Access JWT도 즉시 401이다.
+- signup, login, refresh, logout은 Authorization 헤더를 검사하지 않는다. 그 외 API에서 401을 받으면 Frontend가 refresh 후 한 번 재시도한다.
 - POST /api/v1/users/team: 관리자만 같은 기업의 author 또는 reviewer 생성.
 - POST /api/v1/reviews: multipart metadata(JSON 문자열), files(광고 PDF/이미지 배열), evidence(선택 증빙 배열).
 - metadata: product, media, evidence의 docType 목록. 직접 광고 카피 입력은 받지 않는다.

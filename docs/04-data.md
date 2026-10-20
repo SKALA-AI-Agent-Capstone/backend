@@ -130,6 +130,9 @@ erDiagram
     USERS ||--o{ REVIEWS : authors
     REVIEWS ||--o{ REVIEW_ASSETS : describes
     REVIEWS ||--o{ REVIEW_RUNS : scopes
+    REVIEWS ||--o{ VIOLATIONS : flags
+    VIOLATIONS ||--o{ VIOLATION_REWRITES : attempts
+    USERS ||--o{ VIOLATIONS : decides
     DOCUMENT_VERSIONS ||--o{ CHUNKS : contains
     CHUNKS o|--o{ CHUNKS : parent_context
     TENANTS {
@@ -153,7 +156,29 @@ erDiagram
       uuid tenant_id FK
       uuid author_id FK
       jsonb document
+      text hitl_status
+      uuid decided_by FK
+      timestamptz decided_at
       timestamptz updated_at
+    }
+    VIOLATIONS {
+      uuid id PK
+      uuid review_id FK
+      text text_excerpt
+      text severity
+      text rewrite_suggestion
+      text final_resolution
+      text final_text
+      boolean final_text_validated
+      uuid decided_by FK
+    }
+    VIOLATION_REWRITES {
+      uuid id PK
+      uuid violation_id FK
+      int attempt_no
+      text text
+      boolean requested_by_human
+      text retry_note
     }
     REVIEW_ASSETS {
       uuid id PK
@@ -191,10 +216,11 @@ erDiagram
 | 노션 ERD v2의 목표 | 현재 MVP 대응 | 남은 작업 |
 | --- | --- | --- |
 | tenant, app_user | app.tenants, app.users | writer는 Backend 내부 author와 화면에서 매핑 |
-| refresh_token, password_reset_token | app.sessions로 서버 무효화 가능한 2시간 access JWT | refresh와 비밀번호 재설정, failed_login_count와 잠금은 미구현 |
+| refresh_token, password_reset_token | app.sessions(로그인 세션)와 app.refresh_tokens(해시, 회전과 재사용 감지), 15분 access JWT | 비밀번호 재설정, failed_login_count와 잠금은 미구현 |
 | product, review와 parent_review_id | app.reviews.document의 product와 versions[] | 제품과 버전의 별도 테이블 정규화 및 parent_review_id 전환 |
 | ad_image, evidence_file | app.review_assets, Redis 임시 원본 | 광고와 증빙 메타데이터를 별도 테이블로 나누는 작업 |
-| evidence_structured, violation과 근거, claim_match_result, approval_verify_result, patent 결과 | 버전별 result JSONB에 가능한 출력 보존 | 의미 대조와 검색 미구현, 정규화와 근거 스냅샷 FK 설계 |
+| violation, 문구별 HITL과 리라이트 이력 | V4의 app.violations, app.violation_rewrites와 reviews.hitl_status 등. 재검토 버전 구조 없이 review_id만 참조 | 테이블만 생성됨. Agent 결과 저장, 결정 API와 화면은 아직 reviews.document JSONB 사용. 저장 경로 전환 필요 |
+| evidence_structured, violation 근거, claim_match_result, approval_verify_result, patent 결과 | 버전별 result JSONB에 가능한 출력 보존 | 의미 대조와 검색 미구현, 정규화와 근거 스냅샷 FK 설계 |
 | state checkpointer | agent 스키마의 AsyncPostgresSaver | durable Worker 재개와 재시도 확장 |
 | regulation_doc, precedent_doc | knowledge.document_versions의 rules/cases, knowledge.chunks | 출처 및 적용일 검증, 임베딩과 검색 |
 | credit_ledger | 미구현, 별도 DB 계획 유지 | reserve, charge, release, refund, topup_mock와 테넌트 락 및 멱등키 |

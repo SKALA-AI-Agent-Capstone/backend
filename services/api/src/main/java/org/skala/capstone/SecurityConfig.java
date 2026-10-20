@@ -1,7 +1,9 @@
 package org.skala.capstone;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
+import java.util.Set;
 import javax.crypto.spec.SecretKeySpec;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -16,11 +18,17 @@ import org.springframework.security.oauth2.core.*;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.*;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
+import org.springframework.security.oauth2.server.resource.web.BearerTokenResolver;
+import org.springframework.security.oauth2.server.resource.web.DefaultBearerTokenResolver;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.web.SecurityFilterChain;
 
 @Configuration
 public class SecurityConfig {
+    /** 토큰 없이 호출하는 인증 경로. 만료된 Bearer가 함께 와도 401로 막지 않도록 헤더를 읽지 않는다. */
+    static final Set<String> PUBLIC_AUTH = Set.of(
+        "/api/v1/users/signup", "/api/v1/users/login", "/api/v1/users/refresh", "/api/v1/users/logout");
+
     @Bean PasswordEncoder passwords() { return new BCryptPasswordEncoder(); }
 
     @Bean SecretKeySpec jwtKey(@Value("${capstone.jwt-secret}") String secret) {
@@ -36,12 +44,14 @@ public class SecurityConfig {
     @Bean JwtDecoder jwtDecoder(SecretKeySpec key, JdbcTemplate jdbc) {
         var decoder = NimbusJwtDecoder.withSecretKey(key).macAlgorithm(MacAlgorithm.HS256).build();
         decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
-            JwtValidators.createDefaultWithIssuer("beauty-capstone"),
+            // 발급과 검증을 같은 서버가 하므로 기본 60초 clock skew 없이 만료 시각을 그대로 적용한다.
+            new JwtTimestampValidator(Duration.ZERO),
+            new JwtIssuerValidator("beauty-capstone"),
             jwt -> {
                 try {
                     Integer count = jdbc.queryForObject(
                         "SELECT count(*) FROM app.sessions WHERE id=CAST(? AS uuid) AND expires_at>now()",
-                        Integer.class, jwt.getId());
+                        Integer.class, jwt.getClaimAsString("sid"));
                     if (count != null && count == 1) return OAuth2TokenValidatorResult.success();
                 } catch (Exception ignored) { }
                 return OAuth2TokenValidatorResult.failure(new OAuth2Error("invalid_token"));
@@ -65,8 +75,14 @@ public class SecurityConfig {
         return http.csrf(c -> c.disable())
             .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(a -> a
-                .requestMatchers("/api/v1/users/signup", "/api/v1/users/login").permitAll()
+                .requestMatchers(PUBLIC_AUTH.toArray(String[]::new)).permitAll()
                 .anyRequest().authenticated())
-            .oauth2ResourceServer(o -> o.jwt(j -> j.jwtAuthenticationConverter(converter))).build();
+            .oauth2ResourceServer(o -> o.bearerTokenResolver(bearerTokens())
+                .jwt(j -> j.jwtAuthenticationConverter(converter))).build();
+    }
+
+    private static BearerTokenResolver bearerTokens() {
+        var resolver = new DefaultBearerTokenResolver();
+        return request -> PUBLIC_AUTH.contains(request.getRequestURI()) ? null : resolver.resolve(request);
     }
 }
