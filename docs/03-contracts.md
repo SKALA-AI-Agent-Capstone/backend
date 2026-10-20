@@ -245,7 +245,7 @@ Agent 및 MCP 밖의 별도 Application 서비스가 책임진다. 중도 실패
 
 ### 인증 토큰 (feat/jwt-refresh-token)
 
-- signup, login, refresh 응답 본문: `user`, `tenant`, `accessToken`, `expiresIn`(초). Access JWT는 기본 30분이며 클레임은 sub, sid(세션), tenantId, role이다.
+- signup, login, refresh 응답 본문: `user`, `tenant`, `accessToken`, `expiresIn`(초). Access JWT는 기본 15분이며 클레임은 sub, sid(세션), tenantId, role이다.
 - 같은 응답의 `Set-Cookie: refresh_token=...; HttpOnly; Secure; SameSite=Strict; Path=/api/v1/users`, 기본 14일. 본문에는 Refresh Token을 넣지 않는다.
 - DB에는 Refresh Token의 SHA-256 해시만 `app.refresh_tokens`에 저장한다. 재발급할 때마다 새 토큰으로 회전하고 세션 만료를 연장한다.
 - refresh 401의 message: `REFRESH_TOKEN_MISSING`, `INVALID_REFRESH_TOKEN`, `REFRESH_TOKEN_EXPIRED`, `REFRESH_TOKEN_REUSED`(이미 회전된 토큰 재사용 → 세션 전체 폐기), `REFRESH_TOKEN_ROTATED`(30초 안의 탭 간 동시 재발급 → 쿠키를 유지하므로 한 번 재시도).

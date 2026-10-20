@@ -36,7 +36,7 @@ bootstrap은 .env의 누락된 설정만 보충하고 기존 비밀번호를 바
 | KIPRIS_SERVICE_KEY | Business MCP | KIPRIS Plus 해당 오퍼레이션 이용 권한 |
 | KIPRIS_WORD_SEARCH_URL | Business MCP | 공식 getWordSearch 경로 기본값, 청구항 원문 경로가 아님 |
 | JWT_SECRET | Backend | bootstrap이 생성하는 로컬 서명 키 |
-| JWT_ACCESS_TTL, JWT_REFRESH_TTL | Backend | 선택. ISO-8601 기간, 기본 PT30M과 P14D |
+| JWT_ACCESS_TTL, JWT_REFRESH_TTL | Backend | 선택. ISO-8601 기간, 기본 PT15M과 P14D |
 | JWT_REFRESH_REUSE_GRACE, JWT_REFRESH_COOKIE_SECURE | Backend | 선택. 기본 PT30S와 true. Safari로 http 로컬 접속 시에만 false |
 | INTERNAL_SERVICE_TOKEN | 서버 간 | bootstrap이 생성하는 내부 인증 토큰 |
 | DB 및 REDIS 비밀번호 | 서비스별 | bootstrap이 생성, 프론트에 전달하지 않음 |

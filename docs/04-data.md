@@ -191,7 +191,7 @@ erDiagram
 | 노션 ERD v2의 목표 | 현재 MVP 대응 | 남은 작업 |
 | --- | --- | --- |
 | tenant, app_user | app.tenants, app.users | writer는 Backend 내부 author와 화면에서 매핑 |
-| refresh_token, password_reset_token | app.sessions(로그인 세션)와 app.refresh_tokens(해시, 회전과 재사용 감지), 30분 access JWT | 비밀번호 재설정, failed_login_count와 잠금은 미구현 |
+| refresh_token, password_reset_token | app.sessions(로그인 세션)와 app.refresh_tokens(해시, 회전과 재사용 감지), 15분 access JWT | 비밀번호 재설정, failed_login_count와 잠금은 미구현 |
 | product, review와 parent_review_id | app.reviews.document의 product와 versions[] | 제품과 버전의 별도 테이블 정규화 및 parent_review_id 전환 |
 | ad_image, evidence_file | app.review_assets, Redis 임시 원본 | 광고와 증빙 메타데이터를 별도 테이블로 나누는 작업 |
 | evidence_structured, violation과 근거, claim_match_result, approval_verify_result, patent 결과 | 버전별 result JSONB에 가능한 출력 보존 | 의미 대조와 검색 미구현, 정규화와 근거 스냅샷 FK 설계 |

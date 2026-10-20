@@ -33,7 +33,7 @@ public class AuthTokens {
     private final boolean secureCookie;
 
     public AuthTokens(JdbcTemplate jdbc, JwtEncoder encoder,
-                      @Value("${capstone.jwt.access-ttl:PT30M}") Duration accessTtl,
+                      @Value("${capstone.jwt.access-ttl:PT15M}") Duration accessTtl,
                       @Value("${capstone.jwt.refresh-ttl:P14D}") Duration refreshTtl,
                       @Value("${capstone.jwt.refresh-reuse-grace:PT30S}") Duration reuseGrace,
                       @Value("${capstone.jwt.refresh-cookie-secure:true}") boolean secureCookie) {
