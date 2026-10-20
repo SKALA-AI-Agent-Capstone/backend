@@ -148,3 +148,45 @@ async def structure(tenant_id,review_id,documents,version_no,run_token):
     return {"status":"partial" if failures else "extracted","text":"\n".join(texts)[:60000],
             "failures":failures,"claimTypes":[],"requirements":[],"flags":[],
             "note":"본문 추출 결과이며 제품 효능과의 일치 판정은 아닙니다."}
+
+
+MFDS_LISTS={
+    "gmp":{"source":"식약처 화장품 GMP 적합 업체현황","env":"MFDS_GMP_URL","match":"ENTP_NAME",
+           "url":"https://apis.data.go.kr/1471000/CsmtcsGmpStbltCompInfo/getCsmtcsGmpStbltCompInfo",
+           "note":"GMP 적합 업체 목록의 보조 확인이며 제품별 품질이나 광고 효능을 증명하지 않습니다."},
+    "regulation":{"source":"식약처 화장품 규제정보","env":"MFDS_REGULATION_URL","match":"INGR_STD_NAME",
+           "url":"https://apis.data.go.kr/1471000/CsmtcsReglMaterialInfoService/getCsmtcsReglMaterialInfoService",
+           "note":"성분의 해외 금지 및 제한 국가 정보이며 국내 배합한도나 광고 적법성 판정을 대신하지 않습니다."},
+}
+
+
+def compact(value):
+    return re.sub(r"[\s()\[\]\u318d\u00b7,.-]","",str(value or "")).lower()
+
+
+async def mfds_list(kind,query,max_pages=20):
+    """The API has no search parameter, so pages are scanned and filtered here."""
+    spec=MFDS_LISTS[kind]
+    result={"status":"error","source":spec["source"],"checkedAt":now(),"query":query,
+            "error":"API_NOT_CONFIGURED","items":[],"note":spec["note"]}
+    key=os.getenv("MFDS_SERVICE_KEY","")
+    url=endpoint(spec["env"],"apis.data.go.kr",spec["url"])
+    if not key or not url:return result
+    target=compact(query);matches=[];seen=0;total=0
+    try:
+        async with httpx.AsyncClient(timeout=12,follow_redirects=False) as client:
+            for page in range(1,max_pages+1):
+                response=await client.get(url,params={"serviceKey":unquote(key),"type":"json","pageNo":page,"numOfRows":100})
+                response.raise_for_status();data=response.json()
+                envelope=data.get("response",data)
+                if str(envelope.get("header",{}).get("resultCode")) not in {"00","0"}:
+                    return {**result,"error":"PROVIDER_REJECTED_REQUEST"}
+                body=envelope.get("body",{});items=normalize_items(body)
+                total=int(body.get("totalCount",0));seen+=len(items)
+                matches.extend(row for row in items if target and target in compact(row.get(spec["match"])))
+                if seen>=total or not items:break
+    except Exception:
+        return {**result,"error":"PROVIDER_REQUEST_FAILED"}
+    if seen<total:
+        return {**result,"status":"incomplete","error":"SCAN_LIMIT_REACHED","items":matches[:20],"scanned":seen,"total":total}
+    return {**result,"status":"found" if matches else "not_found","error":None,"items":matches[:20],"scanned":seen,"total":total}

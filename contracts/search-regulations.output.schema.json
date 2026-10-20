@@ -1,0 +1,183 @@
+{
+  "$defs": {
+    "RegulationHit": {
+      "properties": {
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        },
+        "scope": {
+          "title": "Scope",
+          "type": "string"
+        },
+        "excerpt": {
+          "title": "Excerpt",
+          "type": "string"
+        },
+        "similarity": {
+          "description": "Retrieval score, not a violation probability.",
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Similarity",
+          "type": "number"
+        },
+        "trust_level": {
+          "const": "high",
+          "default": "high",
+          "title": "Trust Level",
+          "type": "string"
+        },
+        "document_key": {
+          "title": "Document Key",
+          "type": "string"
+        },
+        "section": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Section"
+        },
+        "page": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Page"
+        },
+        "source_url": {
+          "title": "Source Url",
+          "type": "string"
+        },
+        "acquisition": {
+          "title": "Acquisition",
+          "type": "string"
+        },
+        "effective_from": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Effective From"
+        },
+        "effective_until": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Effective Until"
+        }
+      },
+      "required": [
+        "source",
+        "version",
+        "scope",
+        "excerpt",
+        "similarity",
+        "document_key",
+        "source_url",
+        "acquisition"
+      ],
+      "title": "RegulationHit",
+      "type": "object"
+    },
+    "RetrievalMode": {
+      "enum": [
+        "keyword",
+        "hybrid"
+      ],
+      "title": "RetrievalMode",
+      "type": "string"
+    },
+    "RetrievalStatus": {
+      "enum": [
+        "FOUND",
+        "NO_RELEVANT_EVIDENCE",
+        "CORPUS_NOT_INDEXED",
+        "SEARCH_ERROR"
+      ],
+      "title": "RetrievalStatus",
+      "type": "string"
+    }
+  },
+  "properties": {
+    "contract_version": {
+      "default": "0.1.0",
+      "title": "Contract Version",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/RetrievalStatus"
+    },
+    "review_date": {
+      "format": "date",
+      "title": "Review Date",
+      "type": "string"
+    },
+    "retrieval_mode": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RetrievalMode"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "corpus_versions": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Corpus Versions",
+      "type": "array"
+    },
+    "hits": {
+      "items": {
+        "$ref": "#/$defs/RegulationHit"
+      },
+      "title": "Hits",
+      "type": "array"
+    },
+    "warnings": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+    }
+  },
+  "required": [
+    "status",
+    "review_date"
+  ],
+  "title": "RegulationSearchResult",
+  "type": "object"
+}

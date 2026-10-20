@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from capstone_shared.contracts import SearchRulesInput, SearchRulesResult
+from capstone_shared.rag_contracts import PrecedentSearchResult, RegulationSearchResult
 from capstone_shared.review_contracts import RunRequest, ResumeRequest, TextAssessment, VisualAssessment
 
 root = Path(__file__).resolve().parents[1]
@@ -14,6 +15,8 @@ args = parser.parse_args()
 for name, model in [
     ("search-rules.input.schema.json", SearchRulesInput),
     ("search-rules.output.schema.json", SearchRulesResult),
+    ("search-regulations.output.schema.json", RegulationSearchResult),
+    ("search-precedents.output.schema.json", PrecedentSearchResult),
     ("mvp-agent-run.input.schema.json", RunRequest),
     ("mvp-agent-resume.input.schema.json", ResumeRequest),
     ("mvp-text-assessment.schema.json", TextAssessment),

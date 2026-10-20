@@ -4,6 +4,34 @@
 search_regulations와 search_precedents다. 기존 기반의 이름을 목표 API처럼 사용하지 않는다.
 공통 인터페이스와 미확정 항목은 docs/03-contracts.md에 모았다.
 
+## 2026-10-20 수집 경로 변경
+
+노션 참고자료 9건 중 화장품법은 [legalize-kr](https://github.com/legalize-kr/legalize-kr/tree/main/kr/%ED%99%94%EC%9E%A5%ED%92%88%EB%B2%95)에서, 나머지는 PDF로 적재한다.
+사용 API 4종은 색인하지 않고 business-mcp 도구로 두어 Agent가 필요할 때 고른다.
+각 출처의 경로는 reference-sources.json의 acquisition 필드가 원본이다.
+
+| 출처 | 경로 | 비고 |
+| --- | --- | --- |
+| S05 화장품법 제13조, 제14조 | legalize-kr | 법률, 시행령, 시행규칙 세 파일 전체를 조문 단위로 적재 |
+| S06 시행규칙 별표 5 | legalize-kr + PDF | 시행규칙 조문은 legalize-kr, 별표 5 표 본문은 Markdown에 없어 PDF |
+| S01 관리 지침, S03 실증 시험방법 | PDF | 식약처 안내서 |
+| S02 협회 광고자문 기준 | PDF | 협회 기준, 법령과 같은 효력으로 취급하지 않음 |
+| S04 2026 지침 및 위반사례 | PDF | 규정과 사례 페이지 범위(page_ranges)를 적기 전까지 적재하지 않음 |
+| S07 실증 규정, S08 기능성 심사 규정 | PDF | 식약처 고시. legalize-kr는 법률, 시행령, 시행규칙만 다룸 |
+| S09 표시광고법 제3조 | PDF | legalize-kr에도 있어 method만 바꾸면 전환 가능 |
+
+```sh
+GITHUB_TOKEN=... uv run --all-packages --frozen python scripts/ingest_rag.py legalize   # 화장품법
+uv run --all-packages --frozen python scripts/ingest_rag.py pdf                          # data/sources/S0x.pdf
+```
+
+- legalize-kr는 개정마다 공포일자 커밋이 있다. 수집일에 시행 중인 버전과 그 뒤에 공포된 미시행 버전을 함께 넣고, effective_from과 effective_until로 구분한다.
+- 같은 문서 키, 버전, 해시는 다시 쓰지 않는다. 새 버전이 오면 이전 버전의 effective_until만 조정한다.
+- legalize-kr 본문은 공포본 기준이라, 부칙에서 시행일을 늦춘 일부 조문이 섞일 수 있다. 부칙과 조문별 시행일 처리는 후속이다.
+- legalize-kr는 force-push로 커밋 해시가 바뀔 수 있다고 공지한다. 버전 식별은 공포일자와 공포번호로 하고 해시는 storage_key의 참고값이다.
+- GitHub 비인증 API 한도는 시간당 60회다. GITHUB_TOKEN은 공개 읽기 권한이면 충분하며 .env에만 둔다.
+- 검색은 임베딩이 없어도 문자 bigram 키워드 순위로 동작한다. RAG_EMBEDDING_MODEL을 정하고 --embed로 적재하면 벡터 순위와 합친다. 키워드만으로는 순위 품질이 낮다.
+
 ## 맡을 입출력
 
 | 도구 | 입력 | 출력 필드 | 검색 범위 |

@@ -16,6 +16,12 @@ Notion 연동 API가 해당 페이지를 반환하지 않아 브라우저에서 
 - RabbitMQ만 중심으로 설계하지 않는다. Frontend, Backend, Agent, 두 MCP와 데이터 및 과금 경계를 함께 본다.
 - 기존 파일에 직접 수정하며 중앙점을 사용하지 않는다. 별도 코드 사본과 제출본을 임의로 만들지 않는다.
 
+## 2026-10-20 RAG 수집 경로 결정
+
+- 사용자 결정: 화장품법은 legalize-kr에서 가져와 벡터 DB에 넣고, 나머지 참고자료는 PDF로 넣는다.
+- 사용 API 4종(보고품목, KIPRIS, GMP, 규제정보)은 색인하지 않고 MCP 도구로 두어 Agent가 골라 쓴다. 키가 없으면 API_NOT_CONFIGURED다.
+- 작업 브랜치는 feat/rag-legal-sources이며 RAG와 MCP 영역만 바꾸고 Agent, Backend, Frontend의 동작은 그대로 둔다.
+
 ## 이번에 실제로 읽은 문서
 
 | 문서 | 확인 범위 |

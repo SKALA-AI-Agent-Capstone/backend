@@ -31,7 +31,8 @@ flowchart TB
   H -->|리포트 데이터| B
   A -. 이번에는 호출하지 않음 .-> RM[RAG MCP]
   RM -. 읽기 전용 .-> K[(같은 PostgreSQL: knowledge, pgvector)]
-  S[Handoff의 공식 원문 확보와 검증 배치] -. 다음 RAG 작업 .-> K
+  LK[legalize-kr 화장품법 Markdown] -->|scripts/ingest_rag.py legalize| K
+  PDF[나머지 출처 PDF] -. scripts/ingest_rag.py pdf, 원문 확보 후 .-> K
 ```
 
 pgvector는 PostgreSQL의 확장이다. 별도 벡터 서버나 클라우드 계정을 만들지 않는다.
@@ -45,8 +46,8 @@ pgvector는 PostgreSQL의 확장이다. 별도 벡터 서버나 클라우드 계
 | Frontend | 로그인, PDF와 이미지 선택, 진행, 원문과 사진 결과, 승인, 이력, 출처 목록 | Vue 3, Vite, Pinia, Router | 정밀 위치 UX, API 항목 재조회, 팀원 관리 UI |
 | Backend | 기업 권한, JWT 세션, 업로드, 결과와 광고 버전, 결정 저장, 원본 폐기 | Spring Boot 3, Security, JDBC, Flyway, Redis | SSE, 내구성 있는 작업 발행, 도메인 테이블 정규화 |
 | Agent | 광고 파싱, 두 분석 경로, 조건부 Business MCP 호출, HITL | FastAPI, LangGraph, OpenAI Responses, Pydantic, PostgreSQL checkpointer | 근거 검색과 검증 루프, API 사용량 계측, 제한 재시도 확장 |
-| Business MCP | 증빙 문자 추출, 식약처 품목 조회 adapter, KIPRIS 등록 후보 조회 | FastMCP, httpx, 공통 파서 | 증빙 의미 구조화와 제품 주장 대조, 청구항 원문 확보와 대조 |
-| RAG MCP | 연결 가능한 기존 v0.1 검색 stub | FastMCP, psycopg | Handoff 원문 수집과 검색, 최신 2개 도구 계약 전환 |
+| Business MCP | 증빙 문자 추출, 식약처 품목 조회 adapter, KIPRIS 등록 후보 조회, GMP 업체와 성분 규제정보 조회 | FastMCP, httpx, 공통 파서 | 증빙 의미 구조화와 제품 주장 대조, 청구항 원문 확보와 대조 |
+| RAG MCP | search_regulations, search_precedents(키워드 검색, 임베딩 선택), 기존 v0.1 stub 유지. 화장품법은 legalize-kr, 나머지는 PDF 배치 적재 | FastMCP, psycopg, pgvector | PDF 원문 확보와 적재, 임베딩 모델 확정, 검색 평가, Agent 호출 연결 |
 | Data | app, agent와 빈 knowledge, 원본 임시 캐시 | PostgreSQL 17, pgvector, Redis | 공개 코퍼스 적재와 검색 평가 |
 
 Agent API와 Worker는 노션의 한 Agent 서비스 안의 역할이다. 입력 처리를 위한 세 번째 MCP나 새 Worker 배포 서비스를 추가하지 않는다.
