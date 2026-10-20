@@ -1,7 +1,7 @@
 name: beauty-capstone-dev
 
 x-python: &python
-  image: beauty-capstone-python:dev
+  image: ${CAPSTONE_IMAGE_PREFIX:-beauty-capstone}-python:dev
   build:
     context: .
     dockerfile: infra/Dockerfile.python
@@ -12,7 +12,7 @@ x-python: &python
 
 services:
   postgres:
-    image: beauty-capstone-postgres:dev
+    image: ${CAPSTONE_IMAGE_PREFIX:-beauty-capstone}-postgres:dev
     build: ./infra/postgres
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-beauty_capstone}
@@ -39,10 +39,20 @@ services:
       APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Run python3 scripts/bootstrap.py}
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?Run python3 scripts/bootstrap.py}
       AGENT_BASE_URL: http://agent:8001
+      JWT_SECRET: ${JWT_SECRET:?Run python3 scripts/bootstrap.py}
+      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-PT15M}
+      JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-P14D}
+      JWT_REFRESH_REUSE_GRACE: ${JWT_REFRESH_REUSE_GRACE:-PT30S}
+      JWT_REFRESH_COOKIE_SECURE: ${JWT_REFRESH_COOKIE_SECURE:-true}
+      REDIS_HOST: redis-cache
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${API_PORT:-8080}:8080"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis-cache:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/actuator/health/readiness"]
@@ -57,8 +67,12 @@ services:
       <<: *python-env
       SERVICE_PORT: "8002"
       BACKEND_BASE_URL: http://api:8080
+      MFDS_SERVICE_KEY: ${MFDS_SERVICE_KEY:-}
+      MFDS_REPORT_URL: ${MFDS_REPORT_URL:-}
+      KIPRIS_SERVICE_KEY: ${KIPRIS_SERVICE_KEY:-}
+      KIPRIS_WORD_SEARCH_URL: ${KIPRIS_WORD_SEARCH_URL:-https://plus.kipris.or.kr/kipo-api/kipi/patUtiModInfoSearchSevice/getWordSearch}
     ports:
-      - "127.0.0.1:8002:8002"
+      - "127.0.0.1:${BUSINESS_MCP_PORT:-8002}:8002"
     depends_on:
       api:
         condition: service_healthy
@@ -76,7 +90,7 @@ services:
       SERVICE_PORT: "8003"
       RAG_DATABASE_URL: postgresql://rag_reader:${RAG_READER_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-beauty_capstone}
     ports:
-      - "127.0.0.1:8003:8003"
+      - "127.0.0.1:${RAG_MCP_PORT:-8003}:8003"
     depends_on:
       postgres:
         condition: service_healthy
@@ -95,8 +109,12 @@ services:
       AGENT_DATABASE_URL: postgresql://agent_user:${AGENT_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-beauty_capstone}
       BUSINESS_MCP_URL: http://business-mcp:8002/mcp
       RAG_MCP_URL: http://rag-mcp:8003/mcp
+      BACKEND_BASE_URL: http://api:8080
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      VISION_MODEL: ${VISION_MODEL:-gpt-5.4-mini}
+      TEXT_MODEL: ${TEXT_MODEL:-gpt-5.4-mini}
     ports:
-      - "127.0.0.1:8001:8001"
+      - "127.0.0.1:${AGENT_PORT:-8001}:8001"
     depends_on:
       business-mcp:
         condition: service_healthy
@@ -116,7 +134,7 @@ services:
     environment:
       API_PROXY_TARGET: http://api:8080
     ports:
-      - "127.0.0.1:5173:5173"
+      - "127.0.0.1:${WEB_PORT:-5173}:5173"
     depends_on:
       api:
         condition: service_healthy

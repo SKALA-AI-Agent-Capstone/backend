@@ -1,35 +1,48 @@
-# 화장품 광고 사전검토 개발 기반
+# 화장품 광고 사전검토 로컬 MVP
 
-팀이 기능을 나누어 개발하기 위한 Spring Boot, Agent, 두 MCP 서버, PostgreSQL 개발환경이다.
-현재 범위는 실행환경, 서비스 연결, 공통 계약과 문서다. 실제 광고 판정과 검색은 미구현 상태를 반환한다.
+제공된 Vue 화면을 Spring Boot, FastAPI Agent와 Business MCP에 연결한 단건 MVP다.
+PDF와 이미지 업로드, 독립적인 문구와 사진 분석 경로, 결과와 버전 저장, 담당자 승인 및 Graph 재개를 제공한다.
+OpenAI와 공공 API adapter는 서버 설정으로 연결한다. 키가 없으면 미연결 상태를 표시한다.
+RAG는 Handoff 기반의 로컬 PostgreSQL + pgvector 설계, 출처 목록과 원문 수집 및 기본 청킹 점검까지 반영했다. 실제 검색과 적법 판정은 아직 하지 않는다.
 
 제품 요구사항 원본은 [노션 기획서](https://app.notion.com/p/Agent-3fe616ab8fec80bfb92df115c66aa83d)다.
 2026-10-20에 기획서 본문과 연결된 REST, MCP, Graph 및 실행 시퀀스 초안을 확인했으며, 노션 미확정 항목과 구현 선택은 문서에서 구분한다.
 
-## 시작
+## main에서 시작
 
-Docker Engine과 Compose를 실행한 뒤 이 저장소에서 진행한다.
+처음 받는 팀원은 두 저장소를 같은 상위 폴더에 clone한다. 아래 경로는 예시이며 기존 개인 폴더가 없어도 실행할 수 있다.
 
-~~~sh
+```sh
+mkdir beauty-capstone
+cd beauty-capstone
+git clone --branch main https://github.com/SKALA-AI-Agent-Capstone/backend.git
+git clone --branch main https://github.com/SKALA-AI-Agent-Capstone/frontend.git
+cd backend
 python3 scripts/bootstrap.py
-docker compose up --build --wait
-~~~
+docker compose --profile web up --build -d --wait --wait-timeout 240
+```
 
-프론트엔드까지 함께 실행하려면 두 저장소를 같은 상위 폴더 아래에 둔다.
+Docker Engine과 Compose를 실행한 상태에서 사용한다. 화면은 http://localhost:5173 이다.
+처음에는 기업 작업공간을 만들면 된다. 선택적으로 uv 환경에서 검증 관리자 계정도 생성할 수 있다.
 
-~~~text
-capstone/
-  backend/
-  frontend/
-~~~
+```sh
+uv sync --all-packages --frozen
+uv run --all-packages --frozen python scripts/setup_demo.py
+```
 
-~~~sh
-docker compose --profile web up --build --wait
-~~~
+검증 이메일은 master@beauty-review.local이며 실행자별 비밀번호는 Git에서 제외된 data/demo-access.md에 저장된다.
+공용 마스터 비밀번호를 소스에 넣지 않는다. 현재 Docker DB나 계정이 clone으로 복사되는 구조가 아니다.
+원본 파일, DB 내용, 실제 API 키와 모델 가중치도 Git에 포함하지 않는다.
 
-화면은 http://localhost:5173 이다. 기본 Redis는 원본 파일용 비영구 캐시 준비다.
-다건 처리용 RabbitMQ를 추가하려면 queue 프로필을 켠다. 작업 발행과 Worker는 아직 구현하지 않았다.
-전체 환경은 docker compose --profile web --profile queue up --build --wait로 함께 확인한다.
+## 작업 전에 읽기
+
+1. [최신 노션 기획서](https://app.notion.com/p/Agent-3fe616ab8fec80bfb92df115c66aa83d)와 담당 영역의 연결 문서를 읽는다.
+2. DB를 바꾸면 [노션 ERD v2](https://app.notion.com/p/Data-ERD-App-State-Vector-DB-3ff616ab8fec81c7b57ac75358ced570)를 확인한다.
+3. 이 저장소의 [프로젝트 메모리](docs/08-project-memory.md), [현재 아키텍처](docs/01-architecture.md), [현재와 목표 ERD의 대응](docs/04-data.md)을 읽는다.
+4. [계약](docs/03-contracts.md)과 [담당별 다음 작업](docs/10-work-breakdown.md)을 확인하고 main에서 feat 브랜치를 만든다.
+
+노션의 목표, 현재 코드와 미구현 기능을 구분한다. API 명세 확인을 정상 실응답 검증으로 표시하지 않는다.
+RAG는 Handoff 기준의 빈 knowledge DB와 출처 목록이며, 로컬 수집 및 기본 청킹 점검 코드까지만 추가됐다.
 
 ## 공통 문서
 
@@ -66,15 +79,19 @@ docs는 두 저장소의 공통 구현 안내다. 프론트엔드에 문서 내�
 PostgreSQL 안에 벡터를 저장하므로 별도 Vector DB 서비스는 없다.
 각 팀원의 DB는 로컬에 따로 생성되며 GitHub에 데이터가 자동 공유되는 구조는 아니다.
 
-## 구현 범위
+## 현재 범위
 
-- 실제 연결: Vue API 프록시, Spring Boot의 DB 확인, Agent의 인증된 MCP 연결과 도구 목록 조회.
-- 기본 제공: 공개 문서용 DB 스키마, DB 역할 분리, 잠금 파일, 환경변수 생성, CI와 검증 스크립트.
-- 미구현: 사용자 로그인과 기업별 권한, 광고 업로드, OCR, LLM 호출, 검색과 색인, 승인과 재개, SSE, 과금, 외부 공공 API.
-- 별도 과금 서비스와 원장 DB는 목표 경계만 문서화했으며 현재 실행 서비스에는 포함하지 않는다.
-- 검색 도구는 NOT_IMPLEMENTED, 작업 접수는 HTTP 501로 응답한다. 가짜 판정이나 근거를 반환하지 않는다.
+- 기업 작업공간과 JWT 로그인, 세션 로그아웃, 서버의 기업 및 역할 권한 검사.
+- 실제 PDF와 이미지 multipart 업로드, Redis 임시 보관과 처리 후 폐기.
+- pdfplumber, pypdfium2, Pillow와 Tesseract 한국어 OCR. OpenAI 문구 예비검토와 사진 독립 검토.
+- FastMCP 증빙 추출, 식약처와 KIPRIS 조회 adapter. 실제 승인키와 정상 응답 검증은 별도다.
+- PostgreSQL 결과와 버전, LangGraph HITL checkpoint, 담당자 결정 저장과 재개, 이력 삭제.
+- RAG 출처 후보 9건과 API 4종 목록, knowledge 스키마와 vector(1024), 원문 수집 및 기본 청킹 점검. 임베딩과 검색은 제외.
+- SSE, 다건 RabbitMQ Worker, 실제 과금, 증빙 의미 대조와 특허 청구항 대조는 후속.
 
-개발용 정적 서비스 토큰은 사용자 인증이 아니다. 공개 배포 전에 사용자 인증과 기업별 권한을 구현해야 한다.
+공개 계약은 /api/v1이다. 이전 /api/reviews 501 경로와 v0.1 검색 stub은 호환 기반이며 새 업무 화면에서 호출하지 않는다.
+실제 모델과 공공 API 설정, 시작 방법 및 검증용 주소는 [개발환경](docs/02-development.md)을 따른다.
+배포 및 인수 기준은 main이다. PR의 원격 Checks와 병합 커밋으로 반영 상태를 확인한다.
 실제 문서, 모델 가중치, 원본 광고와 자격증명은 Git에 올리지 않는다.
 
 ## 팀원이 처음 읽을 순서
@@ -85,17 +102,5 @@ PostgreSQL 안에 벡터를 저장하므로 별도 Vector DB 서비스는 없다
 4. [공통 계약](docs/03-contracts.md)의 현재 계약과 제안 계약을 구분한다.
 5. [Git 협업 가이드](docs/05-collaboration.md)를 따라 기능별 브랜치와 PR을 만든다.
 
-chore/dev-foundation은 초기 환경 작업 이름이다. Vue, Java 업무 서버, Python Agent와 두 MCP의 기반을 각각 포함한다.
-입력 처리 설계에서 제안한 PDF 렌더, OCR와 Vision 호출은 아직 구현되지 않았다.
-
-## 초기 세팅의 범위
-
-서비스 분할은 Vue, Spring Boot, Agent, Business MCP와 RAG MCP다. RabbitMQ는 다건 작업 전달,
-Redis는 원본 임시 보관, PostgreSQL은 업무와 실행 상태, pgvector는 공개 근거 검색을 맡는다.
-과금은 별도 후속 서비스다. RabbitMQ를 모든 API, MCP 호출이나 파일 저장에 사용하지 않는다.
-
-노션의 7개 MCP 도구와 14개 API 등록 항목, 기존 v0.1 계약 및 문서 간 차이는 docs/03-contracts.md에 정리했다.
-목표 HTTP 경로는 API 등록부의 /api/v1이며 기존 REST 초안과의 표기 차이도 남긴다.
-Agent API와 Worker는 하나의 Agent 서비스 내부 역할이다. 광고 파싱은 Agent, 증빙 파싱은 Business MCP 책임이다.
-업무 기능 구현 전에 담당자끼리 계약 PR로 맞춘다. Frontend의 드래그앤드롭과 시작 버튼은
-frontend/README.md의 개발 목표만 추가했으며 이번에 화면 기능을 구현하지 않았다.
+chore/dev-foundation은 초기 실행환경 브랜치다. 후속 기능은 최신 main에서 별도 feat 브랜치를 만들어 진행한다.
+서비스별 다음 작업과 인터페이스 담당은 docs/10-work-breakdown.md를 따른다.

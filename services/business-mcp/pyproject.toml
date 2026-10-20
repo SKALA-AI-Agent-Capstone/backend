@@ -2,7 +2,7 @@
 name = "capstone-business-mcp"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
-dependencies = ["capstone-shared", "fastmcp==4.1.1"]
+dependencies = ["capstone-shared", "fastmcp==4.1.1", "pdfplumber>=0.11,<1"]
 
 [project.scripts]
 business-mcp = "capstone_business_mcp.server:main"

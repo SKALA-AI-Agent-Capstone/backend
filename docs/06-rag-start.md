@@ -1,6 +1,6 @@
 # RAG 담당 시작점
 
-개발 목표는 [노션 MCP 명세](https://app.notion.com/p/MCP-business-mcp-rag-mcp-API-3fe616ab8fec818bb82efebe45ca502f)의
+개발 목표는 [노션 MCP 명세](https://app.notion.com/p/MCP-business-mcp-rag-mcp-API-1-3ff616ab8fec804eba66e8a7b2bd99e8)의
 search_regulations와 search_precedents다. 기존 기반의 이름을 목표 API처럼 사용하지 않는다.
 공통 인터페이스와 미확정 항목은 docs/03-contracts.md에 모았다.
 
@@ -87,3 +87,36 @@ claim_id와 위치 연결은 Agent 문맥에서 유지할 수 있다. 새 도구
 - 임베딩 후보: https://huggingface.co/BAAI/bge-m3
 
 위 링크의 실제 개정 여부와 파일 내용은 수집 담당자가 다시 확인한다. 아직 DB에 수집한 자료는 없다.
+
+
+## 로컬 Handoff 반영 계획
+
+`Cosmetic_RAG_AI_Handoff`의 9개 출처와 검증표를 다음 RAG 작업의 기준으로 사용한다.
+원문은 Git에 넣지 않으며 로컬 수집과 기본 청킹 점검을 제공한다. 임베딩과 DB 적재 및 검색은 구현하지 않았다.
+DB는 기존 로컬 Docker PostgreSQL의 knowledge 스키마와 vector(1024)를 사용한다.
+실행 준비와 권한 확인은 docs/02-development.md, 수집 순서와 자료별 경계는 docs/04-data.md를 따른다.
+법제처 API는 수집 배치에 사용하고, 특허 및 제품 조회는 Business MCP의 실시간 경로다.
+
+## main을 clone한 뒤 바로 확인할 파일
+
+Desktop Handoff 폴더가 팀원 컴퓨터에 없어도 개발을 시작할 수 있도록 기준을 저장소에 반영했다.
+
+- 공개 근거 9건: services/api/src/main/resources/reference-sources.json.
+- 노션 사용 API 4종: services/api/src/main/resources/external-api-catalog.json.
+- 공식 포털에서 확인한 식약처의 실제 파라미터와 응답 컬럼: contracts/external/*.swagger.json.
+- 수집과 기본 청킹 점검: scripts/audit_sources.py와 services/rag-mcp/src/capstone_rag_mcp/preview.py.
+- 실제 원문과 청크 미리보기: 실행자가 로컬에서 생성하는 data/source-audit, Git 제외.
+
+```sh
+uv run --all-packages --frozen python scripts/audit_sources.py --download --probe-without-key
+```
+
+이 명령은 출처 9건과 API 4종을 따로 기록한다. 공식 페이지 HTTP 200, PDF 다운로드와 제목 대조,
+기본 문자 분할, 승인키를 사용한 정상 API 응답은 서로 다른 검증 단계다.
+LAW_OC가 있으면 화장품법 제13조와 제14조, 표시광고법 제3조 및 실증 규정의 XML 수집도 시도한다.
+키 값을 출력하거나 요청 URL의 키를 보고서에 넣지 않는다.
+
+기본 청킹은 페이지별 최대 900자와 150자 겹침이며 원문 start/end와 페이지를 보존한다.
+이는 초기 입출력 검증용이다. 표와 예외의 의미 단위 복원, 혼합 문서 S04의 규정 및 사례 분리,
+시행일 확인과 코퍼스 버전 확정, 임베딩 및 DB 적재와 검색 평가는 다음 RAG 작업이다.
+공식 PDF를 받았다고 source_verified=true 또는 retrieval_ready=true로 바꾸지 않는다.

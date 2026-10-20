@@ -1,6 +1,16 @@
 server:
   port: 8080
 spring:
+  servlet:
+    multipart:
+      max-file-size: 25MB
+      max-request-size: 76MB
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:56379}
+      password: ${REDIS_PASSWORD}
+      timeout: 3s
   application:
     name: beauty-api
   datasource:
@@ -29,5 +39,12 @@ management:
         readiness:
           include: readinessState,db
 capstone:
+  jwt-secret: ${JWT_SECRET}
+  jwt:
+    access-ttl: ${JWT_ACCESS_TTL:PT15M}
+    refresh-ttl: ${JWT_REFRESH_TTL:P14D}
+    # 이미 회전된 Refresh Token이 이 시간 안에 다시 오면 탭 간 동시 재발급으로 보고 세션을 폐기하지 않는다.
+    refresh-reuse-grace: ${JWT_REFRESH_REUSE_GRACE:PT30S}
+    refresh-cookie-secure: ${JWT_REFRESH_COOKIE_SECURE:true}
   internal-token: ${INTERNAL_SERVICE_TOKEN}
   agent-base-url: ${AGENT_BASE_URL:http://127.0.0.1:8001}

@@ -1,5 +1,6 @@
 import asyncio
 import os
+import httpx
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
@@ -12,6 +13,10 @@ from capstone_shared.settings import (
     required_env,
     valid_internal_authorization,
 )
+from .review_models import RunRequest, ResumeRequest
+from .review_engine import Provider, prepare_assets, build_graph, progress
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from langgraph.types import Command
 
 
 async def require_internal(authorization: str | None = Header(default=None)) -> None:
@@ -31,7 +36,7 @@ async def mcp_probe(url: str) -> dict:
 
 def create_app() -> FastAPI:
     internal_token()
-    app = FastAPI(title="Capstone Agent development scaffold", version=CONTRACT_VERSION)
+    app = FastAPI(title="Cosmetics review Agent local MVP", version="0.2.0-mvp")
 
     @app.get("/health/live")
     async def live() -> dict:
@@ -60,20 +65,46 @@ def create_app() -> FastAPI:
                 "business_mcp": business,
                 "rag_mcp": rag,
             },
-            "implemented": ["health", "authenticated-mcp-discovery"],
-            "planned": ["claim-extraction", "langgraph", "hitl", "queue-worker"],
+            "implemented": ["health", "authenticated-mcp-discovery", "ad-parsing", "independent-text-and-photo-paths", "langgraph", "postgres-hitl"],
+            "planned": ["rag-retrieval", "evidence-claim-matching", "queue-worker", "billing"],
         }
 
     @app.post("/internal/runs", dependencies=[Depends(require_internal)])
-    async def create_run() -> JSONResponse:
-        return JSONResponse(
-            {
-                "contract_version": CONTRACT_VERSION,
-                "code": "NOT_IMPLEMENTED",
-                "message": "Agent execution is assigned to the Agent developer.",
-            },
-            status_code=501,
-        )
+    async def create_run(request: RunRequest) -> dict:
+        try:
+            async with asyncio.timeout(270):
+                native, tiles = await prepare_assets(request)
+                async with AsyncPostgresSaver.from_conn_string(required_env("AGENT_DATABASE_URL")) as saver:
+                    await saver.setup()
+                    graph = build_graph(native, tiles, Provider(), saver, request)
+                    config = {"configurable":{"thread_id":f"{request.tenantId}:{request.reviewId}:v{request.versionNo}"}}
+                    output = await graph.ainvoke({"reviewId":request.reviewId,"tenantId":request.tenantId,
+                        "versionNo":request.versionNo,"product":request.product}, config)
+                    await progress(request,4)
+                    return {"result":output["result"],"hitlStatus":"pending","contract_version":"0.2.0-mvp"}
+        except (ValueError, httpx.HTTPStatusError) as error:
+            raise HTTPException(status_code=422,detail="INPUT_UNREADABLE_OR_EXPIRED") from None
+
+    @app.post("/internal/runs/resume", dependencies=[Depends(require_internal)])
+    async def resume(request: ResumeRequest) -> dict:
+        async with AsyncPostgresSaver.from_conn_string(required_env("AGENT_DATABASE_URL")) as saver:
+            graph=build_graph([],[],Provider(),saver)
+            config={"configurable":{"thread_id":f"{request.tenantId}:{request.reviewId}:v{request.versionNo}"}}
+            snapshot=await graph.aget_state(config)
+            if not snapshot.values:
+                raise HTTPException(status_code=404,detail="CHECKPOINT_NOT_FOUND")
+            if not snapshot.next:
+                return {"reportReady":True,"alreadyResumed":True}
+            output=await graph.ainvoke(Command(resume=request.state),config)
+            return {"reportReady":output.get("reportReady",False)}
+
+    @app.post("/internal/runs/delete", dependencies=[Depends(require_internal)])
+    async def delete_runs(request: ResumeRequest) -> dict:
+        async with AsyncPostgresSaver.from_conn_string(required_env("AGENT_DATABASE_URL")) as saver:
+            await saver.setup()
+            for no in range(1,request.versionNo+1):
+                await saver.adelete_thread(f"{request.tenantId}:{request.reviewId}:v{no}")
+        return {"deleted":True}
 
     return app
 

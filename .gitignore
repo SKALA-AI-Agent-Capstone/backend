@@ -17,3 +17,8 @@ data/*
 !data/.gitkeep
 reports/
 *.log
+
+# Locally supplied provider credentials
+*.env
+secrets/
+credentials/

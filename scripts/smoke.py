@@ -56,10 +56,10 @@ async def main(include_queue: bool = False) -> None:
         assert denied.status_code == 401, "Spring internal API must require a token"
         ready = await http.get(required_env("AGENT_BASE_URL") + "/health/ready")
         assert ready.status_code == 200
-        not_implemented = await http.post(
+        invalid_run = await http.post(
             required_env("AGENT_BASE_URL") + "/internal/runs", headers=headers
         )
-        assert not_implemented.status_code == 501
+        assert invalid_run.status_code == 422, "Agent execution now requires a scoped MVP request"
         for name in ["BUSINESS_MCP_URL", "RAG_MCP_URL"]:
             denied = await http.post(required_env(name), json={})
             assert denied.status_code == 401, f"{name} must require a token"

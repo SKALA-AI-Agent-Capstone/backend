@@ -1,261 +1,112 @@
-# 서비스 아키텍처와 분할
+# 서비스 아키텍처
 
-기준은 [노션 기획서의 5장과 6장](https://app.notion.com/p/Agent-3fe616ab8fec80bfb92df115c66aa83d)이다.
-2026-10-20에 본문과 연결된 Graph 및 시퀀스 초안을 확인했다.
-아래 목표 구조와 현재 실행 기반을 구분한다. RabbitMQ는 전체 구조의 다건 전달 구성 요소다.
+기준은 [노션 기획서](https://app.notion.com/p/Agent-3fe616ab8fec80bfb92df115c66aa83d)와 연결된 MCP, REST, Graph 및 RabbitMQ 문서다.
+이번 구현은 제공된 Vue 화면을 연결한 단건 MVP다. RAG DB 계획은 `Cosmetic_RAG_AI_Handoff`를 반영한다.
+이 문서는 현재 동작과 최종 목표를 구분한다. 팀원의 통합 기준은 두 저장소의 main이며 기능별 feat 브랜치와 PR로 작업한다.
 
-## 목표 계층 구조
+## 현재 실행 구조
 
-~~~mermaid
+```mermaid
 flowchart TB
-  subgraph Presentation
-    UI["Vue 3 / Vite / TypeScript / Pinia"]
-  end
-  subgraph Application
-    API["Spring Boot 3 / BFF / JWT / Tenant / SSE"]
-    BILL["별도 과금 서비스 / 잔액 확인과 확정 차감"]
-  end
-  subgraph Orchestration
-    subgraph AGENT_SERVICE["하나의 Agent 서비스 / 내부 역할"]
-    AAPI["Agent API / FastAPI / 실행 접수와 다건 발행"]
-    WORKER["Agent Worker / 라이브러리 미확정"]
-    AGENT["LangGraph / 도구선택 loop / Guardrail / Recovery / HITL"]
-    end
-    QUEUE["RabbitMQ / 다건 메시지 전달"]
-  end
-  subgraph Tool
-    BUSINESS["business-mcp / 증빙 구조화, 제품 대조, 식약처, 특허"]
-    RAG["rag-mcp / rules와 cases 분리 검색"]
-    PARSER["순수 문서 파서 / 역할별 내부 호출, 공유 가능"]
-  end
-  subgraph Data
-    APP[("PostgreSQL / 제품과 검토 이력")]
-    STATE[("PostgreSQL / 체크포인트")]
-    VECTOR[("PostgreSQL + pgvector / 공개 근거")]
-    RAW[("Redis 임시 캐시 / 업로드 원본")]
-    LEDGER[("별도 과금 DB / append-only ledger")]
-    EXT["식약처 API / KIPRIS Plus"]
-  end
-  UI -->|"HTTPS / REST / SSE"| API
-  API -->|"내부 HTTP / 단건과 다건 접수"| AAPI
-  AAPI -->|"단건 실행"| AGENT
-  AAPI -->|"다건 발행 확인"| QUEUE
-  QUEUE --> WORKER --> AGENT
-  API --> APP
-  API --> RAW
-  API -->|"잔액 사전확인"| BILL --> LEDGER
-  API -.->|"완료 사용량 이벤트 / 전달 경로 후속 설계"| BILL
-  AGENT -->|"MCP"| BUSINESS
-  AGENT -->|"MCP"| RAG --> VECTOR
-  BUSINESS -->|"내부 API"| API
-  BUSINESS --> PARSER
-  AGENT -->|"광고 입력 파싱"| PARSER
-  BUSINESS --> EXT
-  AGENT -->|"유일한 직접 DB 접근 예외: checkpointer"| STATE
-  AGENT -->|"진행과 결과 이벤트"| API
-  AGENT -->|"준비된 이미지와 텍스트 / HTTPS"| LLM["Vision과 텍스트 LLM API / 서버 키"]
-  INDEX["공개 문서 수집 / 파싱 / 청킹 / 임베딩"] --> VECTOR
-~~~
+  U[기업 작성자와 검토자] --> V[Vue 3, Vite, Pinia]
+  V -->|JWT, /api/v1, multipart와 상태 폴링| B[Spring Boot 3, Java 21]
+  B -->|파일 임시 저장| R[Redis: 30분 안전 TTL]
+  B -->|회원, 기업, 결과, 버전, 승인| APP[(로컬 PostgreSQL: app)]
+  B -->|내부 인증 HTTP: 단건 실행| A[FastAPI, LangGraph]
+  A -->|범위가 제한된 asset 요청| B
+  A --> P[pdfplumber, pypdfium2, Pillow]
+  P --> T[문구: native PDF + Tesseract 한국어 OCR]
+  T --> TL[OpenAI: 문구 예비검토, Structured Output]
+  P --> VL[사진: OpenAI VLM 독립 검토]
+  TL --> M[결과 합류]
+  VL --> M
+  M -->|인증된 MCP tools/call| BM[Business MCP: FastMCP]
+  BM -->|증빙 asset 읽기| B
+  BM -->|서버의 승인키로 조회| EX[식약처, KIPRIS Plus]
+  BM --> H[LangGraph HITL interrupt]
+  H --> CP[(같은 PostgreSQL: agent checkpoint)]
+  H -->|미승인 초안| B
+  V -->|검토 의견과 승인 결정| B
+  B -->|해당 버전 재개| H
+  H -->|리포트 데이터| B
+  A -. 이번에는 호출하지 않음 .-> RM[RAG MCP]
+  RM -. 읽기 전용 .-> K[(같은 PostgreSQL: knowledge, pgvector)]
+  S[Handoff의 공식 원문 확보와 검증 배치] -. 다음 RAG 작업 .-> K
+```
 
-다건 발행 주체는 연결된 시퀀스의 Agent API를 따른다. Backend와 Agent가 접수 및 발행 상태를 맞추는 계약은 후속이다.
-단건 큐 통일은 미확정이며 단건을 내부 HTTP로 실행하는 경로를 유지한다.
-과금 이벤트의 정확한 전달 방식과 Worker 라이브러리는 후속 설계 항목이다.
-과금 판단과 원장 갱신을 LLM이나 MCP 도구에 맡기지 않는다.
-잔액 사전확인은 병렬 요청의 중복 소비를 막는 예약과 동일하지 않으므로 과금 구현 시 별도로 설계한다.
+pgvector는 PostgreSQL의 확장이다. 별도 벡터 서버나 클라우드 계정을 만들지 않는다.
+하나의 로컬 DB 서버 안에서 app, agent, knowledge 스키마와 DB 사용자를 분리한다.
+과금 원장은 목표상 별도 서비스와 DB이며 현재 실행 구조에 넣지 않았다.
 
-노션 Graph의 광고 입력 파싱과 Vision 호출은 Agent 입력 노드 책임이다. 증빙 파싱은 business-mcp.structure_evidence가 맡는다.
-같은 PDF 파서의 순수 함수를 공유할 수 있지만 광고 입력을 위해 prepare_input이라는 새 MCP 도구를 필수로 만들지 않는다.
-Backend가 인증된 파일 참조를 전달하고 원본 접근을 검증한다. Agent가 Redis에 직접 접속하는 경로는 추가하지 않는다.
-파일 참조를 읽고 페이지 콘텐츠를 전달하는 내부 API는 구현할 계약이며 현재 존재하지 않는다.
-PDF 문자 추출, 이미지 OCR과 Vision 분석의 차이는 [입력 처리 설계](09-input-pipeline.md)에 정의했다.
+## 서비스 분할과 기술
 
-## 현재 실행 기반
-
-| 실행 단위 | 현재 스택 | 현재 역할 |
-| --- | --- | --- |
-| frontend | Vue 3, TypeScript, Vite, Router, Pinia, Node 24 | 실제 연결 상태 확인 화면 |
-| services/api | Java 21, Spring Boot 3.5.16, JDBC, Flyway | DB와 Agent 연결, 내부 토큰 경계 |
-| services/agent | Python 3.12, FastAPI, FastMCP Client | 인증된 MCP 목록 조회, 체크포인트용 DB 연결 확인 |
-| services/business-mcp | Python 3.12, FastMCP 4.1.1, httpx | Backend 내부 API 연결 확인 |
-| services/rag-mcp | Python 3.12, FastMCP 4.1.1, Pydantic, psycopg | 검색 계약, pgvector 연결 확인 |
-| postgres | PostgreSQL 17, pgvector 0.8.7 | app, agent, knowledge 스키마와 권한 |
-| redis-cache | Redis 7.4 | 비영구 원본 캐시 준비, 업로드 연동 미구현 |
-| rabbitmq | RabbitMQ 4.3.6, queue 프로필 | 계정, vhost, 볼륨과 연결 검사, 업무 발행 및 Worker 미구현 |
-| 과금 서비스와 DB | 스택 상세 미확정 | 현재 실행 서비스 없음 |
-
-LangGraph는 선택 의존성으로 잠갔지만 그래프와 체크포인터는 아직 없다.
-JWT, SSE, Redis 파일 업로드, 큐 발행, 과금도 실행환경 준비와 구분한다.
-pdfplumber의 고객 입력 연동, PDF 렌더와 OCR, Vision SDK와 API 호출은 미구현이다.
-입력 처리 예시 화면은 외부 API를 호출하지 않는 설명용 탐색 화면이며 제품 Frontend가 아니다.
-
-## 책임과 데이터 접근
-
-- Frontend는 Backend API만 호출한다. MCP, DB, 내부 토큰에 접근하지 않는다.
-- Backend는 로그인과 기업 권한, 검토 이력 조회 및 삭제, 광고 버전 관리를 소유한다. 이력 CRUD를 MCP에 추가하지 않는다.
-- Agent는 처리 순서, 도구 선택과 판단, HITL 중단과 재개를 소유한다. 업무 데이터는 MCP로 접근한다.
-- Agent의 DB 직접 접근은 LangGraph 실행 상태와 HITL 체크포인트에만 허용한다. 현재 agent_user도 agent 스키마에만 권한이 있다.
-- business-mcp는 structure_evidence, match_product_claims, verify_functional_approval, verify_patent와 match_patent_claims를 담당한다. 업무 DB와 Redis에 직접 접근하지 않는다.
-- rag-mcp는 법령과 기준, 보조 사례를 검색하고 출처와 버전을 반환한다. 특허 검증을 중복 구현하지 않는다.
-- Redis는 처리 중 원본 임시 보관, RabbitMQ는 다건 작업 참조 전달이다. 원본 바이트를 큐나 영구 체크포인트에 넣지 않는다.
-- 공개 문서 색인은 사용자 요청과 별도 배치다. 문서와 임베딩을 Git에 저장하지 않는다.
-
-## 단건과 다건 목표 흐름
-
-| 단계 | 화면과 상태 | 서버 처리 | 실패 또는 예외 |
+| 서비스 | 현재 책임과 코드 | 주요 기술 | 다음 작업 |
 | --- | --- | --- | --- |
-| 1. 입력 | 제품, 광고와 증빙 입력 | Backend가 형식, 크기와 파일 유효성 확인 | 암호, 손상과 형식 오류는 INPUT_REJECTED |
-| 2. 접수 | 접수 완료 | 기업 권한과 잔액 확인, asset 해시와 광고 버전, Redis 임시 저장 | 권한 또는 잔액 문제는 실행 전 중단 |
-| 3. 실행 | 처리 중 또는 다건 대기 | 단건 내부 HTTP, 다건 Agent API → RabbitMQ → Worker | 중복 command_id 통제, 실패 건만 재시도 |
-| 4. 읽기 | 페이지별 추출과 확인 | Agent 광고 파싱과 Vision, Business MCP 증빙 구조화 | 불명확한 숫자와 각주는 WAITING_INPUT |
-| 5. 주장 | 원문과 각주가 연결된 주장 | Agent가 블록과 시각 관찰을 구조화 | 추측한 수치와 불완전한 원문을 확정하지 않음 |
-| 6. 검색 | 근거 검색 중 | rag-mcp가 rules와 cases를 분리 조회 | 빈 검색 결과와 검색 오류 구분, 목표 및 현재 계약은 03-contracts.md 참조 |
-| 7. 대조 | 증빙과 공식 조회 확인 | business-mcp가 제품과 시험자료, 식약처와 특허 대조 | 자료 누락, 정상 미조회와 API 장애 구분 |
-| 8. 초안 | 미승인 검토 초안 | Agent가 근거, 확인 사항과 리라이트 생성 | 미확인 항목을 남긴 부분 결과 표시 |
-| 9. 승인 | 담당자 검토 | Backend 권한과 버전 재확인, Graph interrupt 재개 | 원본 필요 시 재업로드, 변경 광고는 새 버전 |
-| 10. 보존 | 결과와 PDF, 과거 이력 | Backend 영구 저장, 원본 정리 확인과 별도 과금 이벤트 | 중복 이벤트 차감 방지, 실패 과금 정책은 미확정 |
+| Frontend | 로그인, PDF와 이미지 선택, 진행, 원문과 사진 결과, 승인, 이력, 출처 목록 | Vue 3, Vite, Pinia, Router | 정밀 위치 UX, API 항목 재조회, 팀원 관리 UI |
+| Backend | 기업 권한, JWT 세션, 업로드, 결과와 광고 버전, 결정 저장, 원본 폐기 | Spring Boot 3, Security, JDBC, Flyway, Redis | SSE, 내구성 있는 작업 발행, 도메인 테이블 정규화 |
+| Agent | 광고 파싱, 두 분석 경로, 조건부 Business MCP 호출, HITL | FastAPI, LangGraph, OpenAI Responses, Pydantic, PostgreSQL checkpointer | 근거 검색과 검증 루프, API 사용량 계측, 제한 재시도 확장 |
+| Business MCP | 증빙 문자 추출, 식약처 품목 조회 adapter, KIPRIS 등록 후보 조회 | FastMCP, httpx, 공통 파서 | 증빙 의미 구조화와 제품 주장 대조, 청구항 원문 확보와 대조 |
+| RAG MCP | 연결 가능한 기존 v0.1 검색 stub | FastMCP, psycopg | Handoff 원문 수집과 검색, 최신 2개 도구 계약 전환 |
+| Data | app, agent와 빈 knowledge, 원본 임시 캐시 | PostgreSQL 17, pgvector, Redis | 공개 코퍼스 적재와 검색 평가 |
 
-원본 정리는 필요한 추출과 초안 저장 완료 시점에 수행하는 기준안을 제안한다.
-마지막 단계는 정리 완료 확인과 잔여 파일 정리도 포함한다. 승인까지 원본을 유지할지는 팀 결정 사항이다.
+Agent API와 Worker는 노션의 한 Agent 서비스 안의 역할이다. 입력 처리를 위한 세 번째 MCP나 새 Worker 배포 서비스를 추가하지 않는다.
+업무 DB는 Backend가 소유한다. Business MCP는 Backend 내부 API를 사용하고 DB나 Redis에 직접 연결하지 않는다.
+Agent의 DB 직접 접근은 agent checkpointer만 허용한다.
 
-~~~mermaid
-sequenceDiagram
-  participant U as Vue
-  participant B as Spring Boot
-  participant E as Agent API
-  participant Q as RabbitMQ
-  participant W as Agent Worker
-  participant A as Agent Graph
-  participant M as MCP 서버
-  participant L as Vision / LLM API
-  U->>B: 제품, 광고와 증빙 입력
-  B->>B: 인증, 기업 권한, 잔액 확인
-  alt 단건
-    B->>E: 내부 HTTP로 즉시 실행
-    E->>A: Graph 실행
-  else 다건
-    B->>B: 작업과 발행 대기 기록 저장
-    B-->>U: 202와 접수 ID, 브로커 적재 완료와 구분
-    B->>E: 인증된 건별 작업 실행 접수
-    E->>Q: 작업 참조 발행과 confirm
-    E-->>B: 접수와 발행 상태
-    Q->>W: 건별 메시지 전달
-    W->>A: 같은 Graph 실행
-  end
-  A->>A: 광고 PDF 파싱, 이미지와 페이지 준비
-  Note over B,A: 파일 전달은 인증된 내부 입력 계약, Redis 직접 접근 아님
-  A->>L: 필요한 이미지와 문자, 서버 API 키
-  L-->>A: 문자와 시각 관찰, 주장 후보
-  opt 판독 불명
-    A-->>B: WAITING_INPUT과 확인할 영역
-    B-->>U: 수정 또는 재업로드 요청
-    U->>B: 원문 보정 또는 같은 파일 재업로드
-    B->>A: 영향받는 입력 노드 재개
-    A->>A: 판독 조건 재확인
-  end
-  loop 도구선택 한도 내 근거 보강
-    A->>L: 문맥과 도구 목록, 다음 도구 선택
-    L-->>A: tool call 또는 종료 제안
-    A->>M: 필요한 기준 검색, 증빙 또는 공식 조회
-    M-->>A: 출처, 버전, 조회 상태
-  end
-  A-->>B: 검토 초안과 승인 대기 이벤트
-  B-->>U: SSE 진행과 미승인 결과
-  opt 다건 승인 대기
-    A-->>W: 초안과 checkpoint 저장 완료
-    W->>Q: 해당 메시지 ACK
-  end
-  U->>B: 권한 있는 담당자의 승인 또는 수정 요청
-  B->>B: 결정과 광고 버전 검증 및 저장
-  alt 다건 재개
-    B->>E: 저장된 결정의 재개 명령
-    E->>Q: 재개 작업 발행
-    Q->>W: 재개 작업 전달
-    W->>A: 해당 버전과 checkpoint 재개
-  else 단건 재개
-    B->>E: 저장된 결정의 재개 명령
-    E->>A: 해당 버전과 checkpoint 재개
-  end
-  A-->>B: 리포트 데이터와 처리 완료
-  B->>B: 결과 저장, 과금 이벤트 전달
-  opt 다건 실행
-    A-->>W: 저장된 실행 상태 확인
-    W->>Q: 수동 ack
-  end
-  B-->>U: 결과와 이력
-~~~
+## 입력부터 결과까지
 
-이 시퀀스는 목표 설계다. 현재 작업 엔드포인트는 501이며 작업 실행을 흉내 내지 않는다.
-단건 HTTP 응답 종료와 SSE 및 HITL 대기 간 수명 정책은 Agent와 Backend 담당자가 합의한다.
-위 ack는 전달 책임의 종료를 뜻하며 HITL 최종 승인을 의미하지 않는다. 대기 상태를 영구 저장한 시점에도 ack할 수 있고 승인 후 재개는 별도 명령으로 전달한다.
-HITL 대기 때문에 브라우저 HTTP 요청이나 Worker 한 개를 계속 점유하지 않는다.
-대기 상태를 저장하고 요청을 종료한 뒤 승인 명령으로 재개한다. 다건은 시퀀스 이미지의 재개 메시지 발행을 따르고 메시지 스키마와 멱등성만 후속 계약으로 정한다.
+1. 기업 작업공간을 생성하거나 로그인한다. 최초 계정은 해당 기업 관리자이며 다른 기업 자료 접근은 서버에서 차단한다.
+2. 제품정보와 광고 파일을 제출한다. 광고 입력은 PDF와 이미지 두 종류이고 증빙 파일은 별도 역할로 선택 제출한다.
+3. Backend가 실제 파일 서명과 크기를 확인하고 asset 메타데이터 및 SHA-256, 버전을 app에 저장한다. 원본 바이트는 Redis에 임시 보관한다.
+4. 접수 트랜잭션을 저장한 뒤 202와 review 객체를 반환한다. 제한된 API 실행 풀이 Agent를 호출하며 Vue는 상태를 폴링한다.
+5. Agent가 실행별 토큰으로 해당 버전의 광고만 읽는다. PDF native 문자와 페이지 렌더, 긴 이미지 타일을 준비한다.
+6. 문구는 PDF 파싱과 OCR 후 LLM으로 확인할 주장 후보를 만든다. 사진은 별도 VLM 호출로 비교 표현과 조명 및 각도 등 관찰 한계를 기록한다.
+7. 두 결과가 합류한다. 증빙이 있으면 structure_evidence, 보고번호가 있으면 verify_functional_approval, 광고나 증빙에 특허 후보가 있으면 verify_patent를 호출한다. 도구 오류는 항목별로 분리한다.
+8. Graph는 초안과 사람 확인 대기를 PostgreSQL checkpoint에 저장하고 실행 요청을 종료한다. Backend가 초안을 app에 보존하고 원본을 Redis에서 삭제한다.
+9. 검토자 또는 관리자가 최신 버전의 의견과 결정을 저장한다. Backend는 먼저 결정을 보존하고 해당 Graph를 재개한다.
+10. 결과와 이력을 다시 조회하고 브라우저 인쇄로 PDF 저장 또는 HTML 내보내기를 한다. 서버가 PDF 바이너리를 생성하는 기능은 아직 없다.
 
-2026-10-20 HITL 재설계로 위 시퀀스의 "권한 있는 담당자의 승인 또는 수정 요청"은 한 번의
-단일 결정이 아니다. 탐지된 위반마다 Agent가 먼저 자가검증 리라이트를 생성하고, 사람은
-위반 줄마다 원문 유지/자동 리라이트 채택/직접 수정 중 하나를 고른다. review 전체의
-승인·반려·원본재업로드요청은 이 줄 단위 결정과 별개 층위이며, 위반이 전부 결정되지 않아도
-내려질 수 있다 — 위반을 모두 원문 유지로 두고 승인하는 것도 허용되는 사람의 업무 판단이다.
-위반이 0건인 경우에만 이 단계 전체를 건너뛰고 Agent가 즉시 승인 처리한다.
-상세 State 구조는 services/agent/src/capstone_agent/state/review_state.py를 기준으로 한다.
+처리 완료는 AI 추론이나 법령 적합성 확인 완료와 다르다. 모델 키가 없으면 native PDF와 로컬 OCR은 수행해도 문구 모델과 사진 모델은 `not_configured`다.
+RAG를 호출하지 않으므로 `retrievalStatus=not_connected`, `legalStatus=not_evaluated`를 유지하고 인용 조항이나 적합 점수를 만들지 않는다.
+사진은 실제 효능, 보정 여부와 동일 인물을 확정하지 않는다. 사진 결과를 억지로 텍스트 RAG 결과로 바꾸지 않는다.
 
-## 리포트와 이력
+## 수명과 실패 처리
 
-Agent의 마지막 노드는 주장, 인용 근거, 증빙 대조와 사람의 결정을 보고서 데이터로 묶는다.
-Backend는 해당 광고 버전과 근거 버전을 고정해 영구 저장하고 다운로드 및 이력 API를 제공한다.
-PDF 출력은 노션의 WeasyPrint 후보를 사용하는 Python 렌더 adapter를 제안한다.
-이 adapter는 모델 추론과 분리된 템플릿 렌더링이며 아직 구현하거나 의존성을 설치하지 않았다.
-Backend가 보관한 보고서 스냅샷을 받아 렌더하고 업무 DB를 직접 조회하지 않는 경계를 사용한다.
-같은 데이터를 다시 내려받을 때 LLM 재판정이나 새 법령으로 근거 교체를 자동 수행하지 않는다.
-렌더 adapter의 내부 엔드포인트와 실행 서비스 배치는 Agent 및 Backend 담당자가 계약 PR에서 확정한다.
+- 원본은 처리 종료 시 삭제하고 30분 TTL은 비정상 종료의 안전장치로 둔다. 결과와 파생 텍스트는 별도 정책으로 DB에 보관한다.
+- 원본 이미지와 요청 토큰은 closure와 내부 요청에만 두고 Graph checkpoint나 공개 결과에 넣지 않는다.
+- 같은 브라우저의 선택한 File은 임시 미리보기가 가능하지만 새로고침하거나 다른 기기에서 열면 원본이 없다. 같은 파일 재열람 기능은 후속이다.
+- 파일이 손상됐거나 지원하지 않는 형식이면 접수 또는 파싱 단계에서 실패한다. 실패한 작업은 새 원본을 제출한다.
+- 모델과 공공 API 오류는 적합 판정으로 바꾸지 않는다. 정상 조회 결과 없음과 API 설정 또는 연결 실패를 구분한다.
+- 승인 결정은 저장됐지만 Agent 재개에 실패하면 `approval.agentResume=pending`을 보존한다. 자동 재개 재시도는 후속이다.
+- 삭제는 실행 중인 작업을 막고 체크포인트부터 삭제한 뒤 app 이력과 asset 메타데이터를 삭제한다.
 
-## 통신과 비밀 정보
+## 노션 목표와 현재 MVP의 차이
 
-| 구간 | 방식 | 인증과 키 |
-| --- | --- | --- |
-| Vue → Backend | HTTPS REST와 SSE | 사용자 로그인과 기업 권한 |
-| Backend → Agent API | 내부 HTTP | 내부 서비스 인증과 서버가 만든 실행 문맥 |
-| Agent API → RabbitMQ → Worker | AMQP, 목표 경로 | 전용 계정과 vhost, 작업 참조와 멱등 키 |
-| Agent → 두 MCP | MCP Streamable HTTP | 내부 서비스 인증, 필요한 기업 범위 |
-| business-mcp → Backend | 내부 HTTP | asset과 task의 기업 소유 검증 |
-| Agent → Vision과 LLM | 공급자 HTTPS API | Agent 서버의 API 키 |
-| business-mcp → 식약처와 특허 | 공식 외부 API | 해당 서비스의 인증 정보 |
-| rag-mcp → knowledge | PostgreSQL 질의 | 읽기 전용 계정 |
-| Agent → agent 스키마 | PostgreSQL | 체크포인트 전용 계정 |
+| 목표 | 현재 |
+| --- | --- |
+| 단건 즉시 응답과 SSE | 접수 후 202, 인증된 1.5초 상태 폴링 |
+| 다건 Backend → Agent API → RabbitMQ → 내부 Worker | RabbitMQ 선택 프로필만 제공, 업무 발행과 Worker 없음 |
+| 한도 있는 Agent 도구선택 loop | 문구와 사진 분리 및 입력 조건에 따른 3개 Business 도구 호출 |
+| search_regulations, search_precedents | Handoff DB 계획과 출처 목록만 반영, 실제 수집과 검색 없음 |
+| 증빙 및 제품 주장 대조와 특허 청구항 대조 | 증빙 문자 추출과 조회 adapter까지만 구현 |
+| 사용량 이벤트와 별도 과금 원장 | 과금 비활성, 크레딧 0은 무료 서비스 보장이 아닌 미구현 표시 |
+| 서버 리포트 PDF | 브라우저 인쇄와 HTML 내보내기 |
+| violation 단위 HITL(위반 줄마다 원문유지/자동리라이트채택/직접수정) + review 전체 승인·반려·원본재업로드요청 결정 분리(2026-10-20 HITL 재설계) | review_engine.py의 단일 `interrupt()` 승인 1단계만 구현. `app.violations`/`app.violation_rewrites` 테이블은 V4 마이그레이션으로 이미 생성됐지만 Agent/결정 API/화면은 아직 `reviews.document` 기준 |
 
-로컬 PDF 파서와 로컬 OCR에는 LLM API 키가 필요하지 않다.
-MCP는 모델 공급자 호출 방식이나 OCR 엔진을 대신하지 않는다.
+현재 실행 풀은 프로세스 재시작 후 대기 작업을 복구하지 않는다. 운영용 durable queue나 자동 장애 복구 구현으로 설명하지 않는다.
+다건의 목표는 접수 기록 저장 후 202, 승인 대기 checkpoint 저장 후 ACK, 승인 결정 저장 후 별도 재개 메시지다.
+업무 메시지에는 원본 바이트를 넣지 않으며 publisher confirm, 수동 ACK, 멱등키와 DLQ를 함께 구현해야 한다.
 
-## 네트워크
+## RAG 담당의 다음 연결
 
-개발 포트는 127.0.0.1에만 바인딩한다. Compose 내부에서는 서비스 이름을 사용한다.
-정적 Bearer 토큰은 개발용 서비스 인증이며 사용자 인증이나 기업 권한을 대체하지 않는다.
+공개 PDF와 법제처 API 원문을 검증하고 knowledge에 미리 색인한다. 제품 및 특허 조회 API는 Business MCP 실시간 경로로 남긴다.
+S01~S09와 미확인 개정일은 출처 후보이며 이번에 수집한 법률 자료가 아니다.
+자세한 표와 단계는 [데이터 계획](04-data.md), [RAG 시작점](06-rag-start.md), 실제 입출력은 [공통 계약](03-contracts.md)에 있다.
 
-## Agent와 MCP의 최신 경계
 
-처리 단계 표는 사용자에게 보여줄 책임별 진행 설명이며 MCP의 고정 호출 순서가 아니다.
-최신 Graph 초안은 입력 파싱 후 제한된 도구선택 loop에서 LLM이 필요한 검색과 대조를 선택한다.
-미제출 증빙과 없는 특허번호에 대해서는 불필요한 호출을 생략하고, 개별 API 장애는 해당 결과만 확인 불가로 남긴다.
-호출 횟수와 시간 및 비용 한도, 오류 분류와 근거 충분성 검증은 Agent 담당자가 구현한다.
+## 노션 ERD v2 연결
 
-| 목표 MCP | 최신 노션 도구 | 현재 실행 기반 |
-| --- | --- | --- |
-| RAG | search_regulations, search_precedents | search_rules, search_cases와 get_evidence v0.1 stub. 전환 계약 필요 |
-| Business | structure_evidence, match_product_claims, verify_functional_approval, verify_patent, match_patent_claims | 환경 연결 도구만 구현. 업무 adapter 후속 |
-
-상세 초안의 이름과 필드가 바뀌었다고 실행 도구의 이름만 즉시 바꾸지 않는다.
-노션의 미확정 필드와 현재 코드의 차이는 docs/03-contracts.md에 남기고 소비자와 계약 PR을 만든다.
-특허 getWordSearch는 현재 초안 기준 명칭, 초록과 IPC까지만 대조할 수 있으며 청구항 원문 확보는 후속이다.
-
-RabbitMQ의 ack와 nack, DLX는 전달 처리 수단이다. 실제 업무 큐와 DLQ 선언, 재시도 상한 및 지연,
-DB 반영과 ack 순서, 중복 실행 제어는 애플리케이션 구현이 필요하다.
-이번 초기 세팅은 브로커를 실행하고 합성 큐에서 confirm, nack/requeue와 ack를 검사하는 범위다.
-공식 참고: [RabbitMQ 설치](https://www.rabbitmq.com/docs/download),
-[전달 확인과 발행 확인](https://www.rabbitmq.com/docs/confirms).
-
-## 상세 명세 재점검 결과
-
-- Agent API, Worker와 Graph는 Graph 초안의 단일 Agent 서비스 안의 역할이다. 그림의 칸이 새 배포 서비스 수를 뜻하지 않는다. 현재도 services/agent 하나이며 업무 Worker는 미구현이다.
-- 시퀀스 이미지에서 다건 202는 작업과 발행 대기 기록 저장 뒤, RabbitMQ 발행 전에 반환한다. 브로커 장애 시에도 작업을 복구할 영구 기록이 필요하다.
-- 승인 대기 저장 후 ACK하고, 결정이 들어오면 새 재개 메시지를 발행한다. 최종 보고서까지 한 메시지를 계속 점유하는 구조로 구현하지 않는다.
-- 목표 공개 API 경로는 노션 API 등록부의 /api/v1이다. 별도 REST 초안의 /api와 다른 ID 표기는 docs/03-contracts.md의 불일치 목록에 남긴다.
-- 흐름 이미지에는 수정안 승인 시 새 광고 버전을 만드는 분기가 있다. Graph의 반려와 수정요청 재실행 설명과 함께 버전 및 재과금 정책을 맞춰야 한다.
+[최신 ERD](https://app.notion.com/p/Data-ERD-App-State-Vector-DB-3ff616ab8fec81c7b57ac75358ced570)는 주요 DB 한 개의 app/state/vector 분리와 별도 과금 DB를 명시한다.
+현재 물리 스키마 app/agent/knowledge와 목표 테이블의 대응은 [데이터 모델](04-data.md)에 있다.
+RAG의 knowledge는 Handoff 기준을 유지하고 Agent의 광고 파싱과 Business MCP의 증빙 처리를 섞지 않는다.
+키가 없으면 모델과 공식 API를 실행한 것으로 표시하지 않는다. 원문 수집 및 기본 청킹 점검은 검색 색인과 분리한다.
