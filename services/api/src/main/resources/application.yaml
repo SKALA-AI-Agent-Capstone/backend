@@ -48,3 +48,6 @@ capstone:
     refresh-cookie-secure: ${JWT_REFRESH_COOKIE_SECURE:true}
   internal-token: ${INTERNAL_SERVICE_TOKEN}
   agent-base-url: ${AGENT_BASE_URL:http://127.0.0.1:8001}
+  review:
+    # 문구 하나에 사람이 요청할 수 있는 다시쓰기 횟수(M). violation_rewrites.requested_by_human 행 수로 센다.
+    human-rewrite-limit: ${HUMAN_REWRITE_LIMIT:3}

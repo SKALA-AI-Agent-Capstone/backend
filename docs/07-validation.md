@@ -208,3 +208,17 @@ API의 HTTP 200도 정상 데이터 응답을 뜻하지 않는다. 키가 없는
 
 main 인수는 원격 PR Checks와 main 병합 기록으로 확인한다. README에는 팀원의 clone, 로컬 설정 생성과 실행,
 작업 전 노션 및 ERD 확인 순서가 있다. 사용자 원본, 실제 키, 검증 관리자 비밀번호와 DB 내용은 Git에 포함하지 않는다.
+
+
+## 2026-10-20 문구별 위반 저장 전환 검증 (feat/violation-tables)
+
+- `mvn test`(services/api): 12개 통과. 새 ViolationFlowTest 9개는 Testcontainers의 postgres:17-alpine에 Flyway V1~V5를 적용해 실행한다.
+  결과 저장과 finding 연결, 위반 0건 자동 승인 조건, 문구별 결정과 수동 문구 미저장, 미결정 승인 409, changes_requested 매핑,
+  사람 다시쓰기 한도 409, 모델 미설정 503, 기업 범위 404와 권한, 재검토 초기화, V5 backfill을 확인한다. Agent와 Redis는 대체했다. Docker가 없으면 이 클래스는 건너뛴다.
+- Python `pytest`: 26개 통과(다시쓰기 endpoint 2개와 프롬프트 1개 추가). `scripts/export_contracts.py --check` 통과.
+- docker compose로 api와 agent를 다시 빌드했다. 로컬 DB에 V5가 적용되어 기존 결과가 violations로 옮겨졌다.
+  처음 작성한 V5는 app_user에 임시 테이블 권한이 없어 실패하고 롤백되었으며, 한 문장의 CTE로 바꾼 뒤 적용되었다.
+- 실제 compose API에서 합성 광고 이미지 1건으로 확인: 실제 모델 분석 done, violations 3건과 finding 연결,
+  다른 기업 계정의 조회와 문구 결정, 다시쓰기, 전체 결정 모두 404, rewritten_manual 501, 사람 다시쓰기 요청 200(실제 모델 문안, attempt 3, human 1/3),
+  미결정 상태 승인 409, 문구 3건 결정 후 승인 200, hitl_status approved와 decided_by 저장, JSONB approval approved와 Agent resume completed, 승인 후 문구 결정 409.
+- 미검증: 프론트 화면 연동, 사람 직접 수정 문구의 재검증(미구현), 다시쓰기 동시 요청의 부하 상황.

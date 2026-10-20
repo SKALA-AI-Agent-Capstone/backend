@@ -2,14 +2,11 @@ package org.skala.capstone;
 
 import com.fasterxml.jackson.databind.*;
 import com.fasterxml.jackson.databind.node.*;
-import java.net.URI;
-import java.net.http.*;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.*;
 import java.util.*;
 import java.util.concurrent.*;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -23,13 +20,12 @@ public class ReviewService implements AutoCloseable {
     final ReviewStore store;
     final StringRedisTemplate cache;
     final ObjectMapper json;
-    final String agentUrl,internalToken;
-    final HttpClient http=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+    final AgentClient agent;
+    final ViolationService violations;
     final ExecutorService jobs=new ThreadPoolExecutor(2,2,0,TimeUnit.SECONDS,new ArrayBlockingQueue<>(8),
         Thread.ofPlatform().name("review-job-",0).factory(),new ThreadPoolExecutor.AbortPolicy());
-    public ReviewService(ReviewStore store,StringRedisTemplate cache,ObjectMapper json,
-        @Value("${capstone.agent-base-url}")String agentUrl,@Value("${capstone.internal-token}")String internalToken){
-        this.store=store;this.cache=cache;this.json=json;this.agentUrl=agentUrl;this.internalToken=internalToken;
+    public ReviewService(ReviewStore store,StringRedisTemplate cache,ObjectMapper json,AgentClient agent,ViolationService violations){
+        this.store=store;this.cache=cache;this.json=json;this.agent=agent;this.violations=violations;
     }
     public static String hash(byte[] raw){try{return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(raw));}catch(Exception e){throw new IllegalStateException(e);}}
     static String assetKey(String id){return "review:asset:"+id;}
@@ -62,6 +58,8 @@ public class ReviewService implements AutoCloseable {
             if(Set.of("queued","analyzing").contains(ReviewStore.latest(doc).path("status").asText()))
                 throw new ResponseStatusException(HttpStatus.CONFLICT,"REVIEW_RUNNING");
             no=ReviewStore.latest(doc).path("no").asInt()+1;
+            // violations는 최신 버전만 가리킨다. 새 버전 결과가 저장될 때 다시 채운다.
+            violations.resetForNewVersion(id);
         }
         List<MultipartFile> all=new ArrayList<>(files);all.addAll(evidence);
         if(all.stream().mapToLong(MultipartFile::getSize).sum()>75L*1024*1024)
@@ -108,18 +106,11 @@ public class ReviewService implements AutoCloseable {
         try{
             store.mutate(tenant,id,d->ReviewStore.version(d,no).put("status","analyzing"));
             JsonNode response=callAgent("/internal/runs",request);
-            store.mutate(tenant,id,d->{ObjectNode v=ReviewStore.version(d,no);v.set("result",response.path("result"));v.put("status","done");
-                v.set("steps",json.valueToTree(List.of(100,100,100,100,100)));v.put("originalsDiscardedAt",Instant.now().toString());
-                for(JsonNode f:v.path("input").path("files"))((ObjectNode)f).put("discarded",true);});
+            if(violations.saveResult(tenant,id,no,response))violations.resumeAgent(tenant,id,no,"approved");
         }catch(Exception e){fail(tenant,id,no,"ANALYSIS_FAILED_REUPLOAD_REQUIRED");}
         finally{purge(id,no);}
     }
-    JsonNode callAgent(String path,JsonNode body)throws Exception{
-        var request=HttpRequest.newBuilder(URI.create(agentUrl+path)).timeout(Duration.ofSeconds(300)).header("Authorization","Bearer "+internalToken)
-            .header("Content-Type","application/json").POST(HttpRequest.BodyPublishers.ofString(body.toString())).build();
-        var response=http.send(request,HttpResponse.BodyHandlers.ofString());
-        if(response.statusCode()!=200)throw new IllegalStateException("AGENT_UNAVAILABLE");return json.readTree(response.body());
-    }
+    JsonNode callAgent(String path,JsonNode body)throws Exception{return agent.post(path,body);}
     void fail(String tenant,String id,int no,String error){try{store.mutate(tenant,id,d->{var v=ReviewStore.version(d,no);v.put("status","failed").put("error",error);});}catch(Exception ignored){}}
     void purge(String id,int no){for(var row:store.jdbc().queryForList("SELECT id FROM app.review_assets WHERE review_id=CAST(? AS uuid) AND version_no=?",id,no))cache.delete(assetKey(row.get("id").toString()));}
     String readCachedAsset(String id) { return cache.opsForValue().get(assetKey(id)); }
