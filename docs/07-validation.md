@@ -222,3 +222,6 @@ main 인수는 원격 PR Checks와 main 병합 기록으로 확인한다. README
   다른 기업 계정의 조회와 문구 결정, 다시쓰기, 전체 결정 모두 404, rewritten_manual 501, 사람 다시쓰기 요청 200(실제 모델 문안, attempt 3, human 1/3),
   미결정 상태 승인 409, 문구 3건 결정 후 승인 200, hitl_status approved와 decided_by 저장, JSONB approval approved와 Agent resume completed, 승인 후 문구 결정 409.
 - 미검증: 프론트 화면 연동, 사람 직접 수정 문구의 재검증(미구현), 다시쓰기 동시 요청의 부하 상황.
+## 2026-10-20 테스트 결제 준비
+
+토스페이먼츠 테스트용 주문·승인 경로와 결제 성공 시 1회 적립을 구현했다. 프론트 빌드, Java Maven 테스트, Docker API/웹 health 및 로컬 결제 마이그레이션 적용을 확인했다. 외부 PG의 최종 승인 성공 경로는 아직 검증하지 못했다. 검토 사용량 reserve/charge/release, 환불, 별도 과금 DB는 미구현이다.

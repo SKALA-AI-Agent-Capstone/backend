@@ -51,3 +51,8 @@ capstone:
   review:
     # 문구 하나에 사람이 요청할 수 있는 다시쓰기 횟수(M). violation_rewrites.requested_by_human 행 수로 센다.
     human-rewrite-limit: ${HUMAN_REWRITE_LIMIT:3}
+
+payments:
+  return-url: ${PAYMENT_RETURN_URL:http://127.0.0.1:5173/credits}
+  toss-client-key: ${TOSS_TEST_CLIENT_KEY:}
+  toss-secret-key: ${TOSS_TEST_SECRET_KEY:}

@@ -31,7 +31,7 @@
 - 업무 DB와 Redis는 Backend를 통해 접근한다. Business MCP에 DB 비밀번호를 주지 않는다. Agent 직접 DB 접근은 agent checkpoint만 예외다.
 - 원본은 Redis 임시 보관 후 폐기하고 결과는 PostgreSQL에 보존한다. 원본 bytes와 base64 및 실행 토큰은 checkpoint에 넣지 않는다.
 - RAG는 rules와 cases를 구분하고 사례는 보조 참고로 표시한다. 고객 광고와 증빙을 공개 코퍼스에 적재하지 않는다.
-- 목표 과금 DB는 별도다. ERD v2의 judged_at과 reserve/charge/release를 따르되 현재 과금을 구현했다고 표시하지 않는다.
+- 목표 과금 DB는 별도다. 현재 app 스키마에는 로컬 테스트 결제 주문과 승인 후 적립만 있으며, ERD v2의 judged_at 및 reserve/charge/release 사용량 과금과 운영 결제는 미구현이다.
 
 ## 검증과 비밀 정보
 

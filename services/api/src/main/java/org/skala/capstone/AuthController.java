@@ -39,7 +39,7 @@ public class AuthController {
             throw new ResponseStatusException(HttpStatus.CONFLICT,"EMAIL_EXISTS");
         UUID tenant=UUID.randomUUID(), user=UUID.randomUUID();
         jdbc.update("INSERT INTO app.tenants VALUES (?,?)",tenant,company);
-        jdbc.update("INSERT INTO app.users VALUES (?,?,?,?,?,?)",user,tenant,email,name,passwords.encode(password),"admin");
+        jdbc.update("INSERT INTO app.users (id,tenant_id,email,name,password_hash,role) VALUES (?,?,?,?,?,?)",user,tenant,email,name,passwords.encode(password),"admin");
         tokens.revoke(previous,null);
         return issued(tokens.open(user.toString()));
     }
@@ -94,7 +94,7 @@ public class AuthController {
         String role=value(input,"role",1,20);
         if(!Set.of("author","reviewer").contains(role)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"INVALID_ROLE");
         String email=value(input,"email",3,200).toLowerCase(Locale.ROOT);
-        jdbc.update("INSERT INTO app.users VALUES (?,CAST(? AS uuid),?,?,?,?)",UUID.randomUUID(),jwt.getClaimAsString("tenantId"),email,
+        jdbc.update("INSERT INTO app.users (id,tenant_id,email,name,password_hash,role) VALUES (?,CAST(? AS uuid),?,?,?,?)",UUID.randomUUID(),jwt.getClaimAsString("tenantId"),email,
             value(input,"name",1,80),passwords.encode(value(input,"password",10,72)),role);
         return Map.of("ok",true);
     }
