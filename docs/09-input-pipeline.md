@@ -14,11 +14,13 @@
 PDF 확장자만 보고 OCR 여부를 정하지 않는다. 같은 PDF 안에서도 페이지와 영역에 따라 텍스트와 이미지가 섞인다.
 OCR로 글자를 읽었다고 광고의 시각적 문맥까지 검토한 것은 아니다.
 
-## 2. 이 프로젝트의 기준 구현안
+## 2. 노션의 역할과 패키지 구현안
 
 노션은 Vision LLM 또는 OCR + LLM을 허용하며 특정 OCR 제품은 정하지 않았다.
 초기 구현은 로컬 PDF 파싱과 Vision API를 조합한다. 정확한 하이라이트 좌표가 필요한 경우 로컬 OCR을 확장한다.
 이 선택은 노션 확정 사항과 구분되는 개발 제안이다.
+노션 Graph의 광고 입력 파싱과 Vision은 Agent, 증빙 OCR 및 PDF 파싱은 Business MCP의 structure_evidence가 맡는다.
+같은 순수 파서를 공유할 수 있지만 파서 재사용을 위해 prepare_input을 필수 MCP 도구로 추가하지 않는다.
 
 사용자에게 제공하는 광고 입력은 PDF 파일과 이미지 파일 두 종류다.
 텍스트와 스캔 여부, 혼합 페이지와 긴 이미지는 서버가 내부에서 구분한다.
@@ -41,11 +43,11 @@ OCR로 글자를 읽었다고 광고의 시각적 문맥까지 검토한 것은 
 
 | 항목 | 기준안 | 실행 위치 | 현재 설치 및 구현 상태 |
 | --- | --- | --- | --- |
-| PDF 문자와 표 | pdfplumber | business-mcp 내부 공통 문서 준비 모듈 | RAG 수집용 선택 의존성에만 있음, 고객 입력 처리 미구현 |
-| PDF 페이지 렌더 | pypdfium2 | 같은 문서 준비 모듈 | 신규 도입 제안 |
-| 이미지 확인과 타일 분할 | Pillow | 같은 문서 준비 모듈 | 입력 처리 모듈 미구현 |
+| PDF 문자와 표 | pdfplumber | Agent 광고 입력, Business MCP 증빙 파서 | RAG 수집용 선택 의존성에만 있음, 고객 입력 처리 미구현 |
+| PDF 페이지 렌더 | pypdfium2 | 각 역할의 내부 파서, 순수 함수 공유 가능 | 신규 도입 제안 |
+| 이미지 확인과 타일 분할 | Pillow | Agent 광고 입력과 Business MCP 증빙 파서 | 입력 처리 모듈 미구현 |
 | 문자와 시각 문맥 인식 | OpenAI Responses API의 이미지 입력 예시 | Agent의 Vision adapter | SDK와 호출 미구현, 실호출 없음 |
-| 정확한 글자 좌표 | Tesseract와 한국어 학습 데이터 후보 | business-mcp 내부 OCR adapter | 선택 확장, 평가 후 채택 |
+| 정확한 글자 좌표 | Tesseract와 한국어 학습 데이터 후보 | 광고와 증빙을 담당하는 각 내부 adapter | 선택 확장, 평가 후 채택 |
 | 주장 구조화와 검토 | LangGraph 노드와 Pydantic | Agent | 계약 외 업무 노드 미구현 |
 
 OpenAI는 설명을 구체화하기 위한 공급자 예시다. 특정 모델은 고정하지 않고 VISION_MODEL과 TEXT_MODEL로 설정할 계획이다.
@@ -68,10 +70,10 @@ ChatGPT 로그인이나 구독을 이 애플리케이션의 API 키로 사용하
 브라우저가 LLM을 직접 호출하거나 VITE_*에 키를 넣지 않는다. 내부 서비스 토큰도 LLM 키와 다르다.
 위 공급자 변수는 설계안이며 현재 서버가 읽거나 실제 요청을 보내는 설정은 아니다.
 
-## 4. 원본 파일이 움직이는 실제 경계
+## 4. 광고와 증빙 입력의 경계
 
-광고 원본과 비공개 증빙은 업무 데이터이므로 Agent가 Redis나 업무 DB에서 직접 꺼내지 않는다.
-다음은 아직 구현하지 않은 인터페이스 제안이다.
+원본 임시 보관과 기업 및 파일 소유 검증은 Backend 책임이다. Agent나 Business MCP가 Redis에 직접 접속하지 않는다.
+아래는 노션의 광고와 증빙 책임을 따르는 입력 전달 설계안이며 내부 파일 전송 API는 아직 구현되지 않았다.
 
 ~~~mermaid
 sequenceDiagram
@@ -79,38 +81,40 @@ sequenceDiagram
   participant B as Backend
   participant R as Redis 원본 캐시
   participant A as Agent 입력 노드
-  participant M as business-mcp
-  participant P as 로컬 문서 준비 adapter
+  participant P as 역할별 내부 PDF 및 이미지 파서
+  participant M as Business MCP
   participant L as Vision API
-  V->>B: 광고와 증빙 업로드
-  B->>B: 파일 검증, 기업 권한, asset ID와 해시 생성
-  B->>R: 처리 중 원본 임시 저장
-  B->>A: task ID, 광고 버전, 인증 범위와 asset ID
-  A->>M: MCP prepare_input(asset ID)
-  M->>B: 인증된 내부 파일 읽기 API
-  B->>B: task와 tenant에 속한 asset인지 재검증
-  B->>R: 임시 원본 읽기
-  R-->>B: 임시 원본 바이트
-  B-->>M: 소유 범위를 검증한 원본
-  M->>P: 페이지 파싱, 렌더와 필요 시 OCR
-  P-->>M: 문자 블록, 페이지 정보, 분석용 이미지
-  M-->>A: 구조화된 추출 결과와 제한된 이미지 콘텐츠
-  A->>L: 필요한 이미지와 문맥, 서버 API 키
-  L-->>A: 문자, 시각 관찰과 주장 후보
-  A->>A: 출력 형식 검증, 판독 불가와 누락 검사
+  V->>B: PDF 또는 이미지와 제품 및 증빙 연결
+  B->>B: 기업 권한과 파일 검증, 해시와 버전 생성
+  B->>R: 처리 중 원본 임시 보관
+  B->>A: 인증된 실행 문맥과 광고 입력 전달 계약
+  Note over B,A: 제한된 참조 또는 콘텐츠 전달 형식은 후속 계약
+  A->>P: 광고 PDF 문자 추출, 페이지 렌더와 이미지 준비
+  P-->>A: 광고 원문 블록과 필요한 페이지 이미지
+  A->>L: 광고의 문자와 시각 문맥 확인
+  L-->>A: 판독 결과와 주장 후보
+  A->>A: 형식 및 품질 검증, 원문과 각주 연결
+  opt 증빙 제출 및 loop의 선택
+    A->>M: structure_evidence(인증된 문맥과 documents)
+    M->>B: 증빙 참조의 소유와 수명 검증 및 읽기
+    B->>R: 임시 증빙 읽기
+    R-->>B: 임시 원본
+    B-->>M: 소유 검증된 증빙
+    M->>P: 증빙 OCR 및 PDF 파싱
+    P-->>M: 증빙 내용과 판독 상태
+    M-->>A: EvidenceStructured
+  end
 ~~~
 
-prepare_input은 business-mcp에 추가할 제안 이름이며 현재 등록된 도구가 아니다.
-task와 기업 범위는 Backend가 발급한 실행 문맥에 고정하고 모델이 도구 인자로 바꿀 수 없게 한다.
-내부 asset API는 서비스 토큰만 확인하지 않고 해당 실행 문맥의 task와 asset 소유 관계도 검증한다.
-현재 개발용 정적 토큰에는 이 사용자 및 기업 권한 기능이 없으므로 업무 데이터 연동 전에 구현해야 한다.
-일반 파일 해석 코드는 business-mcp의 공통 모듈이 소유하고 Agent는 호출 순서와 결과 검증을 소유한다.
-광고와 증빙에 동일한 파서 코드를 복사하지 않는다. RAG의 공개 문서 수집은 별도 배치다.
+파일 참조를 해석하는 내부 전달 형식은 Backend, Agent와 Business MCP가 확정한다.
+직접 Redis 접근이나 외부 URL 무제한 fetch로 미정인 입력 경계를 대신하지 않는다.
+Agent는 광고의 입력 파싱을 맡고 Business MCP는 증빙을 구조화한다. 공개 규정 수집은 RAG의 별도 배치다.
+Vision API는 Agent에서 모델 공급자로 보내는 HTTPS 호출이며 MCP 호출과 별개다.
+순수 파서 코드는 공유할 수 있으나 다른 서비스의 권한 로직과 고객 원본을 복사하지 않는다.
 
-MCP가 OCR이나 이미지 인식을 해주는 것은 아니다. 위 준비 함수를 Agent가 호출할 수 있게 노출하는 연결 방식이다.
-Vision 요청은 Agent에서 공급자 API로 보내는 HTTPS 호출이며 MCP 요청과 별개다.
-원본의 base64를 로그나 일반 모델 메시지, Graph 체크포인트에 그대로 저장하지 않는다.
-MCP 결과의 이미지 콘텐츠는 Client adapter가 필요한 Vision 요청에만 넣는다. 파일 전체를 무제한 도구 응답으로 반환하지 않는다.
+prepare_input은 이전 저장소 문서가 추가한 선택적 확장안이다. 노션의 7개 MCP 도구에는 없으며 기본 흐름의 선행 조건으로 두지 않는다.
+필요할 경우에만 별도 인터페이스 검토를 거친다. SourceBlock과 상세 좌표도 기존 구현 제안이며 아직 등록된 계약이 아니다.
+원본의 base64를 로그나 Graph checkpoint에 그대로 남기지 않는다. 승인 대기를 위한 저장은 최소 파생 데이터와 ID로 제한한다.
 
 ## 5. 입력 검증과 판독 품질
 
@@ -209,11 +213,10 @@ OpenAI의 store=false만으로 모든 외부 보존이 사라진다고 설명하
 - [pypdfium2](https://pypdfium2.readthedocs.io/en/stable/python_api.html): PDF 페이지를 이미지로 렌더하는 로컬 라이브러리.
 - [Tesseract API](https://tesseract-ocr.github.io/tessdoc/APIExample): 글자 인식과 단어 위치 및 confidence를 제공하는 로컬 OCR 후보.
 
-## 10. 최신 Graph 초안과 입력 준비 제안의 관계
+## 11. 최신 명세에서 정리한 책임
 
-2026-10-20에 확인한 노션 Graph는 Agent 입력 노드가 Vision LLM을 직접 호출하고,
-이후 탐지와 근거 검색, 증빙 및 공식 조회는 제한된 도구선택 loop로 수행한다고 명시한다.
-위 prepare_input은 PDF 파서와 파일 전달을 구체화한 기존 팀 검토용 제안이며 노션 확정 도구가 아니다.
-Agent가 MCP로 제한된 asset을 받는 방식과 Backend 내부 전달 중 어떤 입력 경계를 쓸지는
-Agent, Backend와 Business MCP 담당자의 입력 계약 PR에서 결정한다. Agent에 Redis 비밀번호를 추가하지 않는다.
-이번 초기 설정에서 OCR, Vision이나 prepare_input을 새로 구현하지 않았다.
+2026-10-20 재점검은 Graph 본문과 하단 설명, MCP의 두 문서 및 실행 시퀀스 이미지를 함께 기준으로 삼았다.
+광고 파싱 → 한도 있는 도구선택 loop → 리라이트 → HITL → 리포트가 목표이며 증빙 처리만 Business MCP 도구로 분리한다.
+Agent API와 Worker는 하나의 Agent 서비스 안의 역할이다. 입력 파서 때문에 별도 배포 서비스나 세 번째 MCP를 만들지 않는다.
+MCP 명세의 EvidenceFile 상세 필드와 문서별 파싱 오류 표현은 아직 보완해야 한다.
+이번 작업은 설계 문서 정리이며 OCR, Vision이나 업로드 API를 새로 구현하지 않았다.

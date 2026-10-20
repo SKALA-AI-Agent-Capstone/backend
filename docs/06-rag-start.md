@@ -1,66 +1,82 @@
 # RAG 담당 시작점
 
-## 현재 제공된 것
+개발 목표는 [노션 MCP 명세](https://app.notion.com/p/MCP-business-mcp-rag-mcp-API-3fe616ab8fec818bb82efebe45ca502f)의
+search_regulations와 search_precedents다. 기존 기반의 이름을 목표 API처럼 사용하지 않는다.
+공통 인터페이스와 미확정 항목은 docs/03-contracts.md에 모았다.
 
-- services/rag-mcp의 실행 가능한 FastMCP 서버와 개발용 인증.
-- search_rules, search_cases와 get_evidence의 입력 및 출력 경계.
-- 공개 문서용 knowledge 테이블과 읽기 전용 DB 계정.
-- 임베딩 모델을 아직 실행하지 않은 vector(1024) 저장 공간.
-- 계약 테스트와 전체 연결 smoke script.
+## 맡을 입출력
 
-## 먼저 구현할 순서
+| 도구 | 입력 | 출력 필드 | 검색 범위 |
+| --- | --- | --- | --- |
+| search_regulations | query_text, top_k=5 | source, version, scope, excerpt, similarity, trust_level=high | 컬렉션 A, 법령과 기준 |
+| search_precedents | query_text, top_k=3 | source, excerpt, similarity, trust_level=low, verified=False | 컬렉션 B, 보조 사례 |
 
-1. 출처 목록을 작성하고 문서 개정일과 적용 범위를 확인한다.
-2. PDF에서 표의 표현과 비고, 예외 조건을 함께 추출한다.
-3. 문서 버전과 페이지를 보존한 조각을 만든다.
-4. rag_ingest 역할로 본문과 메타데이터를 적재한다.
-5. 선택한 모델로 임베딩을 생성하고 모델 리비전과 함께 저장한다.
-6. rag_reader 역할로 키워드 및 벡터 검색을 구현한다.
-7. search_rules와 get_evidence를 실제 검색에 연결한다.
-8. 주장이 다른 평가 입력으로 누락, 조건 보존, 인용 정확도를 확인한다.
+query_text는 Agent가 추출한 광고 주장과 필요한 문맥이다. RAG에 광고 PDF와 이미지 OCR을 맡기지 않는다.
+excerpt는 저장된 원문 그대로 반환한다. similarity는 법 위반 확률이 아니다.
+사례는 출처 미검증과 보조 참고 표시를 유지하고 법령 검색 결과에 섞지 않는다.
+문서 전체를 보내거나 결론을 만드는 것이 아니라 관련 근거를 찾고 출처를 반환하는 역할이다.
 
-문서 수집과 임베딩 생성은 별도 배치로 실행한다. 광고 검토 요청마다 전체 문서를 재색인하지 않는다.
-선택 의존성이 필요하면 uv sync --package capstone-rag-mcp --extra ingest를 사용한다.
-이 명령은 모델 가중치를 자동 수집하는 파이프라인이 아니다.
+## 지금 있는 개발 기반
 
-## 인용과 판단
+- services/rag-mcp의 FastMCP 서버, 개발용 인증과 상태 확인.
+- 실행 계약 v0.1의 search_rules, search_cases와 get_evidence. 세 도구 모두 업무 기능은 NOT_IMPLEMENTED다.
+- PostgreSQL knowledge 스키마와 rag_reader 및 rag_ingest 권한 분리.
+- 문서 버전과 청크, vector(1024) 빈 저장 공간.
+- Pydantic 계약, JSON Schema와 테스트, 전체 서비스 연결 smoke.
 
-quote는 저장된 원문의 정확한 구절이다. 모델이 생성한 설명을 원문 필드에 넣지 않는다.
-FOUND는 관련 근거 후보를 찾았다는 뜻이다. 검색 유사도는 위법 확률이나 승인 점수가 아니다.
-자료가 없으면 NO_RELEVANT_EVIDENCE나 NEEDS_CONTEXT로 전달한다.
-예외 조건, 표의 비고와 다른 별표 참조를 함께 제공한다.
+현재 이름과 반환 타입은 노션 목표와 다르다. 도구의 이름만 바꾸거나 서로 같은 API라고 표시하지 않는다.
+get_evidence는 기반의 확장 제안이며 노션의 필수 도구 2개가 아니다.
 
-## 자료 구분
+## 먼저 진행할 계약 PR
 
-최신 노션 FR-2와 NFR-11에 따라 rules와 cases를 collection_key로 분리한다.
-법률과 고시, 식약처 안내서, 협회 해설서와 사례의 종류는 source_type으로 구분한다.
-사례는 확보한 경우에만 보조 참고로 제공하고 출처 검증 상태와 경고를 반환한다.
-공식 출처라는 속성과 법적 효력을 동일하게 취급하지 않는다.
-사내 자료나 비공개 시험자료는 현재 공개 코퍼스에 적재하지 않는다.
+Agent 담당자와 새 두 도구의 입력 및 출력 모델을 packages/shared에 작성하고 contracts를 생성한다.
+현재 consumers와 테스트의 호출도 같은 PR 또는 연결된 PR에서 전환한다.
+노션에 없는 필드를 모두 추가할 때까지 검색 개발을 멈출 필요는 없다. 다음 추적 및 오류 정책만 명시한다.
 
-특허 조회와 원문 대조는 최신 노션 FR-14, FR-15와 6장에 따라 business-mcp가 전담한다.
-RAG 담당은 특허 기능을 중복 개발하지 않는다. 공통 출처 형식이 필요하면 계약만 합의한다.
+| 결정 | 필요한 이유 |
+| --- | --- |
+| 기존 quote와 목표 excerpt, document_version과 version 매핑 | 같은 원문과 버전이 반환돼야 함 |
+| document ID, source URL, page와 section 보존 | 리포트에서 원문 위치를 다시 확인할 수 있어야 함 |
+| review_date와 시행일, corpus_version | 적용할 버전과 검색 재현성 보장 |
+| 빈 결과와 DB 장애 및 미구현의 구분 | 빈 목록을 적합 판정으로 오해하지 않도록 함 |
+| 기존 v0.1의 제거 또는 호환 기간 | Agent가 두 종류 도구를 같은 것으로 중복 호출하지 않도록 함 |
 
-## 독립 개발에 필요한 입력
+claim_id와 위치 연결은 Agent 문맥에서 유지할 수 있다. 새 도구가 필수 인자로 받는다고 임의로 추가하지 않는다.
+노션의 출력 목록에 오류를 어떻게 전달할지 정하고, 장애를 정상적인 빈 목록으로 변환하지 않는다.
 
-광고나 고객 시험자료를 읽는 입력 파이프라인과 공개 법령 PDF를 미리 색인하는 RAG 파이프라인은 별개다.
-광고 PDF와 이미지는 docs/09-input-pipeline.md의 입력 담당이 처리한다.
-RAG 담당은 문자로 구조화된 주장과 문맥을 받아 검색하며 고객 업로드를 공개 Vector DB에 넣지 않는다.
-공개 규정이 스캔본이면 수집 배치에서 파싱과 OCR을 수행하되 광고 검토 요청마다 다시 처리하지 않는다.
+## 구현 순서
 
-Agent 담당에게 claim_id, claim_text, surrounding_text, product_type, review_date를 요청한다.
-광고 이미지의 위치는 OCR 담당 데이터이며, RAG의 page는 근거 문서의 페이지다.
-초기에는 합성 문장으로 검색 도구를 개발하고 Agent가 MCP로 호출하는 지점까지 통합한다.
-세부 작업 카드는 docs/10-work-breakdown.md의 RAG-01~RAG-05를 따른다.
-공통 파일 파서 유틸이 필요하면 순수 함수만 공통 패키지로 분리하고 다른 서비스의 권한 로직을 복사하지 않는다.
+1. 공개 출처 목록, 발행기관과 개정 버전 및 적용 범위를 정리한다.
+2. 법령과 기준은 rules, 확보한 사례는 cases로 분리한다.
+3. PDF 본문과 표, 비고 및 예외 조건을 파싱하고 문서 버전과 페이지를 보존한다.
+4. rag_ingest로 원문과 메타데이터를 적재한다. 기존 버전을 덮어쓰지 않는다.
+5. 선택한 임베딩 모델로 청크를 벡터화한다. 현재 bge-m3와 1024차원은 준비값이며 확정 모델이 아니다.
+6. rag_reader로 키워드와 벡터 검색을 구현하고 필터 및 순위 조정을 평가한다.
+7. 내부 검색 결과를 위 두 노션 반환 타입으로 변환한다. 인용과 자료 역할을 검증한다.
+8. Agent가 실제 MCP tools/call로 두 도구를 선택해 호출하도록 통합한다.
+
+공개 문서 수집과 색인은 별도 배치다. 광고 검토 요청마다 전체 문서를 다시 색인하지 않는다.
+고객 광고와 비공개 증빙은 공개 코퍼스에 넣지 않는다. 사내 지침은 기업 권한과 삭제 전파를 설계한 뒤 확장한다.
+선택 의존성은 uv sync --package capstone-rag-mcp --extra ingest로 설치한다. 이 명령이 실제 수집을 실행하지는 않는다.
+
+## 다른 담당자와 나눌 일
+
+- Agent: 광고 파싱과 주장 구조화, 검색 질의 선택, 여러 도구 결과를 종합한 판단과 리라이트 및 HITL.
+- Business MCP: 증빙 구조화, 제품 범위 대조, 식약처와 KIPRIS 조회 및 특허 관련성 대조.
+- Backend: 제품과 파일 권한, 검토 이력과 버전, 결과 보존 및 사용자 API.
+- RAG: 공개 문서 수집, 법령 및 사례 검색, 원문과 출처 및 버전, 검색 평가.
+
+공개 규정이 스캔본이면 RAG 수집 배치가 OCR을 사용할 수 있다. 광고 OCR을 RAG가 담당한다는 뜻은 아니다.
+특허 청구항 수집과 조회를 RAG에 중복 배정하지 않는다.
 
 ## 완료 증거
 
-- 기대한 문서나 항목이 상위 검색 결과에 들어오는지 확인한 평가표.
-- 인용문이 저장된 원문에 실제 포함되는지 확인한 결과.
-- 예외 조건과 구버전 문서가 섞이는 입력에 대한 검증.
-- 근거 없음, 문맥 부족과 DB 장애 시 응답.
-- Agent에서 실제 tools/call로 호출한 기록.
+- 기대한 법령과 조건이 검색 결과에 포함되는지 확인한 평가표.
+- excerpt가 저장 원문에 실제 포함되는지 확인한 결과.
+- 예외 조건, 개정 전후 문서와 적용 범위를 혼동하지 않는 결과.
+- 사례의 trust_level과 verified=False 및 보조 표시.
+- 검색 결과 없음과 DB 장애 시 서로 다른 처리.
+- Agent의 실제 두 MCP 도구 호출과 소비자 계약 검증.
 
 ## 출처 시작점
 
@@ -71,12 +87,3 @@ Agent 담당에게 claim_id, claim_text, surrounding_text, product_type, review_
 - 임베딩 후보: https://huggingface.co/BAAI/bge-m3
 
 위 링크의 실제 개정 여부와 파일 내용은 수집 담당자가 다시 확인한다. 아직 DB에 수집한 자료는 없다.
-
-## 최신 MCP 초안에 맞출 계약 작업
-
-[노션 MCP 초안](https://app.notion.com/p/MCP-business-mcp-rag-mcp-API-1-3ff616ab8fec804eba66e8a7b2bd99e8)은
-search_regulations(query_text, top_k)와 search_precedents(query_text, top_k)를 제안한다.
-현재 코드의 search_rules와 search_cases는 v0.1 기반이므로 구현 전에 Agent 담당자와 전환 계약을 합의한다.
-출처, 버전, 적용 범위, 원문과 유사도, 사례의 보조 표시를 유지하고 오류와 빈 검색 결과도 구분한다.
-기존 review_date와 인용 ID, 페이지 등 추적 필드를 어떻게 보존할지도 같은 PR에서 정한다.
-이번 환경 작업은 빈 목록을 성공으로 반환하는 신규 검색 도구를 임의로 추가하지 않는다.

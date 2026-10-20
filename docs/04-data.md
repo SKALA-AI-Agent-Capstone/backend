@@ -46,8 +46,8 @@ GitHub는 소스, 마이그레이션과 출처 목록을 공유한다. 실행 DB
 
 | collection_key | 범위 | 검색 도구 |
 | --- | --- | --- |
-| rules | 법령, 고시, 식약처 안내서, 협회 기준 | search_rules |
-| cases | 확보한 과거 사례, 보조 참고 전용 | search_cases |
+| rules | 법령, 고시, 식약처 안내서, 협회 기준 | 목표 search_regulations, 현재 search_rules 기반 |
+| cases | 확보한 과거 사례, 보조 참고 전용 | 목표 search_precedents, 현재 search_cases 기반 |
 
 source_type은 문서 종류다. 컬렉션과 종류를 함께 저장한다.
 공식 출처 여부와 법적 구속력은 다르므로 수집 시 별도로 검증한다.
@@ -75,3 +75,11 @@ business-mcp에는 DB 접속 정보를 주지 않는다. 공개 코퍼스에는 
 사내 지침을 추가하려면 인증된 기업 범위와 행 수준 권한, 삭제 전파를 먼저 설계한다.
 사용된 문서 버전과 인용문을 리포트에 고정한다. 문서 개정 시 기존 버전을 덮어쓰지 않는다.
 공유 DB 변경은 새 마이그레이션으로 적용하며 기존 볼륨을 초기화하지 않는다.
+
+## 최신 RAG 출력과 저장 메타데이터
+
+노션의 RegulationHit는 source, version, scope, excerpt, similarity와 trust_level을 반환한다.
+PrecedentHit는 source, excerpt, similarity, trust_level과 verified=False를 반환한다.
+현재 DB의 source_verified와 실제 출처 메타데이터를 이 출력 필드와 같은 의미라고 가정하지 않는다.
+사례 검색의 verified=False는 노션 초안의 보조 표시 규약이다. 출처 검증 이력 자체를 덮어쓰지 않는다.
+저장된 문서 버전과 원문, 페이지 및 근거 ID의 추적성을 새 출력 계약으로 옮기는 작업은 RAG와 Agent가 함께 검토한다.

@@ -182,7 +182,7 @@ compose.yaml, 공통 계약과 DB 스키마는 다른 작업에 영향이 크므
 
 | 첫 PR | 소유 역할 | 함께 검토할 역할 |
 | --- | --- | --- |
-| PDF와 이미지 multipart, review_id와 batch_id, 오류 및 SSE 예제 | Frontend와 Backend | Agent |
+| /api/v1 경로와 PDF 및 이미지 multipart, 공개 ID와 내부 ID, 오류 및 SSE 예제 | Frontend와 Backend | Agent |
 | search_regulations와 search_precedents의 버전 있는 입출력 전환 | RAG | Agent와 Backend |
 | 입력 파싱, Vision와 도구선택 loop의 State | Agent | Business MCP와 RAG |
 | structure_evidence와 외부 조회의 표준 결과 | Business MCP | Agent |

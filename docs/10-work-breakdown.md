@@ -14,13 +14,13 @@
 | --- | --- | --- | --- | --- |
 | Frontend | 업로드, 추출 확인, 진행, 검토와 승인, 이력 화면 | HTTP와 SSE 계약 | 입력 파일과 사용자 결정 | LLM 호출, 서버 키와 법령 판정 |
 | Backend | 인증, 기업 권한, asset과 버전, 작업, 결과와 이력 | 사용자 요청과 내부 이벤트 | 인증된 실행 문맥과 업무 데이터 | 문서 의미 분석과 RAG 검색 |
-| 입력 처리 | business-mcp의 파서와 이미지 준비, Agent Vision adapter | 인증된 asset 참조 | 추출 블록, 페이지, 시각 관찰과 품질 상태 | 공개 법령 색인, 법률 판정 |
+| 입력 처리 | Agent 광고 파싱과 Vision, Business MCP 증빙 파싱 | 인증된 asset 참조 | 추출 블록, 페이지, 시각 관찰과 품질 상태 | 공개 법령 색인, 법률 판정 |
 | Agent | 노드와 분기, 도구 호출, 주장과 판단, HITL | 추출 결과와 도구 결과 | 검토 초안, 이벤트와 승인 후 리포트 데이터 | 업무 DB 직접 조회와 과금 |
 | Business MCP | 제품과 증빙 대조, 식약처와 특허 조회 및 대조 | 주장, 제품과 자료 참조 | 일치와 불일치 및 확인 불가, 출처 | 검토 이력 CRUD와 법령 검색 |
 | RAG MCP | 공개 문서 수집, rules와 cases 검색, 인용 | 주장과 문맥, 적용일 | 원문과 조건, 출처와 버전 | 고객 광고 OCR, 특허 검증과 승인 |
 | 큐 및 과금 | Agent API 발행과 다건 Worker, 사용량 전달, 별도 원장 | 건별 작업과 사용량 이벤트 | 실행 상태, 잔액과 멱등 차감 | LLM 판단 |
 
-입력 처리 역할은 별도 세 번째 MCP 서버를 뜻하지 않는다. 공통 파서 구현은 Business MCP 쪽, Vision 모델 호출과 흐름 제어는 Agent 쪽 담당자가 협업한다.
+입력 처리 역할은 별도 MCP 서버나 배포 서비스를 뜻하지 않는다. 광고 파싱과 Vision은 Agent, 증빙 파싱은 Business MCP 담당이 맡고 필요한 순수 파서만 공유한다.
 
 ## 2. 코드 배치
 
@@ -43,11 +43,13 @@ backend/services/api/src/main/java/org/skala/capstone/
 backend/services/agent/src/capstone_agent/
   nodes/                     입력, 주장, 검색, 대조, 초안, 승인과 리포트
   providers/                 Vision과 텍스트 모델 adapter
+  ingestion/                 광고 PDF와 이미지 입력 파싱
+  messaging/                 같은 Agent 서비스의 발행과 소비 역할
   state/                     Graph State와 체크포인트
 
 backend/services/business-mcp/src/capstone_business_mcp/
   ingestion/                 PDF 파서, 렌더, 이미지와 선택 OCR
-  tools/                     문서 준비, 제품과 증빙, 식약처와 특허
+  tools/                     structure_evidence, 제품과 증빙, 식약처와 특허
   clients/                   Backend 내부 API와 외부 API adapter
 
 backend/services/rag-mcp/src/capstone_rag_mcp/
@@ -59,7 +61,8 @@ backend/packages/shared/     Pydantic과 공통 계약
 backend/contracts/           생성된 JSON Schema
 ~~~
 
-큐 Worker와 과금 서비스의 실제 경로와 언어는 후속 결정이다. 빈 서비스만 늘리지 않는다.
+큐 발행과 소비는 기존 services/agent 안의 모듈로 구분하는 제안이다. 노션 Graph는 별도 Agent Worker 배포를 요구하지 않는다.
+과금은 별도 서비스이며 실제 경로와 언어는 후속 결정이다. 빈 서비스만 늘리지 않는다.
 
 ### 현재 Frontend 기반과 후속 구조
 
@@ -101,7 +104,7 @@ Frontend와 Backend 담당자가 먼저 요청과 응답, 진행 및 오류 예�
 | ID | 작업 | 산출물 | 완료 조건 |
 | --- | --- | --- | --- |
 | ING-01 | 입력 데이터 계약 | PreparedInput과 SourceBlock 제안 | 광고와 증빙 역할, 페이지, 원문과 품질을 구분 |
-| ING-02 | 로컬 PDF와 이미지 준비 | prepare_input 도구와 내부 파서 | 텍스트, 스캔, 혼합 PDF와 긴 이미지의 변환 기록 |
+| ING-02 | 광고와 증빙의 로컬 입력 준비 | Agent 광고 파서, structure_evidence 증빙 파서 | 텍스트, 스캔, 혼합 PDF와 긴 이미지의 변환 기록 |
 | ING-03 | Agent Vision adapter | 모델 입력과 형식 검증 | 키는 서버에만 존재, 이미지 문자를 추출하고 판독 불가를 반환 |
 | ING-04 | 위치와 사용자 확인 | 좌표 또는 페이지 앵커 | 정밀 좌표가 없는 Vision 결과를 정확한 박스로 보이지 않게 함 |
 
@@ -120,9 +123,9 @@ Frontend와 Backend 담당자가 먼저 요청과 응답, 진행 및 오류 예�
 | ID | 작업 | 산출물 | 완료 조건 |
 | --- | --- | --- | --- |
 | BIZ-01 | 제품과 증빙 대조 | 제품, 시험 대상과 기간, 주장별 근거 | 원료 자료와 완제품 자료를 구분하고 누락 서류 목록 반환 |
-| BIZ-02 | 식약처 API adapter | 공식 실응답과 내부 표준 결과 | FOUND, NOT_FOUND와 LOOKUP_FAILED 구분 |
+| BIZ-02 | verify_functional_approval | 공식 실응답과 ApprovalVerifyResult | found, not_found, ambiguous와 api_error 및 insufficient_input 구분 |
 | BIZ-03 | 특허번호 확인 | 번호 정규화와 조회 | 번호 인식 불명확 시 확인 요청, 등록 상태와 미조회 구분 |
-| BIZ-04 | 특허 원문 대조 | 원문 위치와 관련 범위 | 원문 미확보를 불일치로 단정하지 않음 |
+| BIZ-04 | match_patent_claims | 명칭과 초록 및 IPC 대조, ClaimRelation | unverifiable 구분, 청구항 확보 전 청구항 대조 완료로 표현하지 않음 |
 
 ### RAG: 사용자 담당의 독립 작업
 
@@ -131,11 +134,12 @@ Frontend와 Backend 담당자가 먼저 요청과 응답, 진행 및 오류 예�
 | RAG-01 | 출처 목록 | URL, 종류, 발행기관과 버전 목록 | rules와 cases 및 적용 범위를 분류 |
 | RAG-02 | 파싱과 청킹 | 문서 버전, 원문, 페이지와 예외 조건 | 표의 본문과 비고를 함께 복구, 구버전 덮어쓰기 금지 |
 | RAG-03 | 임베딩과 적재 | 모델 리비전과 corpus_version | 문서와 질의의 동일 임베딩 규약, 역할별 접근 권한 |
-| RAG-04 | 검색 구현 | search_rules, search_cases, get_evidence | 검토일 필터, 두 컬렉션 구분, 저장 원문 그대로 인용 |
+| RAG-04 | 검색 구현 | search_regulations와 search_precedents | 두 컬렉션과 반환 타입 구분, 원문 인용, 적용일과 추적 필드의 전환 규약 |
 | RAG-05 | 평가와 MCP 통합 | 기대 문서와 평가 결과 | 근거 없음과 장애, 조건 누락, 광고 페이지와 근거 페이지 혼동 방지 |
 
 RAG는 이미지나 PDF 광고를 받는 API를 기다릴 필요가 없다.
-현재 SearchRulesInput 형식의 합성 주장으로 개발하고 이후 Agent가 같은 입력을 보내게 연결한다.
+초기 연결 검사는 현재 SearchRulesInput으로 실행할 수 있다. 신규 검색 개발은 노션의 query_text와 두 반환 타입을 목표로 한다.
+기존 기반 도구와 신규 도구의 소비자는 같은 계약 PR에서 전환한다.
 임베딩 모델과 코퍼스 버전은 결과에 남기며 검색 점수를 위법 확률로 표시하지 않는다.
 
 ### OPS: 큐와 과금
@@ -181,3 +185,15 @@ Agent의 탐지, 검색과 대조는 노션 Graph 초안의 제한된 도구선�
 증빙이 없으면 자료 안내, 특허가 없으면 특허 도구 생략 등 조건을 포함한다.
 노션의 처리 번호를 모든 MCP 도구의 고정 순서로 구현하지 않는다.
 RabbitMQ는 작업을 전달하며 LLM 판단, OCR, 근거 검색과 과금 로직을 대신하지 않는다.
+
+## 7. 명세 상세 재점검에 따른 첫 작업
+
+| 역할 | 실제 착수할 단위 | 현재 문서상 해결할 차이 |
+| --- | --- | --- |
+| Frontend와 Backend | 등록부의 /api/v1 경로와 파일 multipart 예제 | 별도 REST 초안의 경로 및 ID 표기, 직접 카피 제외와 PDF 필드 |
+| Agent | 단일 서비스 안의 입력 파싱, 도구선택 loop와 메시지 역할 | 승인 대기 저장 후 ACK 및 결정 후 재개, 식약처 이름 조회와 광고 특허번호 조건 |
+| Business MCP | 5개 도구와 각각의 반환 타입 | EvidenceFile과 문서별 파싱 실패, SPF 및 PA 비교 입력, 외부 API 실응답 |
+| RAG MCP | 두 도구와 RegulationHit 및 PrecedentHit | 오류와 빈 목록 구분, 기존 페이지와 인용 ID 및 적용일 보존 |
+| Backend와 과금 | 권한과 버전, 저장 및 사용량 이벤트 | 반려와 수정요청의 재실행 및 중간 실패 과금 정책 |
+
+위 작업은 노션 명세가 전혀 없어서 대기하는 상태가 아니다. 명시된 인터페이스는 개발 기준으로 삼고 불일치 부분만 함께 정한다.

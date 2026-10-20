@@ -94,6 +94,8 @@ chore/dev-foundation은 초기 환경 작업 이름이다. Vue, Java 업무 서�
 Redis는 원본 임시 보관, PostgreSQL은 업무와 실행 상태, pgvector는 공개 근거 검색을 맡는다.
 과금은 별도 후속 서비스다. RabbitMQ를 모든 API, MCP 호출이나 파일 저장에 사용하지 않는다.
 
-노션 상세 문서의 도구 이름과 기존 v0.1 계약의 차이는 docs/03-contracts.md에 표시했다.
+노션의 7개 MCP 도구와 14개 API 등록 항목, 기존 v0.1 계약 및 문서 간 차이는 docs/03-contracts.md에 정리했다.
+목표 HTTP 경로는 API 등록부의 /api/v1이며 기존 REST 초안과의 표기 차이도 남긴다.
+Agent API와 Worker는 하나의 Agent 서비스 내부 역할이다. 광고 파싱은 Agent, 증빙 파싱은 Business MCP 책임이다.
 업무 기능 구현 전에 담당자끼리 계약 PR로 맞춘다. Frontend의 드래그앤드롭과 시작 버튼은
 frontend/README.md의 개발 목표만 추가했으며 이번에 화면 기능을 구현하지 않았다.
