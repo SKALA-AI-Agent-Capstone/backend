@@ -25,7 +25,7 @@ from capstone_shared.rag_contracts import (
 )
 from capstone_shared.settings import internal_token, required_env
 from .embedding import load_embedder
-from .retrieval import Ranked, search
+from .retrieval import Ranked, corpus_inventory, search
 
 
 def regulation_hit(item: Ranked) -> RegulationHit:
@@ -33,6 +33,7 @@ def regulation_hit(item: Ranked) -> RegulationHit:
     acquisition = "legalize-kr" if (row["storage_key"] or "").startswith("legalize-kr@") else "pdf"
     return RegulationHit(
         source=row["title"], version=row["version_label"], scope=row["context"] or row["title"],
+        source_type=row["source_type"],
         excerpt=row["body"], similarity=item.similarity, document_key=row["document_key"],
         section=row["section"], page=row["page_from"], source_url=row["source_url"],
         acquisition=acquisition, effective_from=row["effective_from"], effective_until=row["effective_until"],
@@ -57,6 +58,16 @@ def create_server() -> FastMCP:
             {"service": "rag-mcp", "status": db["status"], "database": db},
             status_code=200 if db["status"] == "ok" else 503,
         )
+
+    @mcp.custom_route("/health/corpus", methods=["GET"])
+    async def corpus(request) -> JSONResponse:
+        """Public corpus inventory for the standards page. Lists document versions, never chunk text."""
+        try:
+            documents = await corpus_inventory(required_env("RAG_DATABASE_URL"))
+        except psycopg.Error:
+            return JSONResponse({"service": "rag-mcp", "status": "unavailable", "documents": []}, status_code=503)
+        return JSONResponse({"service": "rag-mcp", "status": "indexed" if documents else "not_indexed",
+                             "embeddingModel": embedder.model_name if embedder else None, "documents": documents})
 
     embedder = load_embedder()
 
