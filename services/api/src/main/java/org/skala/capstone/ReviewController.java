@@ -16,6 +16,12 @@ public class ReviewController {
     public ReviewController(ReviewStore store,ReviewService reviews,ViolationService violations){this.store=store;this.reviews=reviews;this.violations=violations;}
     @GetMapping("/api/v1/reviews") public List<ObjectNode> list(@AuthenticationPrincipal Jwt jwt){return violations.list(jwt.getClaimAsString("tenantId"));}
     @GetMapping("/api/v1/reviews/{id}") public ObjectNode get(@AuthenticationPrincipal Jwt jwt,@PathVariable String id){return violations.view(jwt.getClaimAsString("tenantId"),id);}
+    /** 위반 검토/리포트 화면에서 원본을 보여줄 때 쓴다. run-token 전용인 /internal 엔드포인트와 다른 경로다. */
+    @GetMapping("/api/v1/reviews/{id}/assets/{assetId}")
+    public ResponseEntity<byte[]> userAsset(@AuthenticationPrincipal Jwt jwt,@PathVariable String id,@PathVariable String assetId){
+        var asset=reviews.readPersistedAsset(jwt.getClaimAsString("tenantId"),id,assetId);
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).contentType(MediaType.parseMediaType(asset.mimeType())).body(asset.bytes());
+    }
     @PostMapping(value="/api/v1/reviews",consumes=MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ObjectNode> create(@AuthenticationPrincipal Jwt jwt,@RequestParam String metadata,
         @RequestPart List<MultipartFile> files,@RequestPart(required=false)List<MultipartFile> evidence){

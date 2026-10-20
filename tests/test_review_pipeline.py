@@ -4,7 +4,26 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 from capstone_shared.documents import tile_image, prepare_document
-from capstone_agent.review_engine import build_graph, Provider, deduplicate
+from capstone_agent.review_engine import build_graph, Provider, deduplicate, correct_ocr_text, OcrCorrection
+
+
+async def test_ocr_correction_fixes_broken_spacing_without_changing_line_count():
+    class FakeProvider:
+        async def parse(self,prompt,schema,**kwargs):
+            return OcrCorrection(lines=["7일 주름 개선","SPF50 PA++++"])
+    blocks=[{"id":"a","text":"7 일 주 름 개 선","location":{}},{"id":"b","text":"SPF50 PA++++","location":{}}]
+    fixed=await correct_ocr_text(FakeProvider(),blocks)
+    assert [b["text"] for b in fixed]==["7일 주름 개선","SPF50 PA++++"]
+    assert fixed[0]["id"]=="a" and fixed[1]["id"]=="b"  # location/id survive, only text replaced
+
+
+async def test_ocr_correction_falls_back_to_raw_text_on_line_count_mismatch():
+    class BadProvider:
+        async def parse(self,prompt,schema,**kwargs):
+            return OcrCorrection(lines=["합쳐버린 한 줄"])
+    blocks=[{"id":"a","text":"원문 1","location":{}},{"id":"b","text":"원문 2","location":{}}]
+    result=await correct_ocr_text(BadProvider(),blocks)
+    assert result is blocks
 
 
 def test_long_image_tiles_cover_original_without_gaps():
@@ -48,7 +67,7 @@ async def test_missing_provider_does_not_invent_findings_or_sources(monkeypatch)
 
 
 async def test_both_paths_have_independent_results_and_checkpoint_contains_no_pixels(monkeypatch):
-    from capstone_agent.review_models import OCRLines,TextAssessment,VisualAssessment
+    from capstone_agent.review_models import TextAssessment,VisualAssessment
     import capstone_agent.review_engine as engine
     from capstone_agent.review_engine import RewriteDraft,RewriteVerification
     async def ocr(native,tiles,provider):
@@ -109,6 +128,20 @@ async def test_rewrite_retry_limit_stops_auto_suggestions_for_manual_input(monke
     assert violation["rewrite_attempt_count"]==REWRITE_RETRY_LIMIT==3
     assert len(violation["rewrites"])==REWRITE_RETRY_LIMIT
     assert violation["final_resolution"] is None  # 사람의 rewritten_manual 입력이 필요하다
+
+
+async def test_verify_rewrite_checks_source_agnostically_and_does_not_rewrite():
+    from capstone_agent.review_engine import verify_rewrite
+    from capstone_agent.review_models import RewriteVerification
+    seen = {}
+    class FakeProvider:
+        async def parse(self, prompt, schema, **kwargs):
+            seen["schema"], seen["text"] = schema, kwargs["text"]
+            return RewriteVerification(passed=False, reasoning="여전히 절대적 표현")
+    result = await verify_rewrite(FakeProvider(), "평생 지속되는 보습", "절대적 표현")
+    assert seen["schema"] is RewriteVerification
+    assert "평생 지속되는 보습" in seen["text"] and "절대적 표현" in seen["text"]
+    assert result.passed is False and result.reasoning
 
 
 def test_patent_error_envelope_is_not_no_results():

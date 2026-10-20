@@ -157,9 +157,9 @@ class ViolationFlowTest {
             .andExpect(status().isOk()).andExpect(jsonPath("$.violations[0].finalText").value("주름 개선 도움"))
             .andExpect(jsonPath("$.violations[0].finalTextValidated").value(true))
             .andExpect(jsonPath("$.violations[0].decidedBy").value(AUTHOR.id()));
-        // 사람이 쓴 문구는 재검증 전까지 저장하지 않는다.
+        // 사람이 쓴 문구는 Agent 재검증을 통과하기 전까지 저장하지 않는다(기본 mock은 passed=false).
         mvc.perform(postJson(base+second+"/decision",Map.of("resolution","rewritten_manual","finalText","효과적인 보습")).with(as(AUTHOR)))
-            .andExpect(status().isNotImplemented()).andExpect(jsonPath("$.message").value("MANUAL_REWRITE_VALIDATION_NOT_IMPLEMENTED"));
+            .andExpect(status().isConflict()).andExpect(jsonPath("$.message").value("MANUAL_TEXT_FAILED_VERIFICATION"));
         mvc.perform(postJson(base+second+"/decision",Map.of("resolution","rewritten")).with(as(AUTHOR)))
             .andExpect(status().isConflict()).andExpect(jsonPath("$.message").value("NO_REWRITE_SUGGESTION"));
         assertThat(jdbc.queryForObject("SELECT final_resolution FROM app.violations WHERE id=CAST(? AS uuid)",String.class,second)).isNull();
@@ -216,6 +216,34 @@ class ViolationFlowTest {
     }
 
     @Test
+    void manualRewriteIsSavedOnlyAfterAgentVerificationPasses()throws Exception{
+        String id=reviewWithTwoFindings();
+        String violation=read(mvc.perform(get("/api/v1/reviews/"+id).with(as(AUTHOR)))).path("violations").get(1).path("id").asText();
+        String path="/api/v1/reviews/"+id+"/violations/"+violation+"/decision";
+        when(agent.post(eq("/internal/rewrites/verify"),any())).thenReturn(json.createObjectNode().put("passed",true).put("reasoning","안전함"));
+
+        mvc.perform(postJson(path,Map.of("resolution","rewritten_manual","finalText","효과적인 보습")).with(as(AUTHOR)))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.violations[1].finalText").value("효과적인 보습"))
+            .andExpect(jsonPath("$.violations[1].finalResolution").value("rewritten_manual"))
+            .andExpect(jsonPath("$.violations[1].finalTextValidated").value(true));
+        verify(agent).post(eq("/internal/rewrites/verify"),argThat(c->
+            c.path("reviewId").asText().equals(id) && c.path("text").asText().equals("효과적인 보습") && c.path("reason").asText().equals("r")));
+        assertThat(jdbc.queryForObject("SELECT final_text_validated FROM app.violations WHERE id=CAST(? AS uuid)",Boolean.class,violation)).isTrue();
+    }
+
+    @Test
+    void manualRewriteVerificationFailureReportsConfigurationSeparatelyFromGenericFailure()throws Exception{
+        String id=reviewWithTwoFindings();
+        String violation=read(mvc.perform(get("/api/v1/reviews/"+id).with(as(AUTHOR)))).path("violations").get(1).path("id").asText();
+        String path="/api/v1/reviews/"+id+"/violations/"+violation+"/decision";
+        var ctor=AgentClient.AgentFailure.class.getDeclaredConstructor(int.class,String.class);ctor.setAccessible(true);
+        when(agent.post(eq("/internal/rewrites/verify"),any())).thenThrow(ctor.newInstance(503,"TEXT_MODEL_NOT_CONFIGURED"));
+        mvc.perform(postJson(path,Map.of("resolution","rewritten_manual","finalText","효과적인 보습")).with(as(AUTHOR)))
+            .andExpect(status().isServiceUnavailable()).andExpect(jsonPath("$.message").value("REWRITE_MODEL_NOT_CONFIGURED"));
+        assertThat(jdbc.queryForObject("SELECT final_resolution FROM app.violations WHERE id=CAST(? AS uuid)",String.class,violation)).isNull();
+    }
+
+    @Test
     void missingRewriteModelIsReportedAndNothingStored()throws Exception{
         String id=reviewWithTwoFindings();
         String violation=read(mvc.perform(get("/api/v1/reviews/"+id).with(as(AUTHOR)))).path("violations").get(1).path("id").asText();
@@ -224,6 +252,22 @@ class ViolationFlowTest {
         mvc.perform(postJson("/api/v1/reviews/"+id+"/violations/"+violation+"/rewrite-requests",Map.of()).with(as(AUTHOR)))
             .andExpect(status().isServiceUnavailable()).andExpect(jsonPath("$.message").value("REWRITE_MODEL_NOT_CONFIGURED"));
         assertThat(jdbc.queryForObject("SELECT count(*) FROM app.violation_rewrites WHERE violation_id=CAST(? AS uuid)",Integer.class,violation)).isZero();
+    }
+
+    @Test
+    void persistedOriginalAssetIsServedOnlyToOwningTenant()throws Exception{
+        String id=review();
+        String assetId=UUID.randomUUID().toString();
+        byte[] png={(byte)0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A,1,2,3,4};
+        jdbc.update("INSERT INTO app.review_assets(id,review_id,version_no,name,mime_type,role,doc_type,size_bytes,sha256,bytes) "+
+            "VALUES (CAST(? AS uuid),CAST(? AS uuid),1,'ad.png','image/png','advertisement','',?,'x',?)",assetId,id,png.length,png);
+
+        var ok=mvc.perform(get("/api/v1/reviews/"+id+"/assets/"+assetId).with(as(AUTHOR))).andExpect(status().isOk())
+            .andExpect(header().string("Content-Type","image/png")).andReturn();
+        assertThat(ok.getResponse().getContentAsByteArray()).isEqualTo(png);
+
+        mvc.perform(get("/api/v1/reviews/"+id+"/assets/"+assetId).with(as(OUTSIDER))).andExpect(status().isNotFound());
+        mvc.perform(get("/api/v1/reviews/"+id+"/assets/"+UUID.randomUUID()).with(as(AUTHOR))).andExpect(status().isNotFound());
     }
 
     @Test

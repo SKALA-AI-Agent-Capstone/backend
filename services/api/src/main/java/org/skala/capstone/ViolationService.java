@@ -57,8 +57,7 @@ public class ViolationService {
             store.mutate(tenant,id,d->{
                 ObjectNode v=ReviewStore.version(d,no);
                 v.set("result",result);v.put("status","done");
-                v.set("steps",json.valueToTree(List.of(100,100,100,100,100)));v.put("originalsDiscardedAt",Instant.now().toString());
-                for(JsonNode f:v.path("input").path("files"))((ObjectNode)f).put("discarded",true);
+                v.set("steps",json.valueToTree(List.of(100,100,100,100,100)));
                 latest[0]=ReviewStore.latest(d).path("no").asInt()==no;
                 if(latest[0] && auto){
                     ObjectNode approval=(ObjectNode)v.path("approval");approval.put("state","approved").put("agentResume","pending");
@@ -220,6 +219,43 @@ public class ViolationService {
         String resolution=body.path("resolution").asText("");
         if(!Set.of("kept","rewritten","rewritten_manual").contains(resolution))
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"INVALID_RESOLUTION");
+        String tenant=jwt.getClaimAsString("tenantId");
+        // 사람이 쓴 문구는 Agent 재검증을 통과해야 저장할 수 있다(app.violations의
+        // final_resolution<>'rewritten_manual' OR final_text_validated 제약과 같은 규칙).
+        // requestRewrite와 같은 이유로 Agent 호출은 락 밖에서 한다 — 외부 HTTP 왕복 동안
+        // 행 잠금을 들고 있지 않는다.
+        if("rewritten_manual".equals(resolution)){
+            String manualText=body.path("finalText").asText("").trim();
+            if(manualText.isBlank())throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"FINAL_TEXT_REQUIRED");
+            String reason=tx.execute(status->{
+                Locked review=lockOpenReview(jwt,id);
+                lockViolation(id,violationId);
+                for(JsonNode f:ReviewStore.latest(review.doc()).path("result").path("findings"))
+                    if(violationId.equals(f.path("violationId").asText()))return f.path("reason").asText("");
+                return "";
+            });
+            boolean passed;
+            try{
+                passed=agent.post("/internal/rewrites/verify",store.mapper().createObjectNode()
+                    .put("reviewId",id).put("tenantId",tenant).put("text",manualText).put("reason",reason))
+                    .path("passed").asBoolean(false);
+            }catch(AgentClient.AgentFailure failure){
+                if(failure.status==503 && "TEXT_MODEL_NOT_CONFIGURED".equals(failure.detail))
+                    throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"REWRITE_MODEL_NOT_CONFIGURED");
+                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,"REWRITE_VERIFICATION_FAILED");
+            }catch(Exception error){
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"AGENT_UNAVAILABLE");
+            }
+            if(!passed)throw new ResponseStatusException(HttpStatus.CONFLICT,"MANUAL_TEXT_FAILED_VERIFICATION");
+            tx.executeWithoutResult(status->{
+                lockOpenReview(jwt,id);
+                lockViolation(id,violationId);
+                jdbc.update("""
+                    UPDATE app.violations SET final_resolution=?,final_text=?,final_text_validated=true,
+                      decided_by=CAST(? AS uuid),decided_at=now() WHERE id=CAST(? AS uuid)""",resolution,manualText,jwt.getSubject(),violationId);
+            });
+            return view(tenant,id);
+        }
         tx.executeWithoutResult(status->{
             lockOpenReview(jwt,id);
             var violation=lockViolation(id,violationId);
@@ -228,7 +264,7 @@ public class ViolationService {
                     if(body.hasNonNull("finalText"))throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"FINAL_TEXT_NOT_ALLOWED");
                     yield (String)violation.get("text_excerpt");
                 }
-                case "rewritten"->{
+                default->{ // "rewritten" — 위에서 "kept"/"rewritten_manual"을 전부 처리했으니 나머지는 이것뿐이다
                     if(body.hasNonNull("finalText"))throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"FINAL_TEXT_NOT_ALLOWED");
                     if(body.hasNonNull("attemptNo")){
                         var picked=jdbc.queryForList("SELECT text FROM app.violation_rewrites WHERE violation_id=CAST(? AS uuid) AND attempt_no=?",
@@ -239,17 +275,12 @@ public class ViolationService {
                     if(violation.get("rewrite_suggestion")==null)throw new ResponseStatusException(HttpStatus.CONFLICT,"NO_REWRITE_SUGGESTION");
                     yield (String)violation.get("rewrite_suggestion");
                 }
-                default->{
-                    if(body.path("finalText").asText("").isBlank())throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"FINAL_TEXT_REQUIRED");
-                    // 사람이 쓴 문구는 재검증을 통과해야 저장할 수 있다. 재검증 경로가 아직 없으므로 저장하지 않는다.
-                    throw new ResponseStatusException(HttpStatus.NOT_IMPLEMENTED,"MANUAL_REWRITE_VALIDATION_NOT_IMPLEMENTED");
-                }
             };
             jdbc.update("""
                 UPDATE app.violations SET final_resolution=?,final_text=?,final_text_validated=true,
                   decided_by=CAST(? AS uuid),decided_at=now() WHERE id=CAST(? AS uuid)""",resolution,finalText,jwt.getSubject(),violationId);
         });
-        return view(jwt.getClaimAsString("tenantId"),id);
+        return view(tenant,id);
     }
 
     /**
