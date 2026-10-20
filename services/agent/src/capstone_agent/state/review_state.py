@@ -7,10 +7,16 @@ PatentClaimMatchResult, RegulationHit, PrecedentHit)은 아직 packages/shared�
 계약으로 등록되지 않았으므로, 여기서는 dict[str, Any]로 느슨하게 들고 있는다. 계약이
 packages/shared에 고정되면 해당 타입으로 교체한다.
 
-아래는 미확정, 팀 합의 필요:
-- hitl_status의 정확한 상태 집합과 화면 표시 방식 (docs/03-contracts.md "승인 대기" 행)
-- 광고 본문에서 탐지한 특허번호를 조회 후보에 포함할지 여부 (같은 문서 "광고 속 특허번호" 행)
-- 반려/수정요청 시 재실행 방식: 새 review_id 재실행 vs 같은 건 수정안 승인 (같은 문서 "반려와 수정요청" 행)
+2026-10-20 HITL 재설계로 "review 전체를 사람이 한 번에 승인/반려"하던 구조를 violation
+단위 3지 선택(kept/rewritten/rewritten_manual) + review 전체의 별도 최종 결정으로
+바꿨다. 아래 Violation/ReviewDecision이 그 구조다. 이전의 단일 hitl_status, Finding은
+이 재설계로 대체되어 제거했다.
+
+아래는 여전히 미확정, 팀 합의 필요 (HITL 재설계와 무관한 항목):
+- 광고 본문에서 탐지한 특허번호를 조회 후보에 포함할지 여부 (docs/03-contracts.md "광고 속 특허번호" 행)
+- 반려/수정요청 시 재실행 방식: 새 review_id 재실행 vs 같은 건 수정안 승인 (같은 문서 "반려와 수정요청" 행).
+  ReviewDecision.status의 rejected/reupload_requested는 이 재실행이 실제로 어떻게 일어나는지와는
+  별개로, review의 최종 판정값만 담는다.
 - 폐기된 원본의 재사용 정책, 해시 기반 버전 연결 (같은 문서 "원본 재사용" 행)
 """
 
@@ -54,12 +60,60 @@ class Claim(TypedDict):
     source_block_id: str | None
 
 
-class Finding(TypedDict, total=False):
+class RewriteAttempt(TypedDict):
+    attempt_no: int
+    text: str
+    # 사람이 "다시쓰기"를 요청하며 남긴 메모. 요청 자체는 상태가 아니라 이벤트라
+    # violation에 재시도 카운트를 따로 두지 않고 이 이력에만 쌓인다(2026-10-20 HITL 재설계).
+    retry_note: str | None
+    created_at: str  # ISO 8601. 실제 바인딩은 노드 구현 시점(AGT-03)에 채운다.
+
+
+ViolationFinalResolution = Literal["undecided", "kept", "rewritten", "rewritten_manual"]
+
+
+class Violation(TypedDict, total=False):
+    violation_id: str
     claim_id: str
-    verdict: str
-    rewrite_suggestion: str | None
-    citations: list[dict[str, Any]]
-    insufficient_evidence: bool
+    original_text: str
+    # regulation_hits/claim_match_results 중 이 violation의 근거가 된 항목 참조.
+    # 실제 연결 방식은 AGT-03.
+    law_basis: list[dict[str, Any]]
+
+    rewrite_attempts: list[RewriteAttempt]
+    latest_rewrite: str | None
+    self_verify_retry_count: int
+    self_verify_passed: bool
+
+    # final_resolution이 undecided가 아니게 바뀌는 순간 final_text/decided_by/decided_at이
+    # 함께 채워진다. rewritten_manual은 self_verify_passed가 True여야 확정할 수 있다
+    # (2026-10-20 HITL 재설계: "법적 안전성은 기계가, 나머지 가치판단은 사람이" 원칙).
+    final_resolution: ViolationFinalResolution
+    final_text: str | None
+    manual_text: str | None
+    decided_by: str | None
+    decided_at: str | None
+
+
+ReviewDecisionStatus = Literal["pending", "approved", "rejected", "reupload_requested"]
+
+
+class ReviewDecision(TypedDict, total=False):
+    status: ReviewDecisionStatus
+    reason: str | None
+    # violations가 0건이라 Agent가 자동 승인했으면 decided_by/decided_at은 비워 "사람이
+    # 아니라 시스템이 승인했다"는 걸 구분한다(2026-10-20 HITL 재설계 4항).
+    decided_by: str | None
+    decided_at: str | None
+
+
+def all_violations_decided(violations: list[Violation]) -> bool:
+    """review 전체의 "모든 violation이 결정됐는지"는 별도 필드로 캐싱하지 않고 그때그때
+    계산한다 — 저장해뒀다가 violations 갱신 때 동기화를 깜빡하면 바로 버그가 되는 값이다
+    (2026-10-20 HITL 재설계 5항). review 승인 가능 여부를 이 값으로 막는 건 Graph가 아니라
+    화면/애플리케이션의 책임이며, 여기서는 판단 자료만 제공한다.
+    """
+    return all(v.get("final_resolution", "undecided") != "undecided" for v in violations)
 
 
 class ReviewState(TypedDict, total=False):
@@ -88,11 +142,13 @@ class ReviewState(TypedDict, total=False):
     regulation_hits: list[dict[str, Any]]
     precedent_hits: list[dict[str, Any]]
 
-    # ⑤ 리라이트
-    findings: list[Finding]
+    # ② 위반 탐지. ⑤(자가검증 리라이트)와 ⑥(HITL 3지 선택)의 모든 상태는 violation 단위로
+    # Violation 안에 있다 (2026-10-20 HITL 재설계).
+    violations: list[Violation]
 
-    # ⑥ HITL interrupt. 상태 집합은 미확정(docs/03-contracts.md 참고).
-    hitl_status: str | None
+    # review 전체의 최종 결정. all_violations_decided()로 "모두 결정됐는지"를 그때그때
+    # 계산할 뿐, 이 Graph는 그 값으로 승인을 막지 않는다(2026-10-20 HITL 재설계 5항).
+    review_decision: ReviewDecision
 
     # ⑦ 리포트
     report_url: str | None
