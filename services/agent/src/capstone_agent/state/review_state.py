@@ -153,5 +153,7 @@ class ReviewState(TypedDict, total=False):
     # ⑦ 리포트
     report_url: str | None
     report_retry_count: int
+    # review_decision에 따라 분기된 승인 경위 문장(nodes/report.py REPORT_SYSTEM_PROMPT 산출).
+    report_approval_statement: str | None
 
     errors: list[str]
