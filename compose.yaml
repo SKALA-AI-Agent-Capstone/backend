@@ -71,6 +71,8 @@ services:
       MFDS_REPORT_URL: ${MFDS_REPORT_URL:-}
       KIPRIS_SERVICE_KEY: ${KIPRIS_SERVICE_KEY:-}
       KIPRIS_WORD_SEARCH_URL: ${KIPRIS_WORD_SEARCH_URL:-https://plus.kipris.or.kr/kipo-api/kipi/patUtiModInfoSearchSevice/getWordSearch}
+      MFDS_GMP_URL: ${MFDS_GMP_URL:-}
+      MFDS_REGULATION_URL: ${MFDS_REGULATION_URL:-}
     ports:
       - "127.0.0.1:${BUSINESS_MCP_PORT:-8002}:8002"
     depends_on:

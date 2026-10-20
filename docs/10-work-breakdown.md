@@ -137,6 +137,11 @@ Frontend와 Backend 담당자가 먼저 요청과 응답, 진행 및 오류 예�
 | RAG-04 | 검색 구현 | search_regulations와 search_precedents | 두 컬렉션과 반환 타입 구분, 원문 인용, 적용일과 추적 필드의 전환 규약 |
 | RAG-05 | 평가와 MCP 통합 | 기대 문서와 평가 결과 | 근거 없음과 장애, 조건 누락, 광고 페이지와 근거 페이지 혼동 방지 |
 
+2026-10-20 feat/rag-legal-sources 기준 진행 상황:
+RAG-01은 9건의 수집 경로 분류까지 완료(acquisition 필드). RAG-02는 화장품법 조문 단위 적재 완료, PDF 8건은 원문 미확보.
+RAG-03은 적재 경로와 선택형 임베딩 코드만 있고 모델 미확정. RAG-04는 두 도구 등록과 키워드 검색 완료.
+RAG-05는 Agent 호출 연결과 평가셋이 남았다. 연결 계약과 머지 순서는 docs/06-rag-start.md의 "RAG 연동 현황과 브랜치 간 통합 가이드"를 따른다.
+
 RAG는 이미지나 PDF 광고를 받는 API를 기다릴 필요가 없다.
 초기 연결 검사는 현재 SearchRulesInput으로 실행할 수 있다. 신규 검색 개발은 노션의 query_text와 두 반환 타입을 목표로 한다.
 기존 기반 도구와 신규 도구의 소비자는 같은 계약 PR에서 전환한다.
@@ -209,7 +214,7 @@ RabbitMQ는 작업을 전달하며 LLM 판단, OCR, 근거 검색과 과금 로�
 | Backend | AuthController, ReviewController, ReviewService와 V2 migration | 내구성 있는 작업 발행, SSE 또는 재개 재시도 계약 | Agent와 Frontend |
 | Agent | review_engine.py, app.py | 실제 키로 두 경로 평가, 한도 있는 근거 보강 loop와 사용량 계측 | RAG와 Business |
 | Business | server.py, review_tools.py | MFDS 실응답 매핑, 증빙 의미 구조화와 제품 주장 대조 | Agent와 Backend |
-| RAG | 기존 knowledge SQL, reference-sources.json, docs/06-rag-start.md | S06 원문 검증과 버전 및 조각 적재, 검색 계약 전환 | Agent |
+| RAG | legalize.py, ingest.py, retrieval.py, scripts/ingest_rag.py, docs/06-rag-start.md | RegulationHit source_type 추가, S06 별표 5 PDF 적재, 임베딩 확정 | Agent (search_regulations 호출 전환), Frontend (retrievalStatus 표시) |
 | 공통 환경 | compose.yaml, packages/shared와 contracts | 다건 RabbitMQ 명령과 멱등 처리 | Backend와 Agent |
 
 RAG는 로컬 PostgreSQL만 켜도 수집과 검색 개발을 시작할 수 있다. 공개 코퍼스에 고객 자료를 섞지 않는다.

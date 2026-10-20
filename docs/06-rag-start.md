@@ -4,6 +4,187 @@
 search_regulations와 search_precedents다. 기존 기반의 이름을 목표 API처럼 사용하지 않는다.
 공통 인터페이스와 미확정 항목은 docs/03-contracts.md에 모았다.
 
+## 2026-10-20 수집 경로 변경
+
+노션 참고자료 9건 중 화장품법은 [legalize-kr](https://github.com/legalize-kr/legalize-kr/tree/main/kr/%ED%99%94%EC%9E%A5%ED%92%88%EB%B2%95)에서, 나머지는 PDF로 적재한다.
+사용 API 4종은 색인하지 않고 business-mcp 도구로 두어 Agent가 필요할 때 고른다.
+각 출처의 경로는 reference-sources.json의 acquisition 필드가 원본이다.
+
+| 출처 | 경로 | 비고 |
+| --- | --- | --- |
+| S05 화장품법 제13조, 제14조 | legalize-kr | 법률, 시행령, 시행규칙 세 파일 전체를 조문 단위로 적재 |
+| S06 시행규칙 별표 5 | legalize-kr + PDF | 시행규칙 조문은 legalize-kr, 별표 5 표 본문은 Markdown에 없어 PDF |
+| S01 관리 지침, S03 실증 시험방법 | PDF | 식약처 안내서 |
+| S02 협회 광고자문 기준 | PDF | 협회 기준, 법령과 같은 효력으로 취급하지 않음 |
+| S04 2026 지침 및 위반사례 | PDF | 규정과 사례 페이지 범위(page_ranges)를 적기 전까지 적재하지 않음 |
+| S07 실증 규정, S08 기능성 심사 규정 | PDF | 식약처 고시. legalize-kr는 법률, 시행령, 시행규칙만 다룸 |
+| S09 표시광고법 제3조 | PDF | legalize-kr에도 있어 method만 바꾸면 전환 가능 |
+
+```sh
+GITHUB_TOKEN=... uv run --all-packages --frozen python scripts/ingest_rag.py legalize   # 화장품법
+uv run --all-packages --frozen python scripts/ingest_rag.py pdf                          # data/sources/S0x.pdf
+```
+
+- legalize-kr는 개정마다 공포일자 커밋이 있다. 수집일에 시행 중인 버전과 그 뒤에 공포된 미시행 버전을 함께 넣고, effective_from과 effective_until로 구분한다.
+- 같은 문서 키, 버전, 해시는 다시 쓰지 않는다. 새 버전이 오면 이전 버전의 effective_until만 조정한다.
+- legalize-kr 본문은 공포본 기준이라, 부칙에서 시행일을 늦춘 일부 조문이 섞일 수 있다. 부칙과 조문별 시행일 처리는 후속이다.
+- legalize-kr는 force-push로 커밋 해시가 바뀔 수 있다고 공지한다. 버전 식별은 공포일자와 공포번호로 하고 해시는 storage_key의 참고값이다.
+- GitHub 비인증 API 한도는 시간당 60회다. GITHUB_TOKEN은 공개 읽기 권한이면 충분하며 .env에만 둔다.
+- 검색은 임베딩이 없어도 문자 bigram 키워드 순위로 동작한다. RAG_EMBEDDING_MODEL을 정하고 --embed로 적재하면 벡터 순위와 합친다. 키워드만으로는 순위 품질이 낮다.
+
+## RAG 연동 현황과 브랜치 간 통합 가이드 (2026-10-20 기준)
+
+Agent, Frontend, Backend 담당이 RAG를 붙일 때 이 절만 읽으면 되도록 정리했다.
+RAG 계약(packages/shared/src/capstone_shared/rag_contracts.py, contracts/search-*.output.schema.json)이 유지되는 한
+이후 RAG 내부 개선(PDF 적재, 임베딩, 순위 조정)은 다른 브랜치와 충돌하지 않는다.
+
+### 1. 지금 동작하는 것 (feat/rag-legal-sources)
+
+| 구성 | 상태 | 확인 근거 |
+| --- | --- | --- |
+| 화장품법 적재 | 법률 4개 버전, 시행령 1개, 시행규칙 1개, 조문 315개 | 새 clone에서 ingest_rag.py legalize 실행 후 knowledge 행 수 |
+| rag-mcp search_regulations | 등록, 인증된 HTTP 호출로 FOUND 응답 | 아래 6번 확인 코드 |
+| rag-mcp search_precedents | 등록, 사례 미적재라 CORPUS_NOT_INDEXED | 같은 코드 |
+| v0.1 search_rules, search_cases, get_evidence | 그대로 유지, 여전히 NOT_IMPLEMENTED | 기존 consumer 호환용 |
+| business-mcp API 도구 4개 | verify_functional_approval, verify_patent, verify_gmp_company, lookup_ingredient_regulation | 키가 없으면 API_NOT_CONFIGURED |
+| PDF 출처 8건 | 수집기만 있음, 원문 미적재 | ingest_rag.py pdf가 PDF_NOT_FOUND로 건너뜀 |
+
+### 2. 화면에 "법령 검색 미연결"이 뜨는 이유
+
+RAG 데이터와 도구는 준비됐지만 호출하는 쪽과 화면 표시가 아직 연결되지 않았다.
+
+- Agent: main의 services/agent/src/capstone_agent/review_engine.py가 rag-mcp를 호출하지 않는다.
+  모델 지시문에 "법령 검색은 연결되지 않았다"가 있고, finding마다 basis=[]와 legalStatus="not_evaluated",
+  결과에 retrievalStatus="not_connected"와 standardsSnapshot=[]을 고정해서 넣는다.
+- Frontend: "법령 검색 미연결" 문구가 retrievalStatus와 무관하게 고정돼 있다.
+  ReviewDetailPage.vue, StatusSummary.vue, ApprovalPanel.vue, ViolationCard.vue, ReviewNewPage.vue,
+  ReportDocument.vue, shared/constants/site.js. Agent가 근거를 채워도 이 문구는 바뀌지 않는다.
+
+### 3. 다른 브랜치가 맞출 계약
+
+#### Agent (feat/agent, nodes/tool_loop.py)
+
+현재 tool_loop는 전환용으로 search_rules를 `{"query": {claim_id, claim_text, surrounding_text}}`로 부른다.
+SearchRulesInput은 review_date가 필수라 이 호출은 입력 검증 오류가 나고, 통과해도 NOT_IMPLEMENTED 빈 결과다.
+아래처럼 바꾸면 실제 조문이 돌아온다. 인자는 query로 감싸지 않는다.
+
+```python
+result = await call_rag_tool("search_regulations", {
+    "query_text": claim["claim_text"],      # 주장 문구와 짧은 문맥. OCR 띄어쓰기는 검색 시 무시된다
+    "top_k": 5,                              # 1~10
+    "review_date": "2026-10-20",             # 선택. 생략하면 오늘, 그날 시행 중인 법령 버전만 찾는다
+})
+content = result.structured_content
+```
+
+_TRANSITIONAL_TOOL 값도 "rag.search_regulations"로 바꿔 guardrail 집계가 같은 이름을 보게 한다.
+사례는 search_precedents(query_text, top_k=3)를 따로 부르고 법령 근거와 섞지 않는다.
+
+응답 status별 처리:
+
+| status | 의미 | Agent 처리 제안 |
+| --- | --- | --- |
+| FOUND | hits에 조문이 있음 | hits를 finding.basis로 옮김 |
+| NO_RELEVANT_EVIDENCE | 검색했으나 맞는 조문 없음 | basis는 비우고 "근거 미발견"으로 표시. 적합 판정이 아님 |
+| CORPUS_NOT_INDEXED | 해당 날짜에 적재된 자료 없음 | 검색하지 않은 것과 같음. retrievalStatus를 실패로 |
+| SEARCH_ERROR | DB 장애 | 같은 도구 재시도 정책 적용 후 실패면 "확인 불가" |
+
+RegulationHit를 화면의 basis 형식(frontend shared/components/review/BasisItem.vue)으로 옮기는 매핑 제안:
+
+| basis 필드 (Frontend) | RegulationHit 필드 | 비고 |
+| --- | --- | --- |
+| sourceName | source | 예: 화장품법, 화장품법 시행규칙 |
+| article | section | 예: 제13조 (부당한 표시ㆍ광고 행위 등의 금지). PDF는 section이 없으므로 page로 "p.N" |
+| version | version | 공포일자와 공포번호. 예: 2026-04-07 제21525호 |
+| revisedAt | effective_from | 시행일 |
+| original | excerpt | 저장 원문 그대로. 요약하거나 바꾸지 않음 |
+| plain | (없음) | 쉬운 설명은 Agent가 작성. RAG는 만들지 않음. 없으면 scope를 임시 표시 |
+| sourceType | (없음) | RegulationHit에 아직 없음. RAG가 source_type 필드를 추가할 예정(5번 계획 1) |
+| sourceUrl | source_url | legalize-kr 커밋 링크 또는 공식 페이지 |
+
+결과 수준 필드 제안: standardsSnapshot에는 hits의 (source, version, effective_from) 중복 제거 목록을,
+retrievalStatus에는 "connected"(한 번 이상 FOUND 또는 NO_RELEVANT_EVIDENCE), "error"(그 밖) 중 하나를 넣는다.
+retrievalStatus 값 이름은 Agent와 Frontend 담당이 확정한다.
+
+#### Frontend
+
+고정 문구 7곳을 result.retrievalStatus 기준으로 바꾼다. "connected"면 근거 표시, 그 밖이면 지금 문구를 유지한다.
+basis 렌더링(BasisItem.vue, ReportDocument.vue, ZoomDetailCard.vue)은 위 매핑을 쓰면 그대로 동작한다.
+
+#### Backend (feat/violation-storage, main에 PR #4로 머지됨)
+
+V4 app.violations에는 근거 컬럼이 없다. 근거는 지금처럼 reviews.document JSON의 findings[].basis에 보존된다.
+근거를 정규화하려면 violation_basis 같은 별도 테이블이 필요하며 Backend 담당과 합의한다.
+
+### 4. 머지 순서와 알려진 충돌
+
+2026-10-20 git merge-tree로 확인한 결과다.
+
+| 조합 | 결과 | 해결 |
+| --- | --- | --- |
+| 최신 main(PR #4 포함) + feat/rag-legal-sources | scripts/export_contracts.py 한 파일 충돌 | 양쪽 import와 목록 항목을 모두 남긴다(아래) |
+| main + feat/agent | docs/01-architecture.md, services/agent/pyproject.toml, uv.lock 충돌 | feat/agent를 최신 main 기준으로 rebase. RAG 변경과는 무관 |
+| feat/rag-legal-sources + feat/agent | 위와 같은 세 파일 | main 충돌을 풀면 함께 해결됨 |
+
+export_contracts.py 충돌 해결 결과:
+
+```python
+from capstone_shared.contracts import SearchRulesInput, SearchRulesResult
+from capstone_shared.rag_contracts import PrecedentSearchResult, RegulationSearchResult
+from capstone_shared.review_contracts import RunRequest, ResumeRequest, RewriteRequest, RewriteSuggestion, TextAssessment, VisualAssessment
+...
+    ("search-rules.output.schema.json", SearchRulesResult),
+    ("search-regulations.output.schema.json", RegulationSearchResult),
+    ("search-precedents.output.schema.json", PrecedentSearchResult),
+    ("mvp-agent-run.input.schema.json", RunRequest),
+    ("mvp-agent-resume.input.schema.json", ResumeRequest),
+    ("mvp-agent-rewrite.input.schema.json", RewriteRequest),
+    ("mvp-agent-rewrite.output.schema.json", RewriteSuggestion),
+```
+
+권장 순서:
+
+1. feat/rag-legal-sources에 최신 main을 merge하고 위 충돌을 해결한다. pytest와 export_contracts.py --check 통과 후 PR. (2026-10-20 완료, PR #5)
+2. RAG PR이 머지되면 feat/agent를 최신 main 기준으로 rebase하고 search_regulations로 교체한다.
+3. Frontend가 retrievalStatus 기준 표시로 바꾼다.
+4. 이후 RAG 품질 작업(5번)은 계약을 바꾸지 않으므로 다른 브랜치와 독립적으로 진행한다.
+
+### 5. 앞으로 RAG 실행 계획
+
+| 순서 | 작업 | 산출물 | 다른 브랜치 영향 |
+| --- | --- | --- | --- |
+| 1 | RegulationHit에 source_type 추가 | 계약과 스키마 갱신 | Agent와 같은 PR에서 합의 (필드 추가만) |
+| 2 | S06 별표 5 PDF 확보와 적재, 이어서 S01, S02, S03, S07, S08, S09 | data/sources/S0x.pdf, knowledge 행 | 없음 (데이터만) |
+| 3 | S04 규정과 사례 page_ranges 확정 | search_precedents 결과 생성 | 없음 |
+| 4 | 임베딩 모델 확정(후보 bge-m3, 1024차원)과 --embed 적재 | retrieval_mode=hybrid | 없음 (응답 형식 동일) |
+| 5 | 평가셋: 검증표 예시 4개와 실제 화면 문구("지친 피부 시간을 되돌리는", "탄력 광채 안티에이징") | 기대 조문 정답표와 결과표 | 없음 |
+| 6 | 부칙의 조문별 시행일 처리 | 버전 범위 보정 | 없음 |
+
+현재 키워드 검색만으로는 "탄력 광채 안티에이징"이 0건, "지친 피부 시간을 되돌리는"이 제2조(정의)로 잡힌다.
+이런 표현의 근거는 별표 5와 지침, 협회 기준에 있으므로 2번과 4번이 끝나야 근거 품질이 의미 있게 오른다.
+
+### 6. 직접 확인하는 방법
+
+```sh
+docker compose --profile web up --build -d --wait
+GITHUB_TOKEN=$(gh auth token) uv run --all-packages --frozen python scripts/ingest_rag.py legalize
+```
+
+```python
+# uv run --all-packages --frozen python 로 실행. backend 폴더 기준
+import asyncio, os, sys
+sys.path.insert(0, "scripts")
+from local_config import load_env; load_env()
+from fastmcp import Client
+from fastmcp.client.auth import BearerAuth
+
+async def main():
+    async with Client("http://127.0.0.1:8003/mcp", auth=BearerAuth(os.environ["INTERNAL_SERVICE_TOKEN"])) as c:
+        r = (await c.call_tool("search_regulations", {"query_text": "표시 광고 실증 자료", "top_k": 3})).structured_content
+        print(r["status"], [(h["source"], h["section"]) for h in r["hits"]])
+asyncio.run(main())
+```
+
 ## 맡을 입출력
 
 | 도구 | 입력 | 출력 필드 | 검색 범위 |

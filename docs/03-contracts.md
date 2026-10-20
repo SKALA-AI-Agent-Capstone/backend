@@ -69,6 +69,17 @@ EvidenceFile의 필드는 노션에서 타입 이름과 PDF 또는 이미지 참
 | business.match_patent_claims | patent: PatentVerifyResult, ad_claims: 문자열 목록 | PatentClaimMatchResult | registered 결과만 대조. 현재 초안은 명칭과 초록 및 IPC 범위 |
 | rag.search_regulations | query_text: 문자열, top_k=5 | RegulationHit 목록 | 컬렉션 A의 법령과 기준만 검색 |
 | rag.search_precedents | query_text: 문자열, top_k=3 | PrecedentHit 목록 | 컬렉션 B 사례만 보조 검색, verified=False 고정 |
+| business.verify_gmp_company | company_name | 상태와 일치 업체 목록 | 2026-10-20 추가. 식약처 GMP 적합 업체현황(API03) 보조 확인 |
+| business.lookup_ingredient_regulation | ingredient_name | 상태와 일치 성분 목록 | 2026-10-20 추가. 식약처 화장품 규제정보(API04)의 금지 및 제한 국가 |
+
+2026-10-20 feat/rag-legal-sources 브랜치에서 rag.search_regulations와 rag.search_precedents를 실제 등록했다.
+노션은 목록 반환만 적었지만, 빈 결과와 장애를 구분하려고 status를 가진 봉투로 감쌌다.
+반환 스키마는 contracts/search-regulations.output.schema.json, contracts/search-precedents.output.schema.json이다.
+status는 FOUND, NO_RELEVANT_EVIDENCE, CORPUS_NOT_INDEXED, SEARCH_ERROR다. 뒤의 둘은 아무것도 확인하지 않았다는 뜻이다.
+RegulationHit에는 노션 필드 외에 document_key, section, page, source_url, acquisition, effective_from, effective_until을 더했다.
+search_regulations는 선택 인자 review_date를 받아 그날 시행 중인 법령 버전만 찾는다. 이 봉투와 추가 필드는 Agent 담당의 확인이 필요한 제안이다.
+기존 v0.1 search_rules, search_cases, get_evidence는 호환을 위해 그대로 둔다.
+GMP와 규제정보 API는 검색 인자가 없어 최대 20쪽(2,000건)을 훑어 이름으로 거르고, 다 못 훑으면 incomplete를 반환한다.
 
 ### RAG 반환 필드
 

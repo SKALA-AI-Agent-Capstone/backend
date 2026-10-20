@@ -8,7 +8,7 @@ from starlette.responses import JSONResponse
 
 from capstone_shared.contracts import ScaffoldResult
 from capstone_shared.settings import internal_token, required_env
-from .review_tools import functional_report, patents, structure
+from .review_tools import functional_report, mfds_list, patents, structure
 
 
 def create_server() -> FastMCP:
@@ -55,6 +55,18 @@ def create_server() -> FastMCP:
     async def verify_patent(patent_numbers: list[str]) -> list[dict]:
         """Query KIPRIS exact registration candidates; do not infer claim coverage."""
         return await patents(patent_numbers)
+
+    @mcp.tool(annotations={"readOnlyHint":True})
+    async def verify_gmp_company(company_name: str) -> dict:
+        """Check whether a manufacturer appears in the MFDS cosmetics GMP-compliant company list.
+        Use when an ad or evidence claims GMP certification. Not a product quality or efficacy finding."""
+        return await mfds_list("gmp",company_name)
+
+    @mcp.tool(annotations={"readOnlyHint":True})
+    async def lookup_ingredient_regulation(ingredient_name: str) -> dict:
+        """Look up an ingredient's standard name and the countries that ban or restrict it (MFDS 화장품 규제정보).
+        Use when an ad names an ingredient or claims it is safe or free of restricted ingredients."""
+        return await mfds_list("regulation",ingredient_name)
 
     return mcp
 
