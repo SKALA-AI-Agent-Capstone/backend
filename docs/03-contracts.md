@@ -282,11 +282,12 @@ Agent 및 MCP 밖의 별도 Application 서비스가 책임진다. 중도 실패
 - POST /api/v1/reviews/{reviewId}/re-review: 같은 multipart 형식, 새 원본 필수, 새 버전과 별도 승인 이력.
 - POST /api/v1/reviews/{reviewId}/decision: versionNo, state, comment. 모든 결정에 의견 필수, 서버 역할 및 최신 버전 검증.
 - DELETE /api/v1/reviews 및 /{reviewId}: 작성자 또는 관리자 범위 삭제.
-- GET /api/v1/reference-sources: Handoff의 9개 수집 후보와 미적재 상태. 법령 검색 결과가 아니다.
+- GET /api/v1/reference-sources: 9개 출처와 수집 경로, rag-mcp /health/corpus에서 받은 적재 문서 목록(corpus)과 retrievalStatus(indexed, not_indexed, unavailable).
 
 반환은 제공된 프론트의 review/versions 형식으로 고정했다. public ID는 camelCase이고 Graph 내부와는 명시적으로 매핑한다.
 문구 결과 findings와 사진 결과 visualFindings, 두 pipelineStatus를 따로 보존한다.
-retrievalStatus=not_connected, legalStatus=not_evaluated를 표시하며 basis와 standardsSnapshot을 가짜로 채우지 않는다.
+retrievalStatus는 connected, not_indexed, error, skipped(문구 없음) 중 하나이고, 이전 결과에는 not_connected가 남아 있다. legalStatus는 not_evaluated로 유지한다.
+basis와 standardsSnapshot은 rag-mcp 검색 결과로만 채우며, finding.legalSearch(basis_found, no_match, failed, not_searched)로 문구별 상태를 남긴다.
 현재 PDF 리포트는 DB 결과를 읽는 프론트의 인쇄/PDF 저장이다. 서버 PDF 바이너리 엔드포인트와 SSE, 배치, 과금은 후속이다.
 
 내부 /internal/runs와 /internal/runs/resume의 원본 모델은 packages/shared/src/capstone_shared/review_contracts.py,

@@ -39,6 +39,7 @@ services:
       APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Run python3 scripts/bootstrap.py}
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?Run python3 scripts/bootstrap.py}
       AGENT_BASE_URL: http://agent:8001
+      RAG_CORPUS_URL: http://rag-mcp:8003/health/corpus
       JWT_SECRET: ${JWT_SECRET:?Run python3 scripts/bootstrap.py}
       JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-PT15M}
       JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-P14D}

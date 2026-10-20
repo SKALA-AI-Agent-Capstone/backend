@@ -29,7 +29,7 @@ flowchart TB
   V -->|검토 의견과 승인 결정| B
   B -->|해당 버전 재개| H
   H -->|리포트 데이터| B
-  A -. 이번에는 호출하지 않음 .-> RM[RAG MCP]
+  A -->|문구마다 search_regulations| RM[RAG MCP]
   RM -. 읽기 전용 .-> K[(같은 PostgreSQL: knowledge, pgvector)]
   LK[legalize-kr 화장품법 Markdown] -->|scripts/ingest_rag.py legalize| K
   PDF[나머지 출처 PDF] -. scripts/ingest_rag.py pdf, 원문 확보 후 .-> K
@@ -68,7 +68,10 @@ Agent의 DB 직접 접근은 agent checkpointer만 허용한다.
 10. 결과와 이력을 다시 조회하고 브라우저 인쇄로 PDF 저장 또는 HTML 내보내기를 한다. 서버가 PDF 바이너리를 생성하는 기능은 아직 없다.
 
 처리 완료는 AI 추론이나 법령 적합성 확인 완료와 다르다. 모델 키가 없으면 native PDF와 로컬 OCR은 수행해도 문구 모델과 사진 모델은 `not_configured`다.
-RAG를 호출하지 않으므로 `retrievalStatus=not_connected`, `legalStatus=not_evaluated`를 유지하고 인용 조항이나 적합 점수를 만들지 않는다.
+문구 경로와 사진 경로가 끝나면 regulations 노드가 문구마다 rag-mcp search_regulations를 호출해 조문 후보를 basis에 붙인다.
+질의는 문구에 claimType별 법령 용어를 붙여 만들고, 수치가 있는 주장은 실증 조문 질의를 따로 한 번 더 한다(capstone_agent/regulations.py).
+결과의 retrievalStatus는 connected, not_indexed, error, skipped 중 하나다. 근거는 조문 후보일 뿐이라 `legalStatus=not_evaluated`를 유지하고 적합 점수를 만들지 않는다.
+자가검증 리라이트는 조문 후보를 참고해 만들고, 재검증을 통과한 문안이 finding.rewrites로 저장돼 화면 수정안이 된다.
 사진은 실제 효능, 보정 여부와 동일 인물을 확정하지 않는다. 사진 결과를 억지로 텍스트 RAG 결과로 바꾸지 않는다.
 
 ## 수명과 실패 처리

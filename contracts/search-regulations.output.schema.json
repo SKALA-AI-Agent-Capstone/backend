@@ -31,6 +31,16 @@
           "title": "Trust Level",
           "type": "string"
         },
+        "source_type": {
+          "enum": [
+            "law",
+            "regulation",
+            "guideline",
+            "association"
+          ],
+          "title": "Source Type",
+          "type": "string"
+        },
         "document_key": {
           "title": "Document Key",
           "type": "string"
@@ -101,6 +111,7 @@
         "scope",
         "excerpt",
         "similarity",
+        "source_type",
         "document_key",
         "source_url",
         "acquisition"
