@@ -92,6 +92,7 @@ RAG를 호출하지 않으므로 `retrievalStatus=not_connected`, `legalStatus=n
 | 증빙 및 제품 주장 대조와 특허 청구항 대조 | 증빙 문자 추출과 조회 adapter까지만 구현 |
 | 사용량 이벤트와 별도 과금 원장 | 과금 비활성, 크레딧 0은 무료 서비스 보장이 아닌 미구현 표시 |
 | 서버 리포트 PDF | 브라우저 인쇄와 HTML 내보내기 |
+| violation 단위 HITL(위반 줄마다 원문유지/자동리라이트채택/직접수정) + review 전체 승인·반려·원본재업로드요청 결정 분리(2026-10-20 HITL 재설계) | review_engine.py의 단일 `interrupt()` 승인 1단계만 구현. `app.violations`/`app.violation_rewrites` 테이블은 V4 마이그레이션으로 이미 생성됐지만 Agent/결정 API/화면은 아직 `reviews.document` 기준 |
 
 현재 실행 풀은 프로세스 재시작 후 대기 작업을 복구하지 않는다. 운영용 durable queue나 자동 장애 복구 구현으로 설명하지 않는다.
 다건의 목표는 접수 기록 저장 후 202, 승인 대기 checkpoint 저장 후 ACK, 승인 결정 저장 후 별도 재개 메시지다.

@@ -48,6 +48,16 @@ REST 초안의 ReviewResult는 violations, evidence_match, public_api_check, pat
 이것은 목표 결과 구조이며 현재 구현된 응답 모델이 아니다. 실행 완료와 사람의 승인 완료를 별도 상태로 표현해야 한다.
 단건 초안의 completed 응답을 HITL까지 완료했다는 뜻으로 사용하지 않는다.
 
+2026-10-20 HITL 재설계로 위 단일 hitl_status는 두 층위로 나뉘었다(ERD는 app.violations/
+app.violation_rewrites/reviews.hitl_status로 이미 반영, Agent 쪽 구현은
+services/agent/src/capstone_agent/review_engine.py의 violations 노드 참고. 사람의 최종
+violation 단위 결정을 받는 REST 필드 자체는 아직 계약 PR 전이라 이 문서의 ReviewResult
+설명도 그 PR에서 함께 바꾼다):
+violations[*]마다 kept/rewritten/rewritten_manual 중 하나로 사람이 결정하는 violation 단위
+상태, 그리고 그와 별개로 review 전체의 승인/반려/원본재업로드요청 최종 결정. 후자는 모든
+violation이 결정됐는지와 무관하게 내려질 수 있다 — violation을 전부 원문 유지로 두고
+review를 승인하는 것도 허용되는 사람의 업무 판단이다.
+
 SSE의 progress, item_done, batch_done과 이미지의 APPROVAL_REQUIRED는 서로 다른 예시다.
 이벤트 이름, 이벤트 ID와 재접속, JWT 전달 방식은 계약에 고정해야 한다. 등록부도 SSE 인증을 협의 필요로 표시한다.
 브라우저의 기본 EventSource 인증 제약을 피하려고 토큰을 URL이나 로그에 무조건 넣지 않는다.
@@ -129,7 +139,7 @@ ClaimRelation.status는 related, unrelated, unverifiable다. 실제 API 조회 �
 | 항목 | 관찰한 차이 | 처리 기준 |
 | --- | --- | --- |
 | HTTP 표기 | 등록부는 /api/v1과 reviewId, batchId, REST 초안은 /api와 snake_case | 이 문서의 목표 경로는 등록부 사용, 요청 및 응답의 필드 매핑을 계약 PR로 고정 |
-| 승인 대기 | REST 초안은 processing/completed/failed만 제시하고 Graph는 interrupt 대기 | 실행 상태와 hitl_status 분리, pending 화면과 중간 결과 계약 보완 |
+| 승인 대기 | REST 초안은 processing/completed/failed만 제시하고 Graph는 interrupt 대기 | 실행 상태와 HITL 상태 분리, pending 화면과 중간 결과 계약 보완. 2026-10-20 HITL 재설계로 HITL 상태는 violation 단위 결정(kept/rewritten/rewritten_manual)과 review 전체 최종 결정(승인/반려/원본재업로드요청)으로 나뉨 — 단일 hitl_status 필드로 되돌리지 않음. REST 응답 필드 확정은 별도 계약 PR |
 | 식약처 호출 조건 | MCP는 품목명 fallback을 지원하지만 Graph는 심사번호가 있을 때만 호출 | 번호 없는 제품의 품목명 조회를 loop에 허용할지 Graph와 도구 계약을 함께 조정 |
 | 광고 속 특허번호 | FR-14는 광고와 증빙 모두 대상, Graph 조건은 증빙 patent_numbers_raw 중심 | Agent 입력 노드의 patent_numbers_detected도 조회 후보에 연결 |
 | 특허 대조 깊이 | FR-15 본문은 청구항과 명세서, 현재 MCP는 명칭과 초록 및 IPC만 제공 | 현 범위를 초록 수준 관련성 대조로 표시, 청구항 검증 완료로 표현하지 않음 |

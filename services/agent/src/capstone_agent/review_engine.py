@@ -11,10 +11,25 @@ from fastmcp.client.transports import StreamableHttpTransport
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import interrupt
 from openai import AsyncOpenAI
+from pydantic import BaseModel
 
 from capstone_shared.documents import prepare_document, local_ocr, Tile
 from capstone_shared.settings import internal_token, required_env
 from .review_models import RunRequest, OCRLines, TextAssessment, VisualAssessment, RewriteSuggestion
+
+# 사람 재시도를 포함한 전체 리라이트 시도 한도. app.violations.rewrite_attempt_count가
+# 이 값에 도달하면 더 이상 자동 리라이트를 제안하지 않고 rewritten_manual을 요구한다.
+# 한도 초과 재시도 요청의 403 처리는 결정 API(Backend) 쪽에 있고 여기서는 다루지 않는다.
+REWRITE_RETRY_LIMIT = 3
+
+
+class RewriteDraft(BaseModel):
+    text: str
+
+
+class RewriteVerification(BaseModel):
+    passed: bool
+    reasoning: str
 
 
 class ReviewState(TypedDict, total=False):
@@ -161,6 +176,62 @@ async def mcp_call(name, arguments, request=None):
             return response.data
 
 
+async def draft_and_verify_rewrite(provider, phrase, reason, retry_note=None):
+    """⑤ 자가검증 loop의 한 사이클: 리라이트 생성과 재검증은 분리된 두 번의 호출이다."""
+    draft = await provider.parse(
+        "화장품 광고 문구를 법적으로 안전하게 고친다. 지적된 문제를 해결하되 광고의 임팩트와 어조는 "
+        "법적으로 문제되지 않는 한 최대한 유지한다. 효능을 새로 보장하거나 법령을 인용하지 않는다. "
+        "이전 시도에 대한 사람의 메모가 있으면 반영해 같은 표현을 반복하지 않는다.",
+        RewriteDraft,
+        text=f"원문: {phrase}\n지적된 문제: {reason}"
+        + (f"\n이전 시도에 대한 사람의 메모: {retry_note}" if retry_note else ""))
+    verification = await provider.parse(
+        "화장품 광고 리라이트 문구가 원래 지적된 문제를 여전히 안고 있는지만 판단한다. 문구를 새로 쓰지 "
+        "않는다. 입력이 모델이 만든 문구인지 사람이 직접 쓴 문구인지는 구분하지 않고 같은 기준으로 "
+        "판단한다.",
+        RewriteVerification,
+        text=f"리라이트: {draft.text}\n원래 지적된 문제: {reason}")
+    return draft.text, verification.passed
+
+
+async def build_violations(findings, provider):
+    """② 위반 탐지는 text_path가 이미 했다(findings). 여기서는 ⑤ 자가검증 리라이트
+    loop만 violation 단위로 돌린다. ⑥ 사람의 최종 결정(final_resolution/final_text/
+    final_text_validated/decided_by/decided_at)은 아직 Backend 결정 API 계약이 violation
+    단위를 지원하지 않아 여기서는 None/False로 비워둔다 — 계약 변경 필요 항목."""
+    violations = []
+    for finding in findings:
+        violation = {
+            "id": finding["id"],
+            "text_excerpt": finding["phrase"],
+            "severity": finding["severity"],
+            "rewrite_suggestion": None,
+            "rewrite_attempt_count": 0,
+            "rewrites": [],
+            "final_resolution": None,
+            "final_text": None,
+            "final_text_validated": False,
+            "decided_by": None,
+            "decided_at": None,
+        }
+        passed = False
+        while provider.client and violation["rewrite_attempt_count"] < REWRITE_RETRY_LIMIT and not passed:
+            violation["rewrite_attempt_count"] += 1
+            try:
+                text, passed = await draft_and_verify_rewrite(provider, finding["phrase"], finding["reason"])
+            except Exception:
+                continue  # Budget consumed either way; a provider failure isn't a recorded attempt.
+            violation["rewrite_suggestion"] = text
+            violation["rewrites"].append({
+                "attempt_no": violation["rewrite_attempt_count"],
+                "text": text,
+                "requested_by_human": False,
+                "retry_note": None,
+            })
+        violations.append(violation)
+    return violations
+
+
 def build_graph(native, tiles, provider, checkpointer, request=None):
     async def text_path(state):
         texts, warnings = await extract_text(native,tiles,provider)
@@ -262,15 +333,21 @@ def build_graph(native, tiles, provider, checkpointer, request=None):
             "warnings":list(dict.fromkeys(state["textWarnings"]+state["visualWarnings"]+warnings+["법령과 기준 검색은 이번 최소 기능에서 제외되어 적법 여부를 판단하지 않았습니다."])),
             "analyzedAt":datetime.now(timezone.utc).isoformat()}}
 
+    async def violations(state):
+        detected = await build_violations(state["findings"], provider)
+        return {"result": {**state["result"], "violations": detected}}
+
     def approval(state):
         decision=interrupt({"reviewId":state["reviewId"],"versionNo":state["versionNo"],"gate":"human_review"})
         return {"decision":decision}
 
     graph=StateGraph(ReviewState)
     graph.add_node("text_path",text_path);graph.add_node("photo_path",photo_path)
-    graph.add_node("business",business);graph.add_node("approval",approval)
+    graph.add_node("business",business);graph.add_node("violations",violations)
+    graph.add_node("approval",approval)
     graph.add_node("report",lambda state:{"reportReady":True})
     graph.add_edge(START,"text_path");graph.add_edge(START,"photo_path")
-    graph.add_edge(["text_path","photo_path"],"business");graph.add_edge("business","approval")
+    graph.add_edge(["text_path","photo_path"],"business");graph.add_edge("business","violations")
+    graph.add_edge("violations","approval")
     graph.add_edge("approval","report");graph.add_edge("report",END)
     return graph.compile(checkpointer=checkpointer)
