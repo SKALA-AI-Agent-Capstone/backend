@@ -78,7 +78,9 @@ def main():
     try:
         review=wait(1);version=review["versions"][-1];result=version["result"]
         assert result["texts"] and any("SYNTHETIC" in text["text"] for text in result["texts"])
-        assert result["retrievalStatus"]=="not_connected" and result["legalStatus"]=="not_evaluated"
+        # Without a model key no claim is extracted, so the legal search step has nothing to search.
+        expected={"skipped"} if not result["findings"] else {"connected","not_indexed"}
+        assert result["retrievalStatus"] in expected and result["legalStatus"]=="not_evaluated",result["retrievalStatus"]
         assert result["visualFindings"]==[] and result["pipelineStatus"]["visual"]=="not_configured"
         assert result["evidence"]["text"] and result["publicData"]["status"]=="error"
         assert result["patents"] and result["patents"][0]["status"]=="error"
@@ -88,7 +90,7 @@ def main():
         assert call("GET",f"/reviews/{rid}",other["accessToken"]).status_code==404
         assert call("POST",f"/reviews/{rid}/decision",author,json={"versionNo":1,"state":"approved","comment":"synthetic"}).status_code==403
         assert call("POST",f"/reviews/{rid}/decision",reviewer,json={"versionNo":1,"state":"approved","comment":""}).status_code==400
-        response=call("POST",f"/reviews/{rid}/decision",reviewer,json={"versionNo":1,"state":"approved","comment":"Synthetic manual check; legal retrieval is not connected."})
+        response=call("POST",f"/reviews/{rid}/decision",reviewer,json={"versionNo":1,"state":"approved","comment":"Synthetic manual check; no legal basis was attached."})
         assert response.status_code==200,response.text
         assert response.json()["versions"][-1]["approval"]["agentResume"]=="completed",response.text
         checks.append("tenant isolation, role check, persisted HITL and PostgreSQL resume")

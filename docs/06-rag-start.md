@@ -49,24 +49,22 @@ RAG 계약(packages/shared/src/capstone_shared/rag_contracts.py, contracts/searc
 | business-mcp API 도구 4개 | verify_functional_approval, verify_patent, verify_gmp_company, lookup_ingredient_regulation | 키가 없으면 API_NOT_CONFIGURED |
 | PDF 출처 8건 | 수집기만 있음, 원문 미적재 | ingest_rag.py pdf가 PDF_NOT_FOUND로 건너뜀 |
 
-### 2. 화면에 "법령 검색 미연결"이 뜨는 이유
+### 2. Agent와 화면 연결 (feat/rag-agent-connect에서 해결)
 
-RAG 데이터와 도구는 준비됐지만 호출하는 쪽과 화면 표시가 아직 연결되지 않았다.
+처음에는 main의 Agent가 rag-mcp를 호출하지 않고 retrievalStatus="not_connected"를 고정했으며,
+Frontend 문구도 상태와 무관하게 "법령 검색 미연결"로 고정돼 있었다. 다음과 같이 연결했다.
 
-- Agent: main의 services/agent/src/capstone_agent/review_engine.py가 rag-mcp를 호출하지 않는다.
-  모델 지시문에 "법령 검색은 연결되지 않았다"가 있고, finding마다 basis=[]와 legalStatus="not_evaluated",
-  결과에 retrievalStatus="not_connected"와 standardsSnapshot=[]을 고정해서 넣는다.
-- Frontend: "법령 검색 미연결" 문구가 retrievalStatus와 무관하게 고정돼 있다.
-  ReviewDetailPage.vue, StatusSummary.vue, ApprovalPanel.vue, ViolationCard.vue, ReviewNewPage.vue,
-  ReportDocument.vue, shared/constants/site.js. Agent가 근거를 채워도 이 문구는 바뀌지 않는다.
+- Agent: capstone_agent/regulations.py와 그래프의 regulations 노드(text_path, photo_path 뒤, business 앞).
+- 리라이트: 조문 후보를 프롬프트에 넣고, 재검증을 통과한 문안이 finding.rewrites로 저장된다.
+- OCR: Tesseract가 누락한 줄을 VLM OCR로 보충한다.
+- Backend: /api/v1/reference-sources가 rag-mcp /health/corpus의 실제 적재 목록을 전달한다.
+- Frontend: shared/constants/legal.js의 상태별 문구로 결과, 승인, 리포트, 출처 화면을 표시한다.
 
 ### 3. 다른 브랜치가 맞출 계약
 
-#### Agent (feat/agent, nodes/tool_loop.py)
+#### Agent (구현: capstone_agent/regulations.py)
 
-현재 tool_loop는 전환용으로 search_rules를 `{"query": {claim_id, claim_text, surrounding_text}}`로 부른다.
-SearchRulesInput은 review_date가 필수라 이 호출은 입력 검증 오류가 나고, 통과해도 NOT_IMPLEMENTED 빈 결과다.
-아래처럼 바꾸면 실제 조문이 돌아온다. 인자는 query로 감싸지 않는다.
+PR #6에서 tool_loop 스캐폴드가 정리되어 regulations.py가 호출을 맡는다. 호출 형식은 아래와 같고 인자는 query로 감싸지 않는다.
 
 ```python
 result = await call_rag_tool("search_regulations", {

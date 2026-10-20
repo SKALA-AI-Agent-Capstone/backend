@@ -28,7 +28,7 @@ WITH docs AS (
     ORDER BY document_key, effective_from DESC NULLS LAST, retrieved_at DESC
 )
 SELECT c.chunk_id::text, c.section, c.context, c.body, c.page_from,
-       d.document_key, d.title, d.version_label, d.source_url, d.storage_key,
+       d.document_key, d.title, d.version_label, d.source_url, d.storage_key, d.source_type,
        d.effective_from, d.effective_until, d.corpus_version
 FROM knowledge.chunks c JOIN docs d USING (document_version_id)
 """
@@ -110,3 +110,20 @@ async def search(dsn: str, *, collection: str, query: str, top_k: int, review_da
         by_id = {row["chunk_id"]: row for row in rows}
         vector = [Ranked(by_id[v["chunk_id"]], round(max(0.0, min(1.0, v["cosine"])), 4)) for v in vector_rows]
         return "hybrid", fuse(keyword, vector)[:top_k], corpus
+
+
+INVENTORY_SQL = """
+SELECT d.document_key, d.title, d.collection_key, d.source_type, d.version_label,
+       d.effective_from, d.effective_until, d.corpus_version, count(c.chunk_id) AS chunks,
+       count(c.embedding) AS embedded
+FROM knowledge.document_versions d LEFT JOIN knowledge.chunks c USING (document_version_id)
+GROUP BY d.document_version_id
+ORDER BY d.document_key, d.effective_from NULLS LAST
+"""
+
+
+async def corpus_inventory(dsn: str) -> list[dict]:
+    async with await psycopg.AsyncConnection.connect(dsn, connect_timeout=3, row_factory=dict_row) as conn:
+        rows = await (await conn.execute(INVENTORY_SQL)).fetchall()
+    return [{**row, "effective_from": row["effective_from"] and row["effective_from"].isoformat(),
+             "effective_until": row["effective_until"] and row["effective_until"].isoformat()} for row in rows]

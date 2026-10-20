@@ -148,7 +148,21 @@ API 등록부 14개 항목의 /api/v1 경로와 기존 REST 초안의 /api 불�
 
 실행하지 않은 범위는 실제 OpenAI 유료 추론, 식약처와 KIPRIS 승인키 정상 응답, 고객 광고 정확도 평가,
 공개 법령 수집 및 임베딩과 RAG 검색, 다건 Worker와 SSE, 증빙 의미 대조와 특허 청구항 대조, 과금과 운영 부하다.
-모델 키 미설정은 not_configured, RAG는 not_connected와 not_evaluated로 표시한다.
+모델 키 미설정은 not_configured로 표시한다. RAG 상태는 아래 2026-10-20 기록을 따른다.
+
+## 2026-10-20 RAG와 Agent 연결 e2e (feat/rag-agent-connect)
+
+| 확인 | 방법 | 결과 |
+| --- | --- | --- |
+| 단위 테스트 | uv run --all-packages --frozen pytest | 44 passed |
+| Java | mvn -f services/api/pom.xml verify | 18 tests, 0 failures |
+| Frontend | npm run build (vue-tsc 포함) | 성공 |
+| 실제 업로드 | 합성 한국어 광고 PNG(주장 5개)를 /api/v1/reviews로 업로드, OpenAI 키 설정 | done, retrievalStatus=connected |
+| OCR | Tesseract가 6줄 중 3줄을 높은 신뢰도로 읽고 3줄을 누락 | VLM OCR 보충 후 5개 주장 모두 추출 |
+| 근거 | 문구별 basis | 5건 모두 화장품법 제13조, 수치 주장 2건은 제14조, 2건은 시행규칙 제23조 추가 |
+| 화면 | 로컬 테스트 계정으로 결과, 출처, 리포트 화면 확인 | 상태별 문구, 조문 후보, 적용 기준 버전 표시 |
+
+남은 한계: 검색은 키워드 방식이고 PDF 출처 8건은 미적재다. 리라이트 품질(예: "식약처 기준에 맞춘 화장품")은 모델 재검증에 의존한다.
 로컬 검증과 GitHub CI는 별개이며 이번 기능의 원격 push나 CI 성공을 이 기록으로 주장하지 않는다.
 
 브라우저에서는 합성 기업 작업공간 생성, 실제 PNG와 PDF 선택 및 제출, 저장된 추출 문구와

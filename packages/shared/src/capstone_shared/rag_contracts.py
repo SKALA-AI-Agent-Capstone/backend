@@ -32,6 +32,7 @@ class RegulationHit(BaseModel):
     excerpt: str
     similarity: float = Field(ge=0, le=1, description="Retrieval score, not a violation probability.")
     trust_level: Literal["high"] = "high"
+    source_type: Literal["law", "regulation", "guideline", "association"]
     # Traceability for the report (NFR-11)
     document_key: str
     section: str | None = None
