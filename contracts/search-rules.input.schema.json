@@ -1,0 +1,61 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "claim_id": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Claim Id",
+      "type": "string"
+    },
+    "claim_text": {
+      "maxLength": 3000,
+      "minLength": 1,
+      "title": "Claim Text",
+      "type": "string"
+    },
+    "surrounding_text": {
+      "default": "",
+      "maxLength": 8000,
+      "title": "Surrounding Text",
+      "type": "string"
+    },
+    "product_type": {
+      "anyOf": [
+        {
+          "maxLength": 100,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Product Type"
+    },
+    "jurisdiction": {
+      "default": "KR",
+      "pattern": "^[A-Z]{2}$",
+      "title": "Jurisdiction",
+      "type": "string"
+    },
+    "review_date": {
+      "format": "date",
+      "title": "Review Date",
+      "type": "string"
+    },
+    "top_k": {
+      "default": 5,
+      "maximum": 10,
+      "minimum": 1,
+      "title": "Top K",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "claim_id",
+    "claim_text",
+    "review_date"
+  ],
+  "title": "SearchRulesInput",
+  "type": "object"
+}

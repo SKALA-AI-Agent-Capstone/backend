@@ -1,0 +1,44 @@
+server:
+  port: 8080
+spring:
+  servlet:
+    multipart:
+      max-file-size: 25MB
+      max-request-size: 76MB
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:56379}
+      password: ${REDIS_PASSWORD}
+      timeout: 3s
+  application:
+    name: beauty-api
+  datasource:
+    url: ${APP_DB_JDBC_URL:jdbc:postgresql://127.0.0.1:55432/beauty_capstone}
+    username: app_user
+    password: ${APP_DB_PASSWORD}
+    hikari:
+      schema: app
+      connection-timeout: 3000
+      maximum-pool-size: 5
+  flyway:
+    enabled: true
+    schemas: app
+    default-schema: app
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db
+capstone:
+  jwt-secret: ${JWT_SECRET}
+  internal-token: ${INTERNAL_SERVICE_TOKEN}
+  agent-base-url: ${AGENT_BASE_URL:http://127.0.0.1:8001}

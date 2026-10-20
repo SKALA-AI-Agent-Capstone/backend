@@ -1,0 +1,175 @@
+name: beauty-capstone-dev
+
+x-python: &python
+  image: ${CAPSTONE_IMAGE_PREFIX:-beauty-capstone}-python:dev
+  build:
+    context: .
+    dockerfile: infra/Dockerfile.python
+  environment: &python-env
+    SERVICE_HOST: 0.0.0.0
+    INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?Run python3 scripts/bootstrap.py}
+  init: true
+
+services:
+  postgres:
+    image: ${CAPSTONE_IMAGE_PREFIX:-beauty-capstone}-postgres:dev
+    build: ./infra/postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-beauty_capstone}
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run python3 scripts/bootstrap.py}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Run python3 scripts/bootstrap.py}
+      AGENT_DB_PASSWORD: ${AGENT_DB_PASSWORD:?Run python3 scripts/bootstrap.py}
+      RAG_READER_DB_PASSWORD: ${RAG_READER_DB_PASSWORD:?Run python3 scripts/bootstrap.py}
+      RAG_INGEST_DB_PASSWORD: ${RAG_INGEST_DB_PASSWORD:?Run python3 scripts/bootstrap.py}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: ./services/api
+    environment:
+      APP_DB_JDBC_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-beauty_capstone}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Run python3 scripts/bootstrap.py}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?Run python3 scripts/bootstrap.py}
+      AGENT_BASE_URL: http://agent:8001
+      JWT_SECRET: ${JWT_SECRET:?Run python3 scripts/bootstrap.py}
+      REDIS_HOST: redis-cache
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    ports:
+      - "127.0.0.1:${API_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis-cache:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/actuator/health/readiness"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  business-mcp:
+    <<: *python
+    command: ["uv", "run", "--no-sync", "business-mcp"]
+    environment:
+      <<: *python-env
+      SERVICE_PORT: "8002"
+      BACKEND_BASE_URL: http://api:8080
+      MFDS_SERVICE_KEY: ${MFDS_SERVICE_KEY:-}
+      MFDS_REPORT_URL: ${MFDS_REPORT_URL:-}
+      KIPRIS_SERVICE_KEY: ${KIPRIS_SERVICE_KEY:-}
+      KIPRIS_WORD_SEARCH_URL: ${KIPRIS_WORD_SEARCH_URL:-https://plus.kipris.or.kr/kipo-api/kipi/patUtiModInfoSearchSevice/getWordSearch}
+    ports:
+      - "127.0.0.1:${BUSINESS_MCP_PORT:-8002}:8002"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/app/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health/live')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  rag-mcp:
+    <<: *python
+    command: ["uv", "run", "--no-sync", "rag-mcp"]
+    environment:
+      <<: *python-env
+      SERVICE_PORT: "8003"
+      RAG_DATABASE_URL: postgresql://rag_reader:${RAG_READER_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-beauty_capstone}
+    ports:
+      - "127.0.0.1:${RAG_MCP_PORT:-8003}:8003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/app/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health/ready')"]
+      interval: 5s
+      timeout: 4s
+      retries: 20
+
+  agent:
+    <<: *python
+    command: ["uv", "run", "--no-sync", "capstone-agent"]
+    environment:
+      <<: *python-env
+      SERVICE_PORT: "8001"
+      AGENT_DATABASE_URL: postgresql://agent_user:${AGENT_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-beauty_capstone}
+      BUSINESS_MCP_URL: http://business-mcp:8002/mcp
+      RAG_MCP_URL: http://rag-mcp:8003/mcp
+      BACKEND_BASE_URL: http://api:8080
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      VISION_MODEL: ${VISION_MODEL:-gpt-5.4-mini}
+      TEXT_MODEL: ${TEXT_MODEL:-gpt-5.4-mini}
+    ports:
+      - "127.0.0.1:${AGENT_PORT:-8001}:8001"
+    depends_on:
+      business-mcp:
+        condition: service_healthy
+      rag-mcp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/app/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health/ready')"]
+      interval: 5s
+      timeout: 4s
+      retries: 20
+
+  web:
+    profiles: ["web"]
+    build:
+      context: ../frontend
+      target: development
+    environment:
+      API_PROXY_TARGET: http://api:8080
+    ports:
+      - "127.0.0.1:${WEB_PORT:-5173}:5173"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  redis-cache:
+    image: redis:7.4-alpine
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?Run python3 scripts/bootstrap.py}
+    command: ["sh", "-c", "exec redis-server --save '' --appendonly no --requirepass \"$$REDISCLI_AUTH\""]
+    ports:
+      - "127.0.0.1:${REDIS_CACHE_PORT:-56379}:6379"
+    tmpfs:
+      - /data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  rabbitmq:
+    profiles: ["queue"]
+    image: rabbitmq:4.3.6-management-alpine
+    hostname: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME:-capstone}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Run python3 scripts/bootstrap.py}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-capstone}
+    ports:
+      - "127.0.0.1:${RABBITMQ_PORT:-5672}:5672"
+      - "127.0.0.1:${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping && rabbitmq-diagnostics -q check_port_connectivity"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 20s
+
+volumes:
+  postgres-data:
+  rabbitmq-data:

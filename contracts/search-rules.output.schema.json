@@ -1,0 +1,151 @@
+{
+  "$defs": {
+    "Evidence": {
+      "properties": {
+        "evidence_id": {
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "document_version_id": {
+          "title": "Document Version Id",
+          "type": "string"
+        },
+        "source_type": {
+          "title": "Source Type",
+          "type": "string"
+        },
+        "source_verified": {
+          "default": false,
+          "title": "Source Verified",
+          "type": "boolean"
+        },
+        "document_title": {
+          "title": "Document Title",
+          "type": "string"
+        },
+        "document_version": {
+          "title": "Document Version",
+          "type": "string"
+        },
+        "section": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Section"
+        },
+        "page": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Page"
+        },
+        "quote": {
+          "title": "Quote",
+          "type": "string"
+        },
+        "context": {
+          "title": "Context",
+          "type": "string"
+        },
+        "source_url": {
+          "title": "Source Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "evidence_id",
+        "document_version_id",
+        "source_type",
+        "document_title",
+        "document_version",
+        "quote",
+        "context",
+        "source_url"
+      ],
+      "title": "Evidence",
+      "type": "object"
+    },
+    "SearchCollection": {
+      "enum": [
+        "rules",
+        "cases"
+      ],
+      "title": "SearchCollection",
+      "type": "string"
+    },
+    "SearchStatus": {
+      "enum": [
+        "FOUND",
+        "NO_RELEVANT_EVIDENCE",
+        "NEEDS_CONTEXT",
+        "SEARCH_ERROR",
+        "NOT_IMPLEMENTED"
+      ],
+      "title": "SearchStatus",
+      "type": "string"
+    }
+  },
+  "properties": {
+    "contract_version": {
+      "default": "0.1.0",
+      "title": "Contract Version",
+      "type": "string"
+    },
+    "claim_id": {
+      "title": "Claim Id",
+      "type": "string"
+    },
+    "collection": {
+      "$ref": "#/$defs/SearchCollection",
+      "default": "rules"
+    },
+    "status": {
+      "$ref": "#/$defs/SearchStatus"
+    },
+    "corpus_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Corpus Version"
+    },
+    "evidence": {
+      "items": {
+        "$ref": "#/$defs/Evidence"
+      },
+      "title": "Evidence",
+      "type": "array"
+    },
+    "warnings": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+    }
+  },
+  "required": [
+    "claim_id",
+    "status"
+  ],
+  "title": "SearchRulesResult",
+  "type": "object"
+}
