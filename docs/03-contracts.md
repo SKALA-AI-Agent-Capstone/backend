@@ -48,9 +48,11 @@ REST 초안의 ReviewResult는 violations, evidence_match, public_api_check, pat
 이것은 목표 결과 구조이며 현재 구현된 응답 모델이 아니다. 실행 완료와 사람의 승인 완료를 별도 상태로 표현해야 한다.
 단건 초안의 completed 응답을 HITL까지 완료했다는 뜻으로 사용하지 않는다.
 
-2026-10-20 HITL 재설계로 위 단일 hitl_status는 두 층위로 나뉘었다(Agent 쪽 State 반영은
-services/agent/src/capstone_agent/state/review_state.py 참고, REST 응답 필드 자체는 아직
-계약 PR 전이라 이 문서의 ReviewResult 설명도 그 PR에서 함께 바꾼다):
+2026-10-20 HITL 재설계로 위 단일 hitl_status는 두 층위로 나뉘었다(ERD는 app.violations/
+app.violation_rewrites/reviews.hitl_status로 이미 반영, Agent 쪽 구현은
+services/agent/src/capstone_agent/review_engine.py의 violations 노드 참고. 사람의 최종
+violation 단위 결정을 받는 REST 필드 자체는 아직 계약 PR 전이라 이 문서의 ReviewResult
+설명도 그 PR에서 함께 바꾼다):
 violations[*]마다 kept/rewritten/rewritten_manual 중 하나로 사람이 결정하는 violation 단위
 상태, 그리고 그와 별개로 review 전체의 승인/반려/원본재업로드요청 최종 결정. 후자는 모든
 violation이 결정됐는지와 무관하게 내려질 수 있다 — violation을 전부 원문 유지로 두고
