@@ -34,8 +34,8 @@ async def test_case_retrieval_is_separate_from_primary_rules():
 async def test_business_mcp_has_no_approval_or_mutation_tool_in_bootstrap():
     async with Client(create_business()) as client:
         tools = await client.list_tools()
-        assert {tool.name for tool in tools} == {
-            "get_environment_info", "get_product_context"
-        }
+        names = {tool.name for tool in tools}
+        assert {"get_environment_info", "get_product_context", "structure_evidence", "verify_functional_approval", "verify_patent"} <= names
+        assert not names.intersection({"approve", "delete_review", "charge"})
         result = await client.call_tool("get_product_context", {"product_id": "sample"})
         assert result.structured_content["status"] == "NOT_IMPLEMENTED"

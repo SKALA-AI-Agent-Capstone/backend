@@ -1,4 +1,4 @@
-name: Development foundation
+name: Local MVP checks
 on:
   pull_request:
   push:
@@ -44,6 +44,9 @@ jobs:
       - run: docker compose --profile queue up --build --wait --wait-timeout 240
       - run: uv sync --all-packages --frozen
       - run: uv run --all-packages --frozen --env-file .env python scripts/smoke.py --include-queue
+      - run: uv run --all-packages --frozen python scripts/mvp_smoke.py
+        env:
+          MVP_API_URL: http://127.0.0.1:8080
       - run: docker compose exec -T redis-cache redis-cli ping
       - run: docker compose --profile queue exec -T rabbitmq rabbitmq-diagnostics -q check_running
       - if: always()

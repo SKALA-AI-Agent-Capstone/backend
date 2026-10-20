@@ -87,3 +87,12 @@ claim_id와 위치 연결은 Agent 문맥에서 유지할 수 있다. 새 도구
 - 임베딩 후보: https://huggingface.co/BAAI/bge-m3
 
 위 링크의 실제 개정 여부와 파일 내용은 수집 담당자가 다시 확인한다. 아직 DB에 수집한 자료는 없다.
+
+
+## 로컬 Handoff 반영 계획
+
+`Cosmetic_RAG_AI_Handoff`의 9개 출처와 검증표를 다음 RAG 작업의 기준으로 사용한다.
+실제 자료는 아직 없으며 이번 기능 브랜치에서는 벡터 수집, 임베딩과 검색을 구현하지 않는다.
+DB는 기존 로컬 Docker PostgreSQL의 knowledge 스키마와 vector(1024)를 사용한다.
+실행 준비와 권한 확인은 docs/02-development.md, 수집 순서와 자료별 경계는 docs/04-data.md를 따른다.
+법제처 API는 수집 배치에 사용하고, 특허 및 제품 조회는 Business MCP의 실시간 경로다.

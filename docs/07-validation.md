@@ -117,3 +117,44 @@ API 등록부 14개 항목의 /api/v1 경로와 기존 REST 초안의 /api 불�
 현재 기반 v0.1과 목표 명세를 구분하고, 노션 문서의 불일치를 모두 해결했다고 주장하지 않는다.
 이번 확인을 외부 API 실제 호출, OCR나 검색 구현 또는 새 전체 컨테이너 통합 검증으로 보고하지 않는다.
 검증은 Markdown 로컬 링크와 fence 및 표 구조, 중복 제목, 중앙점 부재와 git diff --check를 대상으로 한다.
+
+## 2026-10-20 실제 단건 MVP 검증
+
+앞의 초기 기반과 문서 재점검 이력 이후, 사용자 요청으로 실제 단건 기능을 추가했다.
+검증 프로젝트는 beauty-mvp-verify이며 사용자 DB와 분리된 로컬 Docker 볼륨을 사용했다.
+외부 OpenAI, MFDS와 KIPRIS 키는 비워 두고 합성 자료만 사용했다.
+
+| 검증 | 실제 결과 |
+| --- | --- |
+| Python pytest | 19개 통과, 긴 이미지 구간과 중복 제거, 두 분석 경로, 가짜 근거 차단 포함 |
+| Pydantic과 JSON Schema | 현재 4개 MVP 계약 및 기존 계약 export 검사 통과 |
+| Spring Boot Maven verify | Security 경계 테스트 3개와 패키징 통과 |
+| Frontend vue-tsc와 Vite build | 제공 Vue 화면 통합 후 통과 |
+| Docker | Vue, API, Agent, 두 MCP, PostgreSQL과 Redis 7개 기동 |
+| 서버 JWT와 세션 | 합성 작업공간과 팀 역할, 로그아웃 후 토큰 거부 |
+| 실제 multipart | 합성 PNG와 native PDF, 증빙 PDF 바이트 업로드 성공 |
+| 실제 파서 | PDF 문자 추출과 컨테이너 Tesseract OCR, 독립 결과 필드 확인 |
+| 인증된 MCP | 실행별 범위의 structure_evidence가 Backend에서 실제 증빙을 읽고 추출 |
+| 권한 | 다른 기업 review 조회 404, 작성자 승인 403, 빈 검토 의견 400 |
+| HITL | DB checkpoint 저장, 검토자 결정 저장 후 PostgreSQL 상태 복원과 재개 completed |
+| 버전 | 새 파일로 v2 생성, 독립 승인 대기, 이전 버전 결정 차단 |
+| 이력 삭제 | app 이력과 모든 버전의 Graph checkpoint 삭제 확인 |
+| Handoff | 출처 후보 9개 API 반환, 실제 문서와 chunks는 각각 0건 |
+| pgvector | 0.8.7 확장, rag_reader의 SELECT 허용, INSERT와 app 접근 거부 |
+
+재현 스크립트는 scripts/mvp_smoke.py다. 첫 통합 검증에서 Spring 트랜잭션 proxy의 직접 필드 접근 때문에
+업로드가 실패한 문제를 proxy-safe 메서드 접근으로 수정하고 같은 HTTP 검증을 통과했다.
+모델 테스트의 합성 Provider는 두 경로의 입출력과 원문 포함 검증을 확인하며 실제 모델 정확도를 의미하지 않는다.
+
+실행하지 않은 범위는 실제 OpenAI 유료 추론, 식약처와 KIPRIS 승인키 정상 응답, 고객 광고 정확도 평가,
+공개 법령 수집 및 임베딩과 RAG 검색, 다건 Worker와 SSE, 증빙 의미 대조와 특허 청구항 대조, 과금과 운영 부하다.
+모델 키 미설정은 not_configured, RAG는 not_connected와 not_evaluated로 표시한다.
+로컬 검증과 GitHub CI는 별개이며 이번 기능의 원격 push나 CI 성공을 이 기록으로 주장하지 않는다.
+
+브라우저에서는 합성 기업 작업공간 생성, 실제 PNG와 PDF 선택 및 제출, 저장된 추출 문구와
+두 분석 경로의 not_configured, 공공 API 미설정과 RAG 미연결 표시를 확인했다.
+제공 Desktop 프론트 폴더에도 직접 반영한 뒤 npm ci와 타입 검사 및 빌드를 통과했다.
+CI 정의는 기존 연결 검사와 신규 mvp_smoke를 함께 실행하도록 갱신했으며 원격 실행은 아직 하지 않았다.
+
+마지막 기반 연결 검사 scripts/smoke.py도 새 Agent 입력 계약과 실제 로컬 포트로 실행해 통과했다.
+이번에는 RabbitMQ 선택 프로필을 다시 켜지 않았으므로 기존 AMQP 검증 이력과 신규 단건 검증을 구분한다.

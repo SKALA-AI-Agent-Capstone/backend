@@ -12,7 +12,7 @@ async def test_internal_execution_rejects_missing_token():
         assert "NOT_IMPLEMENTED" not in response.text
 
 
-async def test_authenticated_execution_is_explicitly_unimplemented():
+async def test_authenticated_execution_requires_scoped_input():
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=create_app()), base_url="http://test"
     ) as client:
@@ -20,8 +20,7 @@ async def test_authenticated_execution_is_explicitly_unimplemented():
             "/internal/runs",
             headers={"Authorization": "Bearer unit-test-only-token-not-for-production-12345"},
         )
-        assert response.status_code == 501
-        assert response.json()["code"] == "NOT_IMPLEMENTED"
+        assert response.status_code == 422
 
 
 async def test_database_failure_is_not_reported_as_ready():

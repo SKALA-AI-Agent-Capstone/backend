@@ -197,3 +197,22 @@ RabbitMQ는 작업을 전달하며 LLM 판단, OCR, 근거 검색과 과금 로�
 | Backend와 과금 | 권한과 버전, 저장 및 사용량 이벤트 | 반려와 수정요청의 재실행 및 중간 실패 과금 정책 |
 
 위 작업은 노션 명세가 전혀 없어서 대기하는 상태가 아니다. 명시된 인터페이스는 개발 기준으로 삼고 불일치 부분만 함께 정한다.
+
+## 단건 MVP 이후 분업 시작점
+
+2026-10-20 제공된 Vue와 실제 단건 기능은 feat/non-vector-mvp에서 연결했다.
+기존 작업 카드의 미구현 표시는 초기 계획 이력이며 아래 실제 코드를 먼저 읽고 후속 PR을 나눈다.
+
+| 담당 | 현재 읽을 코드 | 다음 작은 PR | 함께 리뷰할 역할 |
+| --- | --- | --- | --- |
+| Frontend | pages, shared/api/http.ts, stores/reviews.js | 결과 항목 재조회와 팀원 관리 UI, 필요 시 정밀 좌표 UX | Backend |
+| Backend | AuthController, ReviewController, ReviewService와 V2 migration | 내구성 있는 작업 발행, SSE 또는 재개 재시도 계약 | Agent와 Frontend |
+| Agent | review_engine.py, app.py | 실제 키로 두 경로 평가, 한도 있는 근거 보강 loop와 사용량 계측 | RAG와 Business |
+| Business | server.py, review_tools.py | MFDS 실응답 매핑, 증빙 의미 구조화와 제품 주장 대조 | Agent와 Backend |
+| RAG | 기존 knowledge SQL, reference-sources.json, docs/06-rag-start.md | S06 원문 검증과 버전 및 조각 적재, 검색 계약 전환 | Agent |
+| 공통 환경 | compose.yaml, packages/shared와 contracts | 다건 RabbitMQ 명령과 멱등 처리 | Backend와 Agent |
+
+RAG는 로컬 PostgreSQL만 켜도 수집과 검색 개발을 시작할 수 있다. 공개 코퍼스에 고객 자료를 섞지 않는다.
+프론트와 Backend는 /api/v1 및 multipart 계약으로 분리한다. 모델이나 DB가 없어도 합성 계약 fixture로 화면을 개발하되
+실제 사용자 화면에서 fixture를 실검토 결과로 노출하지 않는다.
+새 기능별 feat 브랜치를 만들고 계약 변경은 소비자와 같은 PR 또는 연결된 PR에서 맞춘다.

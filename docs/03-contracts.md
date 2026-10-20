@@ -21,7 +21,7 @@
 
 ## Frontend와 Backend의 목표 HTTP
 
-등록부에서 확인한 14개 항목이다. 아래 /api/v1 업무 엔드포인트는 현재 실행 코드에 없다.
+등록부에서 확인한 목표 14개 항목이다. 실제 구현된 일부 /api/v1 경로와 응답 차이는 아래 단건 최소 기능 계약 절을 따른다.
 
 | 기능 | 메서드와 목표 경로 | 노션에 남은 협의 또는 제약 |
 | --- | --- | --- |
@@ -145,13 +145,13 @@ Agent API, Worker와 Graph는 노션 Graph에 따라 하나의 Agent 서비스 �
 원본 바이트, 공급자 API 키와 사용자 JWT를 작업 메시지나 checkpoint에 그대로 넣지 않는다.
 중복 command, 발행 대기 기록과 실제 큐 적재의 어긋남, 저장 후 ACK의 멱등성을 검증해야 한다.
 
-## 현재 기반 코드와의 연결
+## 초기 v0.1 기반과의 연결
 
 아래 내용은 실행 가능한 개발 기반 v0.1이다. 위 7개 목표 도구와 /api/v1 업무 API의 구현 완료를 뜻하지 않는다.
 후속 계약 PR에서 packages/shared, contracts, MCP 도구와 소비자 및 테스트를 함께 전환한다.
 소스와 잠금 파일은 이번 문서 보완에서 변경하지 않는다.
 
-## 현재 실행 코드의 HTTP
+## 초기 v0.1 호환 HTTP와 신규 실행 경로
 
 | 엔드포인트 | 현재 의미 |
 | --- | --- |
@@ -161,10 +161,10 @@ Agent API, Worker와 Graph는 노션 Graph에 따라 하나의 Agent 서비스 �
 | GET Agent /health/ready | Agent DB 연결 확인 |
 | GET Agent /internal/environment | 내부 토큰 검증 후 MCP 목록과 DB 확인 |
 | POST /api/reviews | HTTP 501, NOT_IMPLEMENTED |
-| POST Agent /internal/runs | 내부 토큰 검증 후 HTTP 501, NOT_IMPLEMENTED |
+| POST Agent /internal/runs | 신규 MVP의 scoped RunRequest 필요, 인증 후 빈 입력은 422 |
 
 내부 API는 Authorization: Bearer <INTERNAL_SERVICE_TOKEN>을 요구한다.
-health 경로는 자격증명을 반환하지 않는다. 현재 사용자 로그인 API는 없다.
+health 경로는 자격증명을 반환하지 않는다. 현재 로그인과 사용자 API는 /api/v1/users 아래에 있다.
 
 ## 현재 실행 코드의 MCP v0.1
 
@@ -232,3 +232,32 @@ PROVIDER_CONFIGURATION_ERROR, EVIDENCE_MISSING, LOOKUP_FAILED, NOT_FOUND와 VERS
 
 검토 이력 조회와 삭제는 Backend JDBC 경로다. 과금과 크레딧 원장, 잔액 확인과 사용량 이벤트는
 Agent 및 MCP 밖의 별도 Application 서비스가 책임진다. 중도 실패와 HITL 대기의 과금 시점은 미확정이다.
+
+
+## 2026-10-20 단건 최소 기능 계약 추가
+
+`feat/non-vector-mvp`에서 다음 HTTP를 실제 연결했다. 기존 v0.1 검색 도구는 호환성을 위해 그대로 남겨 둔다.
+이것이 노션의 목표 업무 기능 전체를 구현했다는 뜻은 아니다.
+
+- POST /api/v1/users/signup: email, password, name, tenantName. 새 기업 관리자만 생성하며 임의 tenantId와 role은 받지 않는다.
+- POST /api/v1/users/login, GET /api/v1/users/me, DELETE /api/v1/users/logout: 서버 JWT와 세션, 기업 및 역할.
+- POST /api/v1/users/team: 관리자만 같은 기업의 author 또는 reviewer 생성.
+- POST /api/v1/reviews: multipart metadata(JSON 문자열), files(광고 PDF/이미지 배열), evidence(선택 증빙 배열).
+- metadata: product, media, evidence의 docType 목록. 직접 광고 카피 입력은 받지 않는다.
+- GET /api/v1/reviews 및 /{reviewId}: 기업 범위의 서버 저장 결과. 현재 200건 한도.
+- POST /api/v1/reviews/{reviewId}/re-review: 같은 multipart 형식, 새 원본 필수, 새 버전과 별도 승인 이력.
+- POST /api/v1/reviews/{reviewId}/decision: versionNo, state, comment. 모든 결정에 의견 필수, 서버 역할 및 최신 버전 검증.
+- DELETE /api/v1/reviews 및 /{reviewId}: 작성자 또는 관리자 범위 삭제.
+- GET /api/v1/reference-sources: Handoff의 9개 수집 후보와 미적재 상태. 법령 검색 결과가 아니다.
+
+반환은 제공된 프론트의 review/versions 형식으로 고정했다. public ID는 camelCase이고 Graph 내부와는 명시적으로 매핑한다.
+문구 결과 findings와 사진 결과 visualFindings, 두 pipelineStatus를 따로 보존한다.
+retrievalStatus=not_connected, legalStatus=not_evaluated를 표시하며 basis와 standardsSnapshot을 가짜로 채우지 않는다.
+현재 PDF 리포트는 DB 결과를 읽는 프론트의 인쇄/PDF 저장이다. 서버 PDF 바이너리 엔드포인트와 SSE, 배치, 과금은 후속이다.
+
+내부 /internal/runs와 /internal/runs/resume의 원본 모델은 packages/shared/src/capstone_shared/review_contracts.py,
+JSON Schema는 contracts/mvp-*.schema.json이다. runToken은 서버 전용이고 모델 입력 및 checkpoint에 넣지 않는다.
+Business MCP의 structure_evidence는 실행 문맥을 서버 HTTP 헤더에서 받는 최소 구현이다.
+verify_functional_approval와 verify_patent는 실제 HTTP adapter와 설정/오류 처리를 추가했지만 승인키를 사용한 정상 응답 검증은 미완료다.
+MFDS_REPORT_URL은 승인 가이드 확인 전까지 비워두며 인증 실패를 제품 미조회로 바꾸지 않는다.
+match_product_claims와 match_patent_claims, 두 목표 RAG 검색은 이번 최소 기능에서 구현하지 않았다.
