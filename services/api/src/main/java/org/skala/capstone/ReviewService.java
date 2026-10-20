@@ -75,7 +75,7 @@ public class ReviewService implements AutoCloseable {
                 if(name.length()>200)name=name.substring(name.length()-200);
                 String role=i<files.size()?"advertisement":"evidence";
                 String docType=i<files.size()?"":meta.path("evidence").path(i-files.size()).path("docType").asText("other");
-                store.jdbc().update("INSERT INTO app.review_assets VALUES (CAST(? AS uuid),CAST(? AS uuid),?,?,?,?,?,?,?)",assetId,id,no,name,contentType,role,docType,raw.length,hash(raw));
+                store.jdbc().update("INSERT INTO app.review_assets(id,review_id,version_no,name,mime_type,role,doc_type,size_bytes,sha256,bytes) VALUES (CAST(? AS uuid),CAST(? AS uuid),?,?,?,?,?,?,?,?)",assetId,id,no,name,contentType,role,docType,raw.length,hash(raw),raw);
                 cache.opsForValue().set(assetKey(assetId),Base64.getEncoder().encodeToString(raw),Duration.ofMinutes(30));cached.add(assetId);
                 ObjectNode asset=json.createObjectNode().put("id",assetId).put("name",name).put("size",raw.length).put("mime",contentType).put("role",role).put("docType",docType)
                     .put("kind",contentType.equals("application/pdf")?"detail_page":"image");
@@ -112,8 +112,20 @@ public class ReviewService implements AutoCloseable {
     }
     JsonNode callAgent(String path,JsonNode body)throws Exception{return agent.post(path,body);}
     void fail(String tenant,String id,int no,String error){try{store.mutate(tenant,id,d->{var v=ReviewStore.version(d,no);v.put("status","failed").put("error",error);});}catch(Exception ignored){}}
+    /** Redis는 분석 중 빠른 조회용 핫 캐시일 뿐이다. 원본은 app.review_assets.bytes에 영구 보존되므로
+     * 이 호출은 캐시 메모리만 비우고 원본을 지우지 않는다. */
     void purge(String id,int no){for(var row:store.jdbc().queryForList("SELECT id FROM app.review_assets WHERE review_id=CAST(? AS uuid) AND version_no=?",id,no))cache.delete(assetKey(row.get("id").toString()));}
     String readCachedAsset(String id) { return cache.opsForValue().get(assetKey(id)); }
+    /** 사용자 화면(위반 검토, 리포트)에서 보는 원본. 같은 기업 소유인지 확인한 뒤 영구 저장소에서 읽는다. */
+    public record PersistedAsset(byte[] bytes,String mimeType){}
+    PersistedAsset readPersistedAsset(String tenant,String reviewId,String assetId){
+        var rows=store.jdbc().queryForList(
+            "SELECT a.bytes,a.mime_type FROM app.review_assets a JOIN app.reviews r ON r.id=a.review_id "+
+            "WHERE a.id=CAST(? AS uuid) AND a.review_id=CAST(? AS uuid) AND r.tenant_id=CAST(? AS uuid)",assetId,reviewId,tenant);
+        if(rows.isEmpty() || rows.getFirst().get("bytes")==null)
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND,"ASSET_NOT_FOUND");
+        return new PersistedAsset((byte[])rows.getFirst().get("bytes"),rows.getFirst().get("mime_type").toString());
+    }
     void authorizeRun(String id,int no,String runToken){
         var rows=store.jdbc().queryForList("SELECT token_hash FROM app.review_runs WHERE review_id=CAST(? AS uuid) AND version_no=?",id,no);
         String digest=hash(Objects.toString(runToken,"").getBytes(StandardCharsets.UTF_8));

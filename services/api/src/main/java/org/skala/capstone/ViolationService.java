@@ -57,8 +57,7 @@ public class ViolationService {
             store.mutate(tenant,id,d->{
                 ObjectNode v=ReviewStore.version(d,no);
                 v.set("result",result);v.put("status","done");
-                v.set("steps",json.valueToTree(List.of(100,100,100,100,100)));v.put("originalsDiscardedAt",Instant.now().toString());
-                for(JsonNode f:v.path("input").path("files"))((ObjectNode)f).put("discarded",true);
+                v.set("steps",json.valueToTree(List.of(100,100,100,100,100)));
                 latest[0]=ReviewStore.latest(d).path("no").asInt()==no;
                 if(latest[0] && auto){
                     ObjectNode approval=(ObjectNode)v.path("approval");approval.put("state","approved").put("agentResume","pending");

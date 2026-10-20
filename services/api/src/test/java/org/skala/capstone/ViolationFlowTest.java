@@ -255,6 +255,22 @@ class ViolationFlowTest {
     }
 
     @Test
+    void persistedOriginalAssetIsServedOnlyToOwningTenant()throws Exception{
+        String id=review();
+        String assetId=UUID.randomUUID().toString();
+        byte[] png={(byte)0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A,1,2,3,4};
+        jdbc.update("INSERT INTO app.review_assets(id,review_id,version_no,name,mime_type,role,doc_type,size_bytes,sha256,bytes) "+
+            "VALUES (CAST(? AS uuid),CAST(? AS uuid),1,'ad.png','image/png','advertisement','',?,'x',?)",assetId,id,png.length,png);
+
+        var ok=mvc.perform(get("/api/v1/reviews/"+id+"/assets/"+assetId).with(as(AUTHOR))).andExpect(status().isOk())
+            .andExpect(header().string("Content-Type","image/png")).andReturn();
+        assertThat(ok.getResponse().getContentAsByteArray()).isEqualTo(png);
+
+        mvc.perform(get("/api/v1/reviews/"+id+"/assets/"+assetId).with(as(OUTSIDER))).andExpect(status().isNotFound());
+        mvc.perform(get("/api/v1/reviews/"+id+"/assets/"+UUID.randomUUID()).with(as(AUTHOR))).andExpect(status().isNotFound());
+    }
+
+    @Test
     void everyNewPathIsTenantScoped()throws Exception{
         String id=reviewWithTwoFindings(),other=reviewWithTwoFindings();
         String violation=read(mvc.perform(get("/api/v1/reviews/"+id).with(as(AUTHOR)))).path("violations").get(0).path("id").asText();
