@@ -144,7 +144,7 @@ from capstone_shared.review_contracts import RunRequest, ResumeRequest, RewriteR
 
 권장 순서:
 
-1. feat/rag-legal-sources에 최신 main을 merge하고 위 충돌을 해결한다. pytest와 export_contracts.py --check 통과 후 PR.
+1. feat/rag-legal-sources에 최신 main을 merge하고 위 충돌을 해결한다. pytest와 export_contracts.py --check 통과 후 PR. (2026-10-20 완료, PR #5)
 2. RAG PR이 머지되면 feat/agent를 최신 main 기준으로 rebase하고 search_regulations로 교체한다.
 3. Frontend가 retrievalStatus 기준 표시로 바꾼다.
 4. 이후 RAG 품질 작업(5번)은 계약을 바꾸지 않으므로 다른 브랜치와 독립적으로 진행한다.

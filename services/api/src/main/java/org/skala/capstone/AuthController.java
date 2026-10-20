@@ -1,12 +1,12 @@
 package org.skala.capstone;
 
-import java.time.Instant;
 import java.util.*;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.*;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
@@ -16,9 +16,10 @@ import org.springframework.web.server.ResponseStatusException;
 public class AuthController {
     private final JdbcTemplate jdbc;
     private final PasswordEncoder passwords;
-    private final JwtEncoder encoder;
-    public AuthController(JdbcTemplate jdbc, PasswordEncoder passwords, JwtEncoder encoder) {
-        this.jdbc=jdbc; this.passwords=passwords; this.encoder=encoder;
+    private final AuthTokens tokens;
+    private final JwtDecoder decoder;
+    public AuthController(JdbcTemplate jdbc, PasswordEncoder passwords, AuthTokens tokens, JwtDecoder decoder) {
+        this.jdbc=jdbc; this.passwords=passwords; this.tokens=tokens; this.decoder=decoder;
     }
     static String value(Map<String,String> data, String key, int min, int max) {
         String value=data.getOrDefault(key, "").trim();
@@ -27,7 +28,8 @@ public class AuthController {
         return value;
     }
     @PostMapping("/signup") @Transactional
-    public Map<String,Object> signup(@RequestBody Map<String,String> input) {
+    public ResponseEntity<Map<String,Object>> signup(@RequestBody Map<String,String> input,
+                                                      @CookieValue(name=AuthTokens.COOKIE,required=false) String previous) {
         String email=value(input,"email",3,200).toLowerCase(Locale.ROOT);
         if(!email.matches("[^\\s@]+@[^\\s@]+\\.[^\\s@]+"))
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"INVALID_EMAIL");
@@ -38,25 +40,35 @@ public class AuthController {
         UUID tenant=UUID.randomUUID(), user=UUID.randomUUID();
         jdbc.update("INSERT INTO app.tenants VALUES (?,?)",tenant,company);
         jdbc.update("INSERT INTO app.users VALUES (?,?,?,?,?,?)",user,tenant,email,name,passwords.encode(password),"admin");
-        return token(user.toString());
+        tokens.revoke(previous,null);
+        return issued(tokens.open(user.toString()));
     }
     @PostMapping("/login")
-    public Map<String,Object> login(@RequestBody Map<String,String> input) {
+    public ResponseEntity<Map<String,Object>> login(@RequestBody Map<String,String> input,
+                                                     @CookieValue(name=AuthTokens.COOKIE,required=false) String previous) {
         String email=value(input,"email",3,200).toLowerCase(Locale.ROOT);
         var users=jdbc.queryForList("SELECT id,password_hash FROM app.users WHERE email=?",email);
         if(users.size()!=1 || !passwords.matches(input.getOrDefault("password",""),users.getFirst().get("password_hash").toString()))
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED,"INVALID_LOGIN");
-        return token(users.getFirst().get("id").toString());
+        // 같은 브라우저의 이전 세션은 쿠키가 덮어써지면 쓸 수 없으므로 함께 정리한다.
+        tokens.revoke(previous,null);
+        return issued(tokens.open(users.getFirst().get("id").toString()));
     }
-    private Map<String,Object> token(String userId) {
-        Map<String,Object> identity=identity(userId);
-        @SuppressWarnings("unchecked") var user=(Map<String,Object>)identity.get("user");
-        UUID jti=UUID.randomUUID(); Instant now=Instant.now(), expiry=now.plusSeconds(7200);
-        jdbc.update("INSERT INTO app.sessions VALUES (?,CAST(? AS uuid),?)",jti,userId,java.sql.Timestamp.from(expiry));
-        var claims=JwtClaimsSet.builder().issuer("beauty-capstone").subject(userId).id(jti.toString())
-            .issuedAt(now).expiresAt(expiry).claim("tenantId",user.get("tenantId")).claim("role",user.get("role")).build();
-        String encoded=encoder.encode(JwtEncoderParameters.from(JwsHeader.with(MacAlgorithm.HS256).build(),claims)).getTokenValue();
-        var result=new LinkedHashMap<>(identity); result.put("accessToken",encoded); return result;
+    @PostMapping("/refresh")
+    public ResponseEntity<Map<String,Object>> refresh(@CookieValue(name=AuthTokens.COOKIE,required=false) String refreshToken) {
+        try { return issued(tokens.rotate(refreshToken)); }
+        catch (ResponseStatusException error) {
+            var response=ResponseEntity.status(error.getStatusCode());
+            // ROTATED이면 다른 탭이 받은 새 쿠키가 이미 있으므로 지우지 않는다.
+            if(!"REFRESH_TOKEN_ROTATED".equals(error.getReason()))
+                response.header(HttpHeaders.SET_COOKIE,tokens.clearedCookie().toString());
+            return response.body(Map.of("message",error.getReason()));
+        }
+    }
+    private ResponseEntity<Map<String,Object>> issued(AuthTokens.Issued issued) {
+        var body=new LinkedHashMap<>(identity(issued.userId()));
+        body.put("accessToken",issued.accessToken()); body.put("expiresIn",issued.accessExpiresIn());
+        return ResponseEntity.ok().header(HttpHeaders.SET_COOKIE,issued.cookie().toString()).body(body);
     }
     private Map<String,Object> identity(String id) {
         var row=jdbc.queryForMap("SELECT u.*,t.name AS tenant_name FROM app.users u JOIN app.tenants t ON t.id=u.tenant_id WHERE u.id=CAST(? AS uuid)",id);
@@ -64,8 +76,17 @@ public class AuthController {
             "tenant",Map.of("id",row.get("tenant_id").toString(),"name",row.get("tenant_name")));
     }
     @GetMapping("/me") public Map<String,Object> me(@AuthenticationPrincipal Jwt jwt) {return identity(jwt.getSubject());}
-    @DeleteMapping("/logout") public Map<String,Boolean> logout(@AuthenticationPrincipal Jwt jwt) {
-        jdbc.update("DELETE FROM app.sessions WHERE id=CAST(? AS uuid)",jwt.getId()); return Map.of("ok",true);
+    /** Access Token이 만료돼도 로그아웃할 수 있도록 인증 없이 받고, 쿠키와 Bearer의 세션을 모두 폐기한다. */
+    @DeleteMapping("/logout")
+    public ResponseEntity<Map<String,Boolean>> logout(@CookieValue(name=AuthTokens.COOKIE,required=false) String refreshToken,
+                                                      @RequestHeader(name=HttpHeaders.AUTHORIZATION,required=false) String authorization) {
+        String session=null;
+        if(authorization!=null && authorization.startsWith("Bearer ")) {
+            try { session=decoder.decode(authorization.substring(7)).getClaimAsString("sid"); }
+            catch (JwtException ignored) { }
+        }
+        tokens.revoke(refreshToken,session);
+        return ResponseEntity.ok().header(HttpHeaders.SET_COOKIE,tokens.clearedCookie().toString()).body(Map.of("ok",true));
     }
     @PostMapping("/team") @Transactional
     public Map<String,Boolean> team(@AuthenticationPrincipal Jwt jwt,@RequestBody Map<String,String> input) {

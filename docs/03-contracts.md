@@ -252,6 +252,17 @@ Agent 및 MCP 밖의 별도 Application 서비스가 책임진다. 중도 실패
 
 - POST /api/v1/users/signup: email, password, name, tenantName. 새 기업 관리자만 생성하며 임의 tenantId와 role은 받지 않는다.
 - POST /api/v1/users/login, GET /api/v1/users/me, DELETE /api/v1/users/logout: 서버 JWT와 세션, 기업 및 역할.
+- POST /api/v1/users/refresh: Access Token 재발급. 아래 인증 토큰 절을 따른다.
+
+### 인증 토큰 (feat/jwt-refresh-token)
+
+- signup, login, refresh 응답 본문: `user`, `tenant`, `accessToken`, `expiresIn`(초). Access JWT는 기본 15분이며 클레임은 sub, sid(세션), tenantId, role이다.
+- 같은 응답의 `Set-Cookie: refresh_token=...; HttpOnly; Secure; SameSite=Strict; Path=/api/v1/users`, 기본 14일. 본문에는 Refresh Token을 넣지 않는다.
+- DB에는 Refresh Token의 SHA-256 해시만 `app.refresh_tokens`에 저장한다. 재발급할 때마다 새 토큰으로 회전하고 세션 만료를 연장한다.
+- refresh 401의 message: `REFRESH_TOKEN_MISSING`, `INVALID_REFRESH_TOKEN`, `REFRESH_TOKEN_EXPIRED`, `REFRESH_TOKEN_REUSED`(이미 회전된 토큰 재사용 → 세션 전체 폐기), `REFRESH_TOKEN_ROTATED`(30초 안의 탭 간 동시 재발급 → 쿠키를 유지하므로 한 번 재시도).
+- login과 signup은 요청에 기존 Refresh 쿠키가 있으면 그 세션을 먼저 폐기한다. Access JWT 만료는 clock skew 없이 적용한다.
+- logout은 Access Token이 만료돼도 호출할 수 있다. 쿠키와 유효한 Bearer의 세션을 모두 폐기하고 쿠키를 지운다. 세션이 지워지면 그 세션의 Access JWT도 즉시 401이다.
+- signup, login, refresh, logout은 Authorization 헤더를 검사하지 않는다. 그 외 API에서 401을 받으면 Frontend가 refresh 후 한 번 재시도한다.
 - POST /api/v1/users/team: 관리자만 같은 기업의 author 또는 reviewer 생성.
 - POST /api/v1/reviews: multipart metadata(JSON 문자열), files(광고 PDF/이미지 배열), evidence(선택 증빙 배열).
 - metadata: product, media, evidence의 docType 목록. 직접 광고 카피 입력은 받지 않는다.
@@ -273,6 +284,47 @@ verify_functional_approval와 verify_patent는 실제 HTTP adapter와 설정/오
 MFDS_REPORT_URL은 공식 getRptPrdlstInq01 경로를 기본값으로 제공한다. 인증 실패와 페이지 조회 한도를 제품 미조회로 바꾸지 않는다.
 match_product_claims와 match_patent_claims, 두 목표 RAG 검색은 이번 최소 기능에서 구현하지 않았다.
 
+
+### 문구별 위반과 HITL 결정 (feat/violation-tables)
+
+저장 원본과 규칙은 docs/04-data.md의 문구별 위반과 HITL 저장 규칙 절을 따른다. 모든 경로는 JWT의 tenantId로 review를 찾으므로 다른 기업의 review와 violation은 404다.
+review id와 violation id가 UUID가 아니면 400 `INVALID_REQUEST`, violation이 해당 review에 없으면 404 `VIOLATION_NOT_FOUND`다.
+
+GET /api/v1/reviews/{reviewId} (POST 생성과 재검토, 결정 API의 응답도 같은 형태) 기존 review 문서에 두 필드를 더한다.
+
+- `hitl`: status(pending, approved, rejected, revision_requested), comment, decidedBy, decidedByName, decidedAt, autoApproved(위반 0건 자동 승인),
+  violationCount, undecidedCount, canApprove(최신 버전 done, pending, 미결정 0건).
+- `violations[]`: 최신 버전 finding 순서. id, findingId(JSONB finding id), textExcerpt, severity, rewriteSuggestion, rewriteAttemptCount,
+  humanRetryCount, humanRetryLimit, finalResolution(kept, rewritten, rewritten_manual 또는 null), finalText, finalTextValidated, decidedBy, decidedByName, decidedAt,
+  rewrites[](attemptNo, text, requestedByHuman, retryNote, createdAt).
+- 최신 버전 `result.findings[]`의 각 항목에도 `violationId`가 있다.
+
+GET /api/v1/reviews 목록의 각 review에는 `hitl`(canApprove 제외)만 더한다.
+
+POST /api/v1/reviews/{reviewId}/violations/{violationId}/decision: 작성자, reviewer, admin. review가 pending이고 최신 버전이 done이어야 한다(409 `VERSION_NOT_READY`, `ALREADY_DECIDED`).
+review가 결정되기 전에는 다시 보내 결정을 바꿀 수 있다.
+
+- `{"resolution":"kept"}`: finalText=원문.
+- `{"resolution":"rewritten","attemptNo":2}`: 해당 시도의 문안. attemptNo가 없으면 최신 rewriteSuggestion. 제안이 없으면 409 `NO_REWRITE_SUGGESTION`, 없는 시도는 404 `REWRITE_ATTEMPT_NOT_FOUND`.
+- kept와 rewritten에 finalText를 보내면 400 `FINAL_TEXT_NOT_ALLOWED`. 둘 다 finalTextValidated=true로 저장한다.
+- `{"resolution":"rewritten_manual","finalText":"..."}`: 사람이 쓴 문구는 재검증을 통과해야 저장한다. 재검증 경로가 아직 없으므로
+  현재는 항상 501 `MANUAL_REWRITE_VALIDATION_NOT_IMPLEMENTED`이며 아무것도 저장하지 않는다. finalText가 비면 400 `FINAL_TEXT_REQUIRED`.
+
+POST /api/v1/reviews/{reviewId}/violations/{violationId}/rewrite-requests `{"retryNote":"..."}`(선택, 1000자 이하): 작성자, reviewer, admin. 같은 상태 조건.
+사람 요청 수가 humanRetryLimit에 도달하면 409 `HUMAN_REWRITE_LIMIT_REACHED`이며 Agent를 호출하지 않는다.
+성공하면 requested_by_human=true인 새 시도가 추가되고 rewriteSuggestion이 바뀐다. 기존 문구 결정은 유지한다.
+Agent 모델 키가 없으면 503 `REWRITE_MODEL_NOT_CONFIGURED`, Agent 연결 실패는 503 `AGENT_UNAVAILABLE`, 생성 실패는 502 `REWRITE_FAILED`이며 이때는 저장하지 않는다.
+
+POST /api/v1/reviews/{reviewId}/decision `{"versionNo":1,"state":"approved|rejected|changes_requested|revision_requested","comment":"..."}`: reviewer와 admin.
+changes_requested는 revision_requested로 저장한다. approved는 모든 violation이 결정된 뒤에만 가능하며 아니면 409 `VIOLATIONS_UNDECIDED`.
+이미 결정되었거나 자동 승인된 review는 409 `ALREADY_DECIDED`. 결정은 app.reviews.hitl_*에 저장하고, 프론트 호환을 위해 최신 버전 JSONB approval(state는 기존 값 changes_requested 유지)과 history에도 같이 남긴다.
+Agent resume 계약(contracts/mvp-agent-resume.input.schema.json)은 바꾸지 않았고 changes_requested로 전달한다.
+
+Agent 내부 POST /internal/rewrites: 입력 contracts/mvp-agent-rewrite.input.schema.json(reviewId, tenantId, phrase, reason, claimType, previousRewrites, retryNote),
+출력 mvp-agent-rewrite.output.schema.json(text). 내부 토큰 필수. 모델 키가 없으면 503 `TEXT_MODEL_NOT_CONFIGURED`, 공급자 실패는 502.
+한도 판정과 저장은 Backend가 하고 Agent는 문안만 만든다. 법 적합을 판정하지 않는다.
+
+프론트(RevisionOptions.vue, useReviewDetail.js)는 아직 선택을 메모리에만 두며 위 API 연동은 후속 작업이다.
 
 ## 공식 API 명세 재확인
 
