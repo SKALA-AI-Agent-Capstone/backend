@@ -104,3 +104,13 @@ PostgreSQL 안에 벡터를 저장하므로 별도 Vector DB 서비스는 없다
 
 chore/dev-foundation은 초기 실행환경 브랜치다. 후속 기능은 최신 main에서 별도 feat 브랜치를 만들어 진행한다.
 서비스별 다음 작업과 인터페이스 담당은 docs/10-work-breakdown.md를 따른다.
+
+## 테스트 결제 연결
+
+결제 정보는 토스페이먼츠 결제창에서 입력하며 프론트엔드는 카드번호와 CVC를 받지 않는다. 테스트 결제 승인 후에만 `app.credit_topups`에 1회 기록하고 해당 회원의 `app.users.credit_balance`를 증가시키며 `/api/v1/billing/balance`로 잔액을 조회한다. 이 과금 원장은 로컬 MVP의 `app` 스키마에 둔 테스트 구현이며, 목표인 별도 과금 DB와 검토 사용량 차감은 후속 작업이다.
+
+1. 토스페이먼츠 개발자센터에서 테스트 키 한 쌍을 발급받는다. 주문서형·결제창형 키(`test_gck`, `test_gsk`)와 API 개별 연동 키(`test_ck`, `test_sk`)를 지원하며, 같은 종류의 한 쌍을 사용한다.
+2. 백엔드의 Git 제외 `.env`에 `TOSS_TEST_CLIENT_KEY`, `TOSS_TEST_SECRET_KEY`를 설정한다. `PAYMENT_RETURN_URL`은 실제 브라우저에서 쓰는 주소의 `/credits` 경로다. 키를 소스나 프론트 환경변수에 넣지 않는다.
+3. `docker compose --profile web up -d --build api web --wait`로 API와 웹을 재시작한다. `/credits`에서 결제하고 복귀 후 서버가 승인하며 잔액을 표시한다.
+
+키가 없으면 결제 버튼은 비활성화된다. 라이브 키는 코드에서 거부한다. 실제 돈이 오가는 운영 결제, 환불 및 검토 사용량 차감은 이 테스트 구현의 범위가 아니다.

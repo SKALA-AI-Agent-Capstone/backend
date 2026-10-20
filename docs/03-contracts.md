@@ -37,8 +37,10 @@
 | 개별 이력 삭제 | DELETE /api/v1/reviews/{reviewId} | 기업 범위와 삭제 전파 검증 |
 | 전체 이력 삭제 | DELETE /api/v1/reviews | 사용자 확인 UI |
 | 재검토 | POST /api/v1/reviews/{reviewId}/re-review | 생략된 파일을 부모 건에서 재사용하는 규칙 협의 |
-| 크레딧 잔액 | GET /api/v1/billing/balance | 별도 과금 서비스 연계 |
-| 크레딧 충전 목업 | POST /api/v1/billing/charge | 실결제 연동 없음, 원장 반영은 후속 구현 |
+| 테스트 결제 설정 | GET /api/v1/billing/config | 테스트 키 구성 여부와 토스 공개 클라이언트 키 |
+| 크레딧 잔액 | GET /api/v1/billing/balance | 로그인 회원의 app.users.credit_balance, JWT 회원·기업 범위 |
+| 충전 주문 | POST /api/v1/billing/orders | credits와 method(toss), 가격은 서버에서 확정 |
+| 토스 테스트 승인 | POST /api/v1/billing/orders/{orderId}/confirm-toss | paymentKey 및 금액 대조 후 1회 적립 |
 
 광고 입력은 사용자 지시에 따라 PDF와 이미지 파일 두 종류다. REST 초안의 ad_text를 직접 입력 UI로 노출하지 않는다.
 텍스트는 파일에서 추출해 내부 State에 전달하는 안이며 PDF 파일 필드, 건별 묶음과 EvidenceFile을 계약 PR에서 고정한다.

@@ -64,7 +64,7 @@ class ViolationFlowTest {
         for(String t:List.of(TENANT,OTHER_TENANT))
             jdbc.update("INSERT INTO app.tenants VALUES (CAST(? AS uuid),?) ON CONFLICT DO NOTHING",t,"t"+t.substring(35));
         for(User u:List.of(AUTHOR,REVIEWER,COLLEAGUE,OUTSIDER))
-            jdbc.update("INSERT INTO app.users VALUES (CAST(? AS uuid),CAST(? AS uuid),?,?,'x',?) ON CONFLICT DO NOTHING",
+            jdbc.update("INSERT INTO app.users (id,tenant_id,email,name,password_hash,role) VALUES (CAST(? AS uuid),CAST(? AS uuid),?,?,'x',?) ON CONFLICT DO NOTHING",
                 u.id(),u.tenant(),u.id()+"@test",u.role()+u.id().substring(35),u.role());
         when(agent.post(anyString(),any())).thenReturn(json.createObjectNode());
     }
