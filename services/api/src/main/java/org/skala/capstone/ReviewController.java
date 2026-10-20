@@ -2,7 +2,6 @@ package org.skala.capstone;
 
 import com.fasterxml.jackson.databind.*;
 import com.fasterxml.jackson.databind.node.*;
-import java.time.Instant;
 import java.util.*;
 import org.springframework.http.*;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -13,42 +12,33 @@ import org.springframework.web.server.ResponseStatusException;
 
 @RestController
 public class ReviewController {
-    final ReviewStore store;final ReviewService reviews;
-    public ReviewController(ReviewStore store,ReviewService reviews){this.store=store;this.reviews=reviews;}
-    @GetMapping("/api/v1/reviews") public List<ObjectNode> list(@AuthenticationPrincipal Jwt jwt){return store.list(jwt.getClaimAsString("tenantId"));}
-    @GetMapping("/api/v1/reviews/{id}") public ObjectNode get(@AuthenticationPrincipal Jwt jwt,@PathVariable String id){return store.get(jwt.getClaimAsString("tenantId"),id);}
+    final ReviewStore store;final ReviewService reviews;final ViolationService violations;
+    public ReviewController(ReviewStore store,ReviewService reviews,ViolationService violations){this.store=store;this.reviews=reviews;this.violations=violations;}
+    @GetMapping("/api/v1/reviews") public List<ObjectNode> list(@AuthenticationPrincipal Jwt jwt){return violations.list(jwt.getClaimAsString("tenantId"));}
+    @GetMapping("/api/v1/reviews/{id}") public ObjectNode get(@AuthenticationPrincipal Jwt jwt,@PathVariable String id){return violations.view(jwt.getClaimAsString("tenantId"),id);}
     @PostMapping(value="/api/v1/reviews",consumes=MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ObjectNode> create(@AuthenticationPrincipal Jwt jwt,@RequestParam String metadata,
         @RequestPart List<MultipartFile> files,@RequestPart(required=false)List<MultipartFile> evidence){
-        return ResponseEntity.accepted().body(reviews.submit(jwt,metadata,files,evidence==null?List.of():evidence,null));
+        ObjectNode doc=reviews.submit(jwt,metadata,files,evidence==null?List.of():evidence,null);
+        return ResponseEntity.accepted().body(violations.view(jwt.getClaimAsString("tenantId"),doc.path("id").asText()));
     }
     @PostMapping(value="/api/v1/reviews/{id}/re-review",consumes=MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ObjectNode> version(@AuthenticationPrincipal Jwt jwt,@PathVariable String id,@RequestParam String metadata,
         @RequestPart List<MultipartFile> files,@RequestPart(required=false)List<MultipartFile> evidence){
-        return ResponseEntity.accepted().body(reviews.submit(jwt,metadata,files,evidence==null?List.of():evidence,id));
+        reviews.submit(jwt,metadata,files,evidence==null?List.of():evidence,id);
+        return ResponseEntity.accepted().body(violations.view(jwt.getClaimAsString("tenantId"),id));
     }
     @PostMapping("/api/v1/reviews/{id}/decision")
     public ObjectNode decide(@AuthenticationPrincipal Jwt jwt,@PathVariable String id,@RequestBody JsonNode input){
-        if(!Set.of("admin","reviewer").contains(jwt.getClaimAsString("role")))throw new ResponseStatusException(HttpStatus.FORBIDDEN,"REVIEWER_REQUIRED");
-        String state=input.path("state").asText(),comment=input.path("comment").asText().trim(),tenant=jwt.getClaimAsString("tenantId");int no=input.path("versionNo").asInt();
-        if(!Set.of("approved","rejected","changes_requested").contains(state) || comment.isEmpty())
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"DECISION_AND_REVIEW_NOTE_REQUIRED");
-        // Preserve the decision even if Agent resume is temporarily unavailable.
-        ObjectNode doc=store.mutate(tenant,id,d->{
-            ObjectNode v=ReviewStore.latest(d);
-            if(v.path("no").asInt()!=no || !v.path("status").asText().equals("done"))throw new ResponseStatusException(HttpStatus.CONFLICT,"VERSION_NOT_READY");
-            if(!v.path("approval").path("state").asText().equals("pending"))throw new ResponseStatusException(HttpStatus.CONFLICT,"ALREADY_DECIDED");
-            ObjectNode approval=(ObjectNode)v.path("approval");approval.put("state",state);
-            String by=store.jdbc().queryForObject("SELECT name FROM app.users WHERE id=CAST(? AS uuid)",String.class,jwt.getSubject());
-            approval.withArray("history").add(store.mapper().createObjectNode().put("action",state).put("by",by).put("role",jwt.getClaimAsString("role")).put("comment",comment).put("at",Instant.now().toString()));
-            approval.put("agentResume","pending");
-        });
-        try{
-            JsonNode command=store.mapper().createObjectNode().put("reviewId",id).put("tenantId",tenant).put("versionNo",no).put("state",state);
-            reviews.callAgent("/internal/runs/resume",command);
-            doc=store.mutate(tenant,id,d->((ObjectNode)ReviewStore.version(d,no).path("approval")).put("agentResume","completed"));
-        }catch(Exception ignored){ }
-        return doc;
+        return violations.decideReview(jwt,id,input);
+    }
+    @PostMapping("/api/v1/reviews/{id}/violations/{violationId}/decision")
+    public ObjectNode decideViolation(@AuthenticationPrincipal Jwt jwt,@PathVariable String id,@PathVariable String violationId,@RequestBody JsonNode input){
+        return violations.decideViolation(jwt,id,violationId,input);
+    }
+    @PostMapping("/api/v1/reviews/{id}/violations/{violationId}/rewrite-requests")
+    public ObjectNode requestRewrite(@AuthenticationPrincipal Jwt jwt,@PathVariable String id,@PathVariable String violationId,@RequestBody(required=false) JsonNode input){
+        return violations.requestRewrite(jwt,id,violationId,input==null?store.mapper().createObjectNode():input);
     }
     @DeleteMapping("/api/v1/reviews/{id}") public Map<String,Boolean> delete(@AuthenticationPrincipal Jwt jwt,@PathVariable String id){
         String tenant=jwt.getClaimAsString("tenantId");var doc=store.get(tenant,id);

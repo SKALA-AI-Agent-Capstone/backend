@@ -132,3 +132,19 @@ async def test_functional_lookup_does_not_treat_truncated_pages_as_product_absen
     result=await tools.functional_report('123','합성 제품')
     assert pages==['1','2','3']
     assert result['status']=='ambiguous'
+
+
+async def test_human_rewrite_prompt_carries_previous_suggestions_and_note():
+    from capstone_agent.review_engine import rewrite_phrase
+    from capstone_agent.review_models import RewriteRequest, RewriteSuggestion
+    seen = {}
+    class FakeProvider:
+        client = True
+        async def parse(self, prompt, schema, **kwargs):
+            seen["schema"], seen["text"] = schema, kwargs["text"]
+            return schema(text="  주름 개선 기능성 보고 범위 안의 표현  ")
+    request = RewriteRequest(reviewId="r", tenantId="t", phrase="7일 주름 개선", reason="기간 자료 확인",
+        previousRewrites=["첫 제안"], retryNote="더 짧게")
+    assert await rewrite_phrase(FakeProvider(), request) == "주름 개선 기능성 보고 범위 안의 표현"
+    assert seen["schema"] is RewriteSuggestion
+    assert "첫 제안" in seen["text"] and "더 짧게" in seen["text"] and "7일 주름 개선" in seen["text"]

@@ -13,8 +13,8 @@ from capstone_shared.settings import (
     required_env,
     valid_internal_authorization,
 )
-from .review_models import RunRequest, ResumeRequest
-from .review_engine import Provider, prepare_assets, build_graph, progress
+from .review_models import RunRequest, ResumeRequest, RewriteRequest
+from .review_engine import Provider, prepare_assets, build_graph, progress, rewrite_phrase
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.types import Command
 
@@ -97,6 +97,20 @@ def create_app() -> FastAPI:
                 return {"reportReady":True,"alreadyResumed":True}
             output=await graph.ainvoke(Command(resume=request.state),config)
             return {"reportReady":output.get("reportReady",False)}
+
+    @app.post("/internal/rewrites", dependencies=[Depends(require_internal)])
+    async def rewrite(request: RewriteRequest) -> dict:
+        provider=Provider()
+        if not provider.client:
+            raise HTTPException(status_code=503,detail="TEXT_MODEL_NOT_CONFIGURED")
+        try:
+            async with asyncio.timeout(60):
+                text=await rewrite_phrase(provider,request)
+        except Exception:
+            raise HTTPException(status_code=502,detail="REWRITE_PROVIDER_FAILED") from None
+        if not text:
+            raise HTTPException(status_code=502,detail="REWRITE_PROVIDER_FAILED")
+        return {"text":text}
 
     @app.post("/internal/runs/delete", dependencies=[Depends(require_internal)])
     async def delete_runs(request: ResumeRequest) -> dict:

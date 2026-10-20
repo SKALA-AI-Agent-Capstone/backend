@@ -274,6 +274,47 @@ MFDS_REPORT_URL은 공식 getRptPrdlstInq01 경로를 기본값으로 제공한�
 match_product_claims와 match_patent_claims, 두 목표 RAG 검색은 이번 최소 기능에서 구현하지 않았다.
 
 
+### 문구별 위반과 HITL 결정 (feat/violation-tables)
+
+저장 원본과 규칙은 docs/04-data.md의 문구별 위반과 HITL 저장 규칙 절을 따른다. 모든 경로는 JWT의 tenantId로 review를 찾으므로 다른 기업의 review와 violation은 404다.
+review id와 violation id가 UUID가 아니면 400 `INVALID_REQUEST`, violation이 해당 review에 없으면 404 `VIOLATION_NOT_FOUND`다.
+
+GET /api/v1/reviews/{reviewId} (POST 생성과 재검토, 결정 API의 응답도 같은 형태) 기존 review 문서에 두 필드를 더한다.
+
+- `hitl`: status(pending, approved, rejected, revision_requested), comment, decidedBy, decidedByName, decidedAt, autoApproved(위반 0건 자동 승인),
+  violationCount, undecidedCount, canApprove(최신 버전 done, pending, 미결정 0건).
+- `violations[]`: 최신 버전 finding 순서. id, findingId(JSONB finding id), textExcerpt, severity, rewriteSuggestion, rewriteAttemptCount,
+  humanRetryCount, humanRetryLimit, finalResolution(kept, rewritten, rewritten_manual 또는 null), finalText, finalTextValidated, decidedBy, decidedByName, decidedAt,
+  rewrites[](attemptNo, text, requestedByHuman, retryNote, createdAt).
+- 최신 버전 `result.findings[]`의 각 항목에도 `violationId`가 있다.
+
+GET /api/v1/reviews 목록의 각 review에는 `hitl`(canApprove 제외)만 더한다.
+
+POST /api/v1/reviews/{reviewId}/violations/{violationId}/decision: 작성자, reviewer, admin. review가 pending이고 최신 버전이 done이어야 한다(409 `VERSION_NOT_READY`, `ALREADY_DECIDED`).
+review가 결정되기 전에는 다시 보내 결정을 바꿀 수 있다.
+
+- `{"resolution":"kept"}`: finalText=원문.
+- `{"resolution":"rewritten","attemptNo":2}`: 해당 시도의 문안. attemptNo가 없으면 최신 rewriteSuggestion. 제안이 없으면 409 `NO_REWRITE_SUGGESTION`, 없는 시도는 404 `REWRITE_ATTEMPT_NOT_FOUND`.
+- kept와 rewritten에 finalText를 보내면 400 `FINAL_TEXT_NOT_ALLOWED`. 둘 다 finalTextValidated=true로 저장한다.
+- `{"resolution":"rewritten_manual","finalText":"..."}`: 사람이 쓴 문구는 재검증을 통과해야 저장한다. 재검증 경로가 아직 없으므로
+  현재는 항상 501 `MANUAL_REWRITE_VALIDATION_NOT_IMPLEMENTED`이며 아무것도 저장하지 않는다. finalText가 비면 400 `FINAL_TEXT_REQUIRED`.
+
+POST /api/v1/reviews/{reviewId}/violations/{violationId}/rewrite-requests `{"retryNote":"..."}`(선택, 1000자 이하): 작성자, reviewer, admin. 같은 상태 조건.
+사람 요청 수가 humanRetryLimit에 도달하면 409 `HUMAN_REWRITE_LIMIT_REACHED`이며 Agent를 호출하지 않는다.
+성공하면 requested_by_human=true인 새 시도가 추가되고 rewriteSuggestion이 바뀐다. 기존 문구 결정은 유지한다.
+Agent 모델 키가 없으면 503 `REWRITE_MODEL_NOT_CONFIGURED`, Agent 연결 실패는 503 `AGENT_UNAVAILABLE`, 생성 실패는 502 `REWRITE_FAILED`이며 이때는 저장하지 않는다.
+
+POST /api/v1/reviews/{reviewId}/decision `{"versionNo":1,"state":"approved|rejected|changes_requested|revision_requested","comment":"..."}`: reviewer와 admin.
+changes_requested는 revision_requested로 저장한다. approved는 모든 violation이 결정된 뒤에만 가능하며 아니면 409 `VIOLATIONS_UNDECIDED`.
+이미 결정되었거나 자동 승인된 review는 409 `ALREADY_DECIDED`. 결정은 app.reviews.hitl_*에 저장하고, 프론트 호환을 위해 최신 버전 JSONB approval(state는 기존 값 changes_requested 유지)과 history에도 같이 남긴다.
+Agent resume 계약(contracts/mvp-agent-resume.input.schema.json)은 바꾸지 않았고 changes_requested로 전달한다.
+
+Agent 내부 POST /internal/rewrites: 입력 contracts/mvp-agent-rewrite.input.schema.json(reviewId, tenantId, phrase, reason, claimType, previousRewrites, retryNote),
+출력 mvp-agent-rewrite.output.schema.json(text). 내부 토큰 필수. 모델 키가 없으면 503 `TEXT_MODEL_NOT_CONFIGURED`, 공급자 실패는 502.
+한도 판정과 저장은 Backend가 하고 Agent는 문안만 만든다. 법 적합을 판정하지 않는다.
+
+프론트(RevisionOptions.vue, useReviewDetail.js)는 아직 선택을 메모리에만 두며 위 API 연동은 후속 작업이다.
+
 ## 공식 API 명세 재확인
 
 2026-10-20 공공데이터포털의 inline Swagger JSON을 직접 읽고 contracts/external에 저장했다.

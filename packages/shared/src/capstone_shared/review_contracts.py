@@ -54,3 +54,19 @@ class ResumeRequest(BaseModel):
     tenantId: str
     versionNo: int = Field(ge=1)
     state: Literal["approved", "rejected", "changes_requested"]
+
+
+class RewriteRequest(BaseModel):
+    """Backend가 사람의 "다시쓰기" 요청을 Agent에 전달하는 입력. 한도와 저장은 Backend가 맡는다."""
+    model_config = ConfigDict(extra="forbid")
+    reviewId: str
+    tenantId: str
+    phrase: str = Field(min_length=1, max_length=2000)
+    reason: str = Field(default="", max_length=4000)
+    claimType: str = Field(default="", max_length=100)
+    previousRewrites: list[str] = Field(default_factory=list, max_length=50)
+    retryNote: str | None = Field(default=None, max_length=1000)
+
+
+class RewriteSuggestion(BaseModel):
+    text: str
