@@ -189,6 +189,39 @@ def prepare_document(raw: bytes, asset: dict) -> tuple[list[dict], list[Tile]]:
     return blocks, tiles
 
 
+EVIDENCE_MAX_PAGES = 80
+TEXT_PAGE_MIN_CHARS = 40
+
+
+def prepare_evidence(raw: bytes, asset: dict, max_pages=EVIDENCE_MAX_PAGES) -> tuple[list[dict], list[Tile], int]:
+    """Evidence reading is text-first. Test reports are long native PDFs, so their text layer is read as is
+    and only pages without text (scans) become OCR tiles, one per page. Ad limits (20 pages, 40 tiles) do not
+    apply. Returns (text blocks, pages to OCR, page count). Errors are specific codes, never a blanket failure."""
+    if len(raw) > 25*1024*1024:
+        raise ValueError("FILE_TOO_LARGE")
+    if not raw.startswith(b"%PDF-"):
+        blocks, tiles = prepare_document(raw, asset)
+        return blocks, tiles, 1
+    blocks, scans = [], []
+    with pdfplumber.open(BytesIO(raw)) as text_pdf, pdfium.PdfDocument(raw) as visual_pdf:
+        count = len(text_pdf.pages)
+        if not 1 <= count <= max_pages:
+            raise ValueError("EVIDENCE_PAGE_LIMIT")
+        for index, page in enumerate(text_pdf.pages):
+            text = (page.extract_text() or "").strip()
+            if len(text) >= TEXT_PAGE_MIN_CHARS:
+                blocks.append({"id": f"{asset['id']}:p{index+1}", "text": text, "page": index+1})
+                continue
+            pdf_page = visual_pdf[index]
+            bitmap = pdf_page.render(scale=2)
+            image = bitmap.to_pil().convert("RGB")
+            bitmap.close()
+            pdf_page.close()
+            scans.append(Tile(f"{asset['id']}:p{index+1}:scan", asset["id"], asset["name"], index+1,
+                              (0, 0, *image.size), image.size, image))
+    return blocks, scans, count
+
+
 def local_ocr(tile: Tile) -> list[dict]:
     """Tesseract confidence belongs to this engine; it is not legal certainty."""
     import pytesseract

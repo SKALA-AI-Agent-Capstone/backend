@@ -8,7 +8,7 @@ from urllib.parse import unquote, urlsplit
 import xml.etree.ElementTree as ET
 
 import httpx
-from capstone_shared.documents import prepare_document, local_ocr
+from capstone_shared.documents import prepare_evidence, local_ocr
 from capstone_shared.settings import internal_token, required_env
 
 
@@ -131,24 +131,35 @@ async def patents(numbers):
 
 
 async def structure(tenant_id,review_id,documents,version_no,run_token):
-    texts=[];failures=[]
-    async with httpx.AsyncClient(timeout=20) as client:
+    """Read submitted evidence for the Agent. Each document keeps its own text so the Agent can summarize it
+    and compare it with the ad's claims; a failure says why (fetch, page limit, parse) instead of one blanket code."""
+    texts,failures,read=[],[],[]
+    async with httpx.AsyncClient(timeout=30) as client:
         for doc in documents[:10]:
             try:
                 response=await client.get(required_env("BACKEND_BASE_URL")+f"/internal/reviews/{review_id}/assets/{doc['id']}",
                     params={"versionNo":version_no},headers={"Authorization":f"Bearer {internal_token()}","X-Run-Token":run_token})
                 response.raise_for_status()
-                native,tiles=await asyncio.to_thread(prepare_document,response.content,doc)
-                blocks=list(native)
-                for tile in tiles:
-                    try:blocks.extend(await asyncio.to_thread(local_ocr,tile))
-                    except Exception:failures.append({"documentId":doc["id"],"code":"OCR_UNAVAILABLE","page":tile.page})
-                texts.extend(t["text"] for t in blocks)
             except Exception:
-                failures.append({"documentId":doc.get("id"),"code":"DOCUMENT_UNREADABLE_OR_EXPIRED"})
-    return {"status":"partial" if failures else "extracted","text":"\n".join(texts)[:60000],
+                failures.append({"documentId":doc.get("id"),"name":doc.get("name"),"code":"DOCUMENT_FETCH_FAILED"});continue
+            try:
+                blocks,scans,pages=await asyncio.to_thread(prepare_evidence,response.content,doc)
+            except ValueError as error:
+                failures.append({"documentId":doc.get("id"),"name":doc.get("name"),"code":str(error)});continue
+            except Exception:
+                failures.append({"documentId":doc.get("id"),"name":doc.get("name"),"code":"DOCUMENT_PARSE_FAILED"});continue
+            parts=[b["text"] for b in blocks]
+            for scan in scans:
+                try:parts.extend(line["text"] for line in await asyncio.to_thread(local_ocr,scan))
+                except Exception:failures.append({"documentId":doc["id"],"name":doc.get("name"),"code":"OCR_UNAVAILABLE","page":scan.page})
+            text="\n".join(parts)
+            read.append({"id":doc["id"],"name":doc.get("name"),"docType":doc.get("docType",""),"pages":pages,
+                         "scannedPages":len(scans),"characters":len(text),"text":text[:30000]})
+            texts.append(text)
+    status="extracted" if read and not failures else "partial" if read else "failed"
+    return {"status":status,"text":"\n".join(texts)[:60000],"documents":read,
             "failures":failures,"claimTypes":[],"requirements":[],"flags":[],
-            "note":"본문 추출 결과이며 제품 효능과의 일치 판정은 아닙니다."}
+            "note":"본문 추출 결과입니다. 광고 주장과의 대조는 Agent가 따로 합니다."}
 
 
 MFDS_LISTS={

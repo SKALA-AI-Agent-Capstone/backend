@@ -367,3 +367,54 @@ async def test_unverified_rewrite_is_not_stored_as_suggestion():
     assert violation["rewrite_suggestion"] is None and not violation["verified"]
     assert violation["rewrites"][0]["reasoning"] == "원문과 같은 문구입니다."  # first candidate fails the guard
     assert violation["rewrite_note"] == "새 효능을 보장함"
+
+
+def blank_pdf(pages):
+    import pypdfium2 as pdfium
+    document = pdfium.PdfDocument.new()
+    for _ in range(pages):
+        document.new_page(595, 842)
+    output = BytesIO()
+    document.save(output)
+    return output.getvalue()
+
+
+def test_evidence_reader_takes_long_reports_and_names_the_failure():
+    from capstone_shared.documents import prepare_evidence
+    blocks, scans, pages = prepare_evidence(blank_pdf(30), {"id": "e", "name": "report.pdf"})
+    assert pages == 30 and blocks == [] and len(scans) == 30  # no text layer: every page goes to OCR
+    import pytest
+    with pytest.raises(ValueError, match="EVIDENCE_PAGE_LIMIT"):
+        prepare_evidence(blank_pdf(81), {"id": "e", "name": "huge.pdf"})
+
+
+def test_substantiation_uses_the_claim_match_and_flags_unread_evidence():
+    from capstone_agent.checks import substantiation_check
+    finding = {"id": "f", "phrase": "2주 안에 모공 개선"}
+    matched = {"verdict": "different_test", "documentName": "인체실험 보고서.pdf", "needed": "모공 개선 인체적용시험 보고서",
+               "reason": "제출 문서는 피부 일차자극 시험이라 모공 변화를 측정하지 않았습니다."}
+    result = substantiation_check(finding, {"documents": [{"id": "e"}]}, 1, matched)
+    assert result["status"] == "evidence_mismatch" and result["attention"]
+    assert "인체실험 보고서.pdf" in result["summary"] and "모공 개선 인체적용시험 보고서" in result["summary"]
+    supported = substantiation_check(finding, {"documents": [{"id": "e"}]}, 1, {**matched, "verdict": "supports", "needed": ""})
+    assert supported["status"] == "evidence_supports" and not supported["attention"]
+    unread = substantiation_check(finding, {"documents": [], "failures": [{"code": "EVIDENCE_PAGE_LIMIT"}]}, 1)
+    assert unread["status"] == "evidence_unread" and "EVIDENCE_PAGE_LIMIT" in unread["summary"]
+
+
+async def test_claim_match_keeps_only_known_claims_and_passes_ad_conditions():
+    from capstone_agent.evidence import ClaimMatches, match
+    seen = {}
+    class FakeProvider:
+        async def parse(self, prompt, schema, **kwargs):
+            seen["text"] = kwargs["text"]
+            return ClaimMatches(items=[
+                {"findingId": "f", "documentId": "e", "verdict": "different_test", "reason": "자극 시험", "needed": "모공 시험"},
+                {"findingId": "ghost", "documentId": None, "verdict": "not_covered", "reason": "-", "needed": "-"}])
+    findings = [{"id": "f", "phrase": "2주 안에 개선", "requiredChecks": ["substantiation"]},
+                {"id": "g", "phrase": "촉촉함", "requiredChecks": []}]
+    summaries = [{"documentId": "e", "name": "r.pdf", "kind": "safety_test", "title": "t", "purpose": "자극", "measures": ["피부 일차자극"],
+                  "period": "2025.01.07~01.09", "subjects": "30명", "institution": "프로브엠", "result": "저자극"}]
+    result = await match(FakeProvider(), findings, summaries, ["*연구 기간 : 2024.12.30 ~ 2025.01.28 | 20명 대상 | 2주 후 비교", "촉촉한 크림"])
+    assert set(result) == {"f"} and result["f"]["documentName"] == "r.pdf"
+    assert "20명 대상" in seen["text"] and "촉촉한 크림" not in seen["text"]

@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from capstone_shared.documents import prepare_document, local_ocr, Tile
 from capstone_shared.settings import internal_token, required_env
 from .checks import cross_checks
+from .evidence import summarize, match as match_evidence
 from .regulations import legal_basis, search_basis
 from .tools import McpTools
 from .review_models import (
@@ -595,9 +596,22 @@ def build_graph(native, tiles, provider, checkpointer, request=None):
     async def checks(state):
         result = state["result"]
         evidence_count = len([a for a in request.assets if a.role == "evidence"]) if request else 0
-        out = await cross_checks(result["findings"], product=state["product"], evidence=result["evidence"],
+        evidence, matches, warnings = dict(result["evidence"]), {}, []
+        if evidence.get("documents") and provider.client:
+            # 증빙마다 시험 요약을 만들고, 실증이 필요한 주장과 한 번에 대조한다(evidence.py).
+            try:
+                evidence["summaries"] = await summarize(provider, evidence["documents"])
+                matches = await match_evidence(provider, result["findings"], evidence["summaries"],
+                                               [t["text"] for t in state["texts"]])
+                evidence["claimMatches"] = [{"findingId": k, **v} for k, v in matches.items()]
+            except Exception:
+                warnings.append("EVIDENCE_MATCH_FAILED")
+        out = await cross_checks(result["findings"], product=state["product"], evidence=evidence,
                                  evidence_count=evidence_count, ad_text="\n".join(t["text"] for t in state["texts"]),
-                                 provider=provider, review_date=datetime.now(timezone.utc).date().isoformat())
+                                 provider=provider, review_date=datetime.now(timezone.utc).date().isoformat(),
+                                 matches=matches)
+        out["warnings"] = out["warnings"] + warnings
+        result = {**result, "evidence": evidence}
         return {"result": {**result, "findings": out["findings"], "checksSummary": out["summary"],
                            "functionalReports": out.get("functionalReports"),
                            "warnings": list(dict.fromkeys(result["warnings"] + out["warnings"]))}}
