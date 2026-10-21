@@ -15,6 +15,7 @@ from datetime import date
 import json
 import os
 from pathlib import Path
+import tempfile
 from urllib.parse import urlsplit
 
 import httpx
@@ -71,8 +72,15 @@ async def download_pdf(client: httpx.AsyncClient, source: dict) -> Path | None:
     if response.status_code != 200 or not response.content.lstrip().startswith(b"%PDF-") or len(response.content) > MAX_PDF_BYTES:
         return None
     target = data_dirs()[0] / f"{source['id']}.pdf"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(response.content)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(response.content)
+    except PermissionError:
+        # Linux bind mounts retain host ownership. Keep the non-root container user
+        # and use a temporary download cache when the source folder is read-only.
+        with tempfile.NamedTemporaryFile(prefix=f"rag-{source['id']}-", suffix=".pdf", delete=False) as cached:
+            cached.write(response.content)
+            target = Path(cached.name)
     return target
 
 

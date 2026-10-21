@@ -88,3 +88,29 @@ def test_guideline_pdf_is_split_at_its_own_headings():
     chunks = chunk_pdf_sections(pages)
     assert [c["section"] for c in chunks] == ["Ⅰ. 화장품 광고자문 > 1. 목적", "Ⅰ. 화장품 광고자문 > 2. 적용범위"]
     assert chunks[0]["page_from"] == 2
+
+
+async def test_pdf_download_handles_read_only_host_mount(monkeypatch, tmp_path):
+    import httpx
+    from pathlib import Path
+    from capstone_rag_mcp.batch import download_pdf
+
+    blocked = tmp_path / "host-data" / "sources"
+    monkeypatch.setenv("RAG_DATA_DIR", str(blocked.parent))
+    original_mkdir = Path.mkdir
+
+    def deny_host_write(path, *args, **kwargs):
+        if path == blocked:
+            raise PermissionError("read-only host directory")
+        return original_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", deny_host_write)
+    payload = b"%PDF-1.7\nfixture"
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, content=payload))
+    async with httpx.AsyncClient(transport=transport) as client:
+        downloaded = await download_pdf(client, {"id": "S01", "verified_direct_download_url": "https://www.mfds.go.kr/source.pdf"})
+    try:
+        assert downloaded.is_file() and downloaded.read_bytes() == payload
+        assert not blocked.exists()
+    finally:
+        downloaded.unlink()
