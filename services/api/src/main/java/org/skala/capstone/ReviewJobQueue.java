@@ -99,19 +99,21 @@ public class ReviewJobQueue {
             if(!reviews.completed(tenant,id,no))reviews.runQueued(request);
         }catch(Exception failure){
             try{
-                boolean permanent=failure instanceof AgentClient.AgentFailure agentFailure
+                var agentFailure=failure instanceof AgentClient.AgentFailure f?f:null;
+                boolean permanent=agentFailure!=null
                     && agentFailure.status>=400 && agentFailure.status<500 && agentFailure.status!=429;
+                String trace=agentFailure==null?null:agentFailure.traceId;
                 if(!permanent && attempt<MAX_ATTEMPTS){
                     int delay=attempt==1?5:30;
                     jdbc.update("UPDATE app.review_jobs SET status='retry',updated_at=now(), "+
-                        "next_attempt_at=now()+(? * interval '1 second'),last_error=? "+
-                        "WHERE review_id=CAST(? AS uuid) AND version_no=?",delay,failure.getClass().getSimpleName(),id,no);
+                        "next_attempt_at=now()+(? * interval '1 second'),last_error=?,last_trace_id=? "+
+                        "WHERE review_id=CAST(? AS uuid) AND version_no=?",delay,failure.getClass().getSimpleName(),trace,id,no);
                     channel.basicAck(tag,false);
                     reviews.retryScheduled(id,no,attempt,delay);
                 }else{
                     reviews.failQueued(tenant,id,no);
-                    jdbc.update("UPDATE app.review_jobs SET status='failed',request='{}'::jsonb,updated_at=now(),last_error=? "+
-                        "WHERE review_id=CAST(? AS uuid) AND version_no=?",failure.getClass().getSimpleName(),id,no);
+                    jdbc.update("UPDATE app.review_jobs SET status='failed',request='{}'::jsonb,updated_at=now(),last_error=?,last_trace_id=? "+
+                        "WHERE review_id=CAST(? AS uuid) AND version_no=?",failure.getClass().getSimpleName(),trace,id,no);
                     channel.basicReject(tag,false);
                 }
             }catch(Exception settlementError){
@@ -121,7 +123,7 @@ public class ReviewJobQueue {
             return;
         }
         try{
-            jdbc.update("UPDATE app.review_jobs SET status='done',request='{}'::jsonb,updated_at=now(),last_error=NULL "+
+            jdbc.update("UPDATE app.review_jobs SET status='done',request='{}'::jsonb,updated_at=now(),last_error=NULL,last_trace_id=NULL "+
                 "WHERE review_id=CAST(? AS uuid) AND version_no=?",id,no);
             channel.basicAck(tag,false);
         }catch(Exception settlementError){

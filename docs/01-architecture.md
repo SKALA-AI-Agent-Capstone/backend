@@ -108,7 +108,8 @@ finding에는 basis(규칙 조항 retrieval=rule, 보조 검색 retrieval=search
 
 Compose의 단건 검사는 `app.review_jobs`와 RabbitMQ quorum 큐를 사용한다. DB 작업 기록을 먼저
 커밋하고 발행 확인 후 상태를 바꾼다. 소비자는 수동 ACK를 사용하며 일시적 실패는
-5초, 30초 간격으로 최대 3회 시도한 뒤 실패 큐에 넣는다. Agent 호출은 현재
+5초, 30초 간격으로 최대 3회 시도한 뒤 실패 큐에 넣는다. 재시도와 실패에는 마지막 오류와
+실패한 실행의 LangSmith run id(`last_trace_id`, 추적이 켜진 경우)를 남긴다. Agent 호출은 현재
 Backend 소비자가 맡는다. 단독 API 실행에서 `REVIEW_QUEUE_ENABLED=false`면
 기존 프로세스 내부 실행 풀을 사용하므로 재시작 복구가 되지 않는다.
 다건의 목표는 접수 기록 저장 후 202, 승인 대기 checkpoint 저장 후 ACK, 승인 결정 저장 후 별도 재개 메시지다.

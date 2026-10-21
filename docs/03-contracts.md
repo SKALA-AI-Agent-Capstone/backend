@@ -277,6 +277,9 @@ result.evidence는 documents(문서별 id, name, docType, pages, scannedPages, c
 문구 finding의 rewrites에는 규칙 검사와 모델 검증을 통과한 수정안만 들어간다. 통과한 수정안이 없으면 rewrites는 비고 rewriteNote에 마지막 실패 이유를 남긴다.
 이 필드가 추가되기 전에 저장된 결과에는 tiles와 tileId가 없으므로 소비자는 두 필드가 없는 경우를 기존 표시로 처리한다.
 LangSmith trace가 켜진 실행은 result.traceId(LangSmith run id)를 가진다. 꺼져 있으면 필드가 없다.
+그래프 실행이 시작된 뒤 실패한 /internal/runs(422 INPUT_UNREADABLE_OR_EXPIRED, 500 RUN_FAILED)는 같은 id를 X-Trace-Id 응답 헤더로 돌려준다.
+파일을 읽다 그래프 전에 실패하면 LangSmith run이 없으므로 헤더도 없다.
+Spring 큐 소비자는 이 값을 app.review_jobs.last_trace_id에 last_error와 함께 저장하고, 작업이 완료되면 둘 다 비운다.
 retrievalStatus는 connected, not_indexed, error, skipped(문구 없음) 중 하나이고, 이전 결과에는 not_connected가 남아 있다. legalStatus는 not_evaluated로 유지한다.
 basis와 standardsSnapshot은 rag-mcp 검색 결과로만 채우며, finding.legalSearch(basis_found, no_match, failed, not_searched)로 문구별 상태를 남긴다.
 현재 PDF 리포트는 DB 결과를 읽는 프론트의 인쇄/PDF 저장이다. 서버 PDF 바이너리 엔드포인트와 배치 SSE, 배치는 후속이다.

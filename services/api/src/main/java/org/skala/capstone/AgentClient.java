@@ -11,10 +11,12 @@ import org.springframework.stereotype.Component;
 /** Agent 내부 HTTP 호출. 테스트에서 이 빈만 바꿔 Agent 없이 저장 경로를 검증한다. */
 @Component
 public class AgentClient {
-    /** Agent가 200이 아닌 응답을 준 경우. detail은 FastAPI HTTPException의 detail 문자열이다. */
+    /** Agent가 200이 아닌 응답을 준 경우. detail은 FastAPI HTTPException의 detail 문자열이다.
+     *  traceId는 실패한 실행의 LangSmith run id이며 추적이 꺼져 있으면 null이다. */
     public static class AgentFailure extends IllegalStateException {
-        public final int status; public final String detail;
-        AgentFailure(int status,String detail){super("AGENT_UNAVAILABLE");this.status=status;this.detail=detail;}
+        public final int status; public final String detail,traceId;
+        AgentFailure(int status,String detail){this(status,detail,null);}
+        AgentFailure(int status,String detail,String traceId){super("AGENT_UNAVAILABLE");this.status=status;this.detail=detail;this.traceId=traceId;}
     }
     final ObjectMapper json;
     final String agentUrl,internalToken;
@@ -29,7 +31,7 @@ public class AgentClient {
         if(response.statusCode()!=200){
             String detail="";
             try{detail=json.readTree(response.body()).path("detail").asText("");}catch(Exception ignored){}
-            throw new AgentFailure(response.statusCode(),detail);
+            throw new AgentFailure(response.statusCode(),detail,response.headers().firstValue("X-Trace-Id").orElse(null));
         }
         return json.readTree(response.body());
     }
