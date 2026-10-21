@@ -25,9 +25,13 @@ CLAIM_HINTS = {
     "ingredient": "화장품 원료 성분 표시 기재",
     "patent": "표시ㆍ광고 내용의 실증 특허",
 }
+# 키워드 일치율과 벡터 코사인은 척도가 달라 기준값을 따로 둔다. text-embedding-3-small(1024차원)에서
+# 광고가 아닌 문장은 코사인 0.38 이하, 광고 주장은 0.46 이상이었다(docs/12-hybrid-retrieval.md).
 SEARCH_MIN_SIMILARITY = 0.45
+SEARCH_MIN_VECTOR = 0.45
 MAX_SEARCH_BASIS = 1
 PRECEDENT_MIN_SIMILARITY = 0.3
+PRECEDENT_MIN_VECTOR = 0.45
 SOURCE_TYPES = {"law": "law", "regulation": "law", "guideline": "guideline", "association": "association"}
 
 
@@ -62,6 +66,8 @@ def to_basis(hit: dict, rule: dict | None = None) -> dict:
         "scope": hit.get("scope"),
         "sourceUrl": hit.get("source_url"),
         "similarity": hit.get("similarity"),
+        "keywordScore": hit.get("keyword_score"),
+        "vectorScore": hit.get("vector_score"),
         "retrieval": hit.get("retrieval", "search"),
         "ruleId": rule["rule_id"] if rule else None,
         "related": [{"sourceName": r["source"], "article": r.get("section"), "relation": r["relation"],
@@ -70,8 +76,16 @@ def to_basis(hit: dict, rule: dict | None = None) -> dict:
     }
 
 
+def relevant(hit: dict, keyword_min: float, vector_min: float) -> bool:
+    """A hit counts when either signal clears its own threshold. Older servers send only similarity."""
+    keyword, vector = hit.get("keyword_score"), hit.get("vector_score")
+    if keyword is None and vector is None:
+        return hit.get("similarity", 0) >= keyword_min
+    return (keyword or 0) >= keyword_min or (vector or 0) >= vector_min
+
+
 def select_hits(hits: list[dict]) -> list[dict]:
-    return [h for h in hits if h.get("similarity", 0) >= SEARCH_MIN_SIMILARITY][:MAX_SEARCH_BASIS]
+    return [h for h in hits if relevant(h, SEARCH_MIN_SIMILARITY, SEARCH_MIN_VECTOR)][:MAX_SEARCH_BASIS]
 
 
 async def basis_for(call, finding: dict, day: str) -> dict:
@@ -108,7 +122,7 @@ async def basis_for(call, finding: dict, day: str) -> dict:
         references = [{"id": f"{c['document_key']}:{c.get('page')}", "verified": False, "summary": c["excerpt"][:300],
                        "source": c["source"], "page": c.get("page"), "sourceUrl": c.get("source_url"),
                        "similarity": c.get("similarity")}
-                      for c in cases.get("hits", []) if c.get("similarity", 0) >= PRECEDENT_MIN_SIMILARITY]
+                      for c in cases.get("hits", []) if relevant(c, PRECEDENT_MIN_SIMILARITY, PRECEDENT_MIN_VECTOR)]
     if all(s == "SEARCH_ERROR" for s in statuses):
         state = "failed"
     elif all(s == "CORPUS_NOT_INDEXED" for s in statuses):

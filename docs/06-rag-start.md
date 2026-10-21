@@ -63,7 +63,7 @@ attention=true인 상태는 담당자가 확인할 항목이다. 어떤 상태�
 
 ### 알려진 한계
 
-- 검색 순위는 아직 키워드 방식이다. 임베딩은 선택 기능으로만 있다.
+- 검색은 키워드(BM25)와 벡터(OpenAI text-embedding-3-small, 1024차원)를 합친 하이브리드다. 근거와 비교는 docs/12-hybrid-retrieval.md에 있다.
 - S04 사례 쪽은 이미지 슬라이드라 search_precedents가 제목 수준만 찾는다.
 - 성분 대조는 고시에 적힌 이름과 흔한 표기 차이(하이드로/히드로 등)만 맞춘다. 동의어 사전은 없다.
 - 실증자료는 제출 여부만 본다. 증빙 내용이 해당 표현을 뒷받침하는지는 담당자가 대조한다.
@@ -95,7 +95,7 @@ uv run --all-packages --frozen python scripts/ingest_rag.py pdf                 
 - legalize-kr 본문은 공포본 기준이라, 부칙에서 시행일을 늦춘 일부 조문이 섞일 수 있다. 부칙과 조문별 시행일 처리는 후속이다.
 - legalize-kr는 force-push로 커밋 해시가 바뀔 수 있다고 공지한다. 버전 식별은 공포일자와 공포번호로 하고 해시는 storage_key의 참고값이다.
 - GitHub 비인증 API 한도는 시간당 60회다. GITHUB_TOKEN은 공개 읽기 권한이면 충분하며 .env에만 둔다.
-- 검색은 임베딩이 없어도 문자 bigram 키워드 순위로 동작한다. RAG_EMBEDDING_MODEL을 정하고 --embed로 적재하면 벡터 순위와 합친다. 키워드만으로는 순위 품질이 낮다.
+- 검색은 임베딩이 없어도 문자 bigram 키워드 순위로 동작한다. RAG_EMBEDDING_MODEL(기본 text-embedding-3-small)로 임베딩하면 벡터 순위와 RRF로 합친다. `batch embed`가 이미 적재된 조각만 임베딩한다.
 
 ## RAG 연동 현황과 브랜치 간 통합 가이드 (2026-10-20 기준)
 
@@ -219,7 +219,7 @@ from capstone_shared.review_contracts import RunRequest, ResumeRequest, RewriteR
 | 1 | RegulationHit에 source_type 추가 | 계약과 스키마 갱신 | Agent와 같은 PR에서 합의 (필드 추가만) |
 | 2 | S06 별표 5 PDF 확보와 적재, 이어서 S01, S02, S03, S07, S08, S09 | data/sources/S0x.pdf, knowledge 행 | 없음 (데이터만) |
 | 3 | S04 규정과 사례 page_ranges 확정 | search_precedents 결과 생성 | 없음 |
-| 4 | 임베딩 모델 확정(후보 bge-m3, 1024차원)과 --embed 적재 | retrieval_mode=hybrid | 없음 (응답 형식 동일) |
+| 4 | 임베딩 모델 확정(text-embedding-3-small, 1024차원)과 적재, 완료 2026-10-21 | retrieval_mode=hybrid | keyword_score, vector_score 필드 추가 |
 | 5 | 평가셋: 검증표 예시 4개와 실제 화면 문구("지친 피부 시간을 되돌리는", "탄력 광채 안티에이징") | 기대 조문 정답표와 결과표 | 없음 |
 | 6 | 부칙의 조문별 시행일 처리 | 버전 범위 보정 | 없음 |
 
@@ -294,7 +294,7 @@ claim_id와 위치 연결은 Agent 문맥에서 유지할 수 있다. 새 도구
 2. 법령과 기준은 rules, 확보한 사례는 cases로 분리한다.
 3. PDF 본문과 표, 비고 및 예외 조건을 파싱하고 문서 버전과 페이지를 보존한다.
 4. rag_ingest로 원문과 메타데이터를 적재한다. 기존 버전을 덮어쓰지 않는다.
-5. 선택한 임베딩 모델로 청크를 벡터화한다. 현재 bge-m3와 1024차원은 준비값이며 확정 모델이 아니다.
+5. 선택한 임베딩 모델로 청크를 벡터화한다. text-embedding-3-small을 1024차원으로 받는다. bge-m3는 비교했지만 이미지와 CPU 부담 때문에 기본값에서 뺐다.
 6. rag_reader로 키워드와 벡터 검색을 구현하고 필터 및 순위 조정을 평가한다.
 7. 내부 검색 결과를 위 두 노션 반환 타입으로 변환한다. 인용과 자료 역할을 검증한다.
 8. Agent가 실제 MCP tools/call로 두 도구를 선택해 호출하도록 통합한다.

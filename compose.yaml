@@ -100,7 +100,8 @@ services:
     <<: *python
     # One-shot corpus batch. Loads laws, notices, annexes and PDFs only when knowledge.chunks is empty,
     # so a fresh clone gets legal basis without running scripts by hand. Re-run: docker compose run --rm rag-ingest
-    command: ["uv", "run", "--no-sync", "python", "-m", "capstone_rag_mcp.batch", "all", "--if-empty"]
+    # 빈 DB면 전부 적재하고 임베딩한다. 이미 있으면 다시 받지 않고 벡터가 없거나 모델이 바뀐 조각만 임베딩한다.
+    command: ["uv", "run", "--no-sync", "python", "-m", "capstone_rag_mcp.batch", "all", "--if-empty", "--embed"]
     environment:
       <<: *python-env
       RAG_INGEST_DATABASE_URL: postgresql://rag_ingest:${RAG_INGEST_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-beauty_capstone}
@@ -108,6 +109,8 @@ services:
       RAG_DATA_DIR: /app/data
       LAW_OC: ${LAW_OC:-}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      RAG_EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:-text-embedding-3-small}
     volumes:
       - ./data:/app/data
     restart: "no"
@@ -122,6 +125,9 @@ services:
       <<: *python-env
       SERVICE_PORT: "8003"
       RAG_DATABASE_URL: postgresql://rag_reader:${RAG_READER_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-beauty_capstone}
+      # 질문도 문서와 같은 모델로 임베딩한다. off면 키워드 검색만 한다.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      RAG_EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:-text-embedding-3-small}
     ports:
       - "127.0.0.1:${RAG_MCP_PORT:-8003}:8003"
     depends_on:

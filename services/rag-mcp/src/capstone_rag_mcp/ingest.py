@@ -239,6 +239,30 @@ def recompute_ranges(cur, document_key: str) -> None:
                     (until, version_id))
 
 
+def embed_missing_all(conn: psycopg.Connection, embedder: Embedder, log=print) -> dict:
+    """Embed every stored chunk that has no vector yet, without fetching sources again.
+    One commit per document version, so an interrupted run keeps what it finished and resumes from there.
+    Vectors made by another model are cleared first: documents and queries must share one model."""
+    with conn.cursor() as cur:
+        cur.execute("""UPDATE knowledge.chunks SET embedding = NULL, embedding_model = NULL, embedding_revision = NULL
+                       WHERE embedding IS NOT NULL AND embedding_model IS DISTINCT FROM %s""", (embedder.model_name,))
+        if cur.rowcount:
+            log({"cleared_other_model": cur.rowcount})
+        conn.commit()
+    with conn.cursor() as cur:
+        cur.execute("""SELECT document_version_id, count(*) FROM knowledge.chunks
+                       WHERE embedding IS NULL GROUP BY 1 ORDER BY 1""")
+        pending = cur.fetchall()
+    done = 0
+    for version_id, count in pending:
+        with conn.cursor() as cur:
+            _embed_missing(cur, version_id, embedder)
+        conn.commit()
+        done += count
+        log({"embedded": str(version_id), "chunks": count, "progress": f"{done}/{sum(c for _, c in pending)}"})
+    return {"versions": len(pending), "chunks": done, "model": embedder.model_name, "revision": embedder.revision}
+
+
 def _embed_missing(cur, version_id, embedder: Embedder, batch: int = 16) -> None:
     cur.execute("""SELECT chunk_id, coalesce(section, '') || ' ' || body FROM knowledge.chunks
                    WHERE document_version_id = %s AND embedding IS NULL ORDER BY chunk_index""", (version_id,))

@@ -42,6 +42,9 @@ class RegulationHit(BaseModel):
     scope: str
     excerpt: str
     similarity: float = Field(ge=0, le=1, description="Retrieval score, not a violation probability.")
+    # 하이브리드 검색에서 어느 신호로 찾았는지. 척도가 달라 기준값도 따로 쓴다(키워드 일치율, 벡터 코사인).
+    keyword_score: float | None = Field(default=None, ge=0, le=1)
+    vector_score: float | None = Field(default=None, ge=0, le=1)
     trust_level: Literal["high"] = "high"
     source_type: Literal["law", "regulation", "guideline", "association"]
     # Traceability for the report (NFR-11)
@@ -92,6 +95,9 @@ class PrecedentHit(BaseModel):
     source: str
     excerpt: str
     similarity: float = Field(ge=0, le=1)
+    # 하이브리드 검색에서 어느 신호로 찾았는지. 척도가 달라 기준값도 따로 쓴다(키워드 일치율, 벡터 코사인).
+    keyword_score: float | None = Field(default=None, ge=0, le=1)
+    vector_score: float | None = Field(default=None, ge=0, le=1)
     trust_level: Literal["low"] = "low"
     verified: Literal[False] = False
     document_key: str

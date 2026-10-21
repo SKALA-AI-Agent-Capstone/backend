@@ -48,7 +48,8 @@ def acquisition_of(row: dict) -> str:
 
 
 def to_hit(row: dict, *, similarity: float, retrieval: str = "search", excerpt: str | None = None,
-           item: str | None = None, related: list[RelatedProvision] | None = None) -> RegulationHit:
+           item: str | None = None, related: list[RelatedProvision] | None = None,
+           keyword: float | None = None, vector: float | None = None) -> RegulationHit:
     return RegulationHit(
         source=row["title"], version=row["version_label"], scope=row["context"] or row["title"],
         source_type=row["source_type"] if row["source_type"] != "case" else "guideline",
@@ -56,6 +57,7 @@ def to_hit(row: dict, *, similarity: float, retrieval: str = "search", excerpt: 
         document_key=row["document_key"], section=row["section"], page=row["page_from"],
         source_url=row["source_url"], acquisition=acquisition_of(row), effective_from=row["effective_from"],
         effective_until=row["effective_until"], retrieval=retrieval, item=item, related=related or [],
+        keyword_score=keyword, vector_score=vector,
     )
 
 
