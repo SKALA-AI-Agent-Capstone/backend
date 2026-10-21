@@ -19,6 +19,7 @@ from pydantic import BaseModel
 
 from capstone_shared.documents import prepare_document, local_ocr, Tile
 from capstone_shared.settings import internal_token, required_env
+from .observability import traced_client
 from .checks import cross_checks
 from .instructions import instruction
 from .regulations import legal_basis, search_basis
@@ -93,6 +94,8 @@ class Provider:
         retries = int(os.getenv("MODEL_MAX_RETRIES", "2"))
         self.client = AsyncOpenAI(api_key=key, timeout=50, max_retries=retries) if key else None
         self.limit = asyncio.Semaphore(int(os.getenv("MODEL_CONCURRENCY", "2")))
+        if self.client:
+            self.client = traced_client(self.client)
 
     async def parse(self, prompt, schema, *, image=None, text=""):
         if not self.client:

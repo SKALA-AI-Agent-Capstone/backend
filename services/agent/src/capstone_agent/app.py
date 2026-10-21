@@ -13,6 +13,7 @@ from capstone_shared.settings import (
     required_env,
     valid_internal_authorization,
 )
+from .observability import run_config, trace_id
 from .review_models import RunRequest, ResumeRequest, RewriteRequest, VerifyRewriteRequest
 from .review_engine import Provider, prepare_assets, build_graph, progress, rewrite_phrase, verify_rewrite, RewriteRejected
 from .tools import McpTools
@@ -78,11 +79,15 @@ def create_app() -> FastAPI:
                 async with AsyncPostgresSaver.from_conn_string(required_env("AGENT_DATABASE_URL")) as saver:
                     await saver.setup()
                     graph = build_graph(native, tiles, Provider(), saver, request)
-                    config = {"configurable":{"thread_id":f"{request.tenantId}:{request.reviewId}:v{request.versionNo}"}}
+                    config = run_config(f"{request.tenantId}:{request.reviewId}:v{request.versionNo}", run_name="review",
+                                        review_id=request.reviewId, tenant_id=request.tenantId, version_no=request.versionNo)
                     output = await graph.ainvoke({"reviewId":request.reviewId,"tenantId":request.tenantId,
                         "versionNo":request.versionNo,"product":request.product}, config)
                     await progress(request,4)
-                    return {"result":output["result"],"hitlStatus":"pending","contract_version":"0.2.0-mvp"}
+                    result = output["result"]
+                    if trace_id(config):
+                        result = {**result, "traceId": trace_id(config)}
+                    return {"result":result,"hitlStatus":"pending","contract_version":"0.2.0-mvp"}
         except (ValueError, httpx.HTTPStatusError) as error:
             raise HTTPException(status_code=422,detail="INPUT_UNREADABLE_OR_EXPIRED") from None
 
@@ -90,7 +95,8 @@ def create_app() -> FastAPI:
     async def resume(request: ResumeRequest) -> dict:
         async with AsyncPostgresSaver.from_conn_string(required_env("AGENT_DATABASE_URL")) as saver:
             graph=build_graph([],[],Provider(),saver)
-            config={"configurable":{"thread_id":f"{request.tenantId}:{request.reviewId}:v{request.versionNo}"}}
+            config=run_config(f"{request.tenantId}:{request.reviewId}:v{request.versionNo}", run_name="review-resume",
+                              review_id=request.reviewId, tenant_id=request.tenantId, version_no=request.versionNo)
             snapshot=await graph.aget_state(config)
             if not snapshot.values:
                 raise HTTPException(status_code=404,detail="CHECKPOINT_NOT_FOUND")
