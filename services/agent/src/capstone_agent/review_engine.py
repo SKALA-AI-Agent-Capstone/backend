@@ -26,6 +26,7 @@ from .instructions import instruction
 from .regulations import legal_basis, search_basis
 from .tools import McpTools
 from .guardrails import mask_tool_result
+from .context_budget import prepare_parse, prepare_tool_messages, TOOL_OUTPUT_BUDGET
 from .review_models import (
     RunRequest, OCRLines, TextAssessment, VisualAssessment, ResultTile, RewriteSuggestion, RewriteVerification,
 )
@@ -102,11 +103,15 @@ class Provider:
     async def parse(self, prompt, schema, *, image=None, text=""):
         if not self.client:
             raise RuntimeError("OPENAI_NOT_CONFIGURED")
-        content = [{"type":"input_text", "text":text or "제공한 광고 영역을 분석하세요."}]
+        bounded, output_cap, compacted = prepare_parse(
+            prompt, text or "제공한 광고 영역을 분석하세요.", schema, image=bool(image))
+        if compacted:
+            logger.info("model input compacted for %s", schema.__name__)
+        content = [{"type":"input_text", "text":bounded}]
         if image:
             content.append({"type":"input_image", "image_url":image, "detail":"high"})
         request = {"input":[{"role":"system", "content":prompt}, {"role":"user", "content":content}],
-                   "text_format":schema, "store":False, "max_output_tokens":4500}
+                   "text_format":schema, "store":False, "max_output_tokens":output_cap}
         async with self.limit:
             response = await self._with_fallback("VISION" if image else "TEXT",
                                                  lambda model: self.client.responses.parse(model=model, **request))
@@ -119,9 +124,12 @@ class Provider:
         Completions를 쓴다."""
         if not self.client:
             raise RuntimeError("OPENAI_NOT_CONFIGURED")
+        bounded, compacted = prepare_tool_messages(messages, tools)
+        if compacted:
+            logger.info("business tool conversation compacted")
         async with self.limit:
             response = await self._with_fallback("TEXT", lambda model: self.client.chat.completions.create(
-                model=model, messages=messages, tools=tools, tool_choice="auto", max_completion_tokens=600))
+                model=model, messages=bounded, tools=tools, tool_choice="auto", max_completion_tokens=TOOL_OUTPUT_BUDGET))
         return response.choices[0].message
 
     async def _with_fallback(self, kind, call):
@@ -633,11 +641,12 @@ def build_graph(native, tiles, provider, checkpointer, request=None):
         elif texts:
             try:
                 ad = "\n".join(t["text"] for t in texts)
-                if len(ad)>60000:
+                prompt = instruction("text_review")
+                _, _, trimmed = prepare_parse(prompt, ad, TextAssessment)
+                if trimmed:
                     status="partial"; warnings.append("TEXT_REVIEW_INPUT_TRUNCATED")
                 output = await provider.parse(
-                    instruction("text_review"),
-                    TextAssessment,text=ad[:60000])
+                    instruction("text_review"), TextAssessment,text=ad)
                 for i, issue in enumerate(output.findings):
                     source=next((t for t in texts if issue.phrase and issue.phrase in t["text"]),None)
                     if source is None:

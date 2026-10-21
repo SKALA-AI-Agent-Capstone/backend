@@ -33,6 +33,16 @@ bootstrap은 .env의 누락된 설정만 보충하고 기존 비밀번호를 바
 | OPENAI_API_KEY | Agent | 실제 문구 모델과 사진 VLM 호출 |
 | TEXT_MODEL, VISION_MODEL | Agent | 기본 gpt-5.4-mini, 사용 계정의 모델 권한 확인 필요 |
 | MODEL_MAX_RETRIES, FALLBACK_TEXT_MODEL, FALLBACK_VISION_MODEL | Agent | 선택. 429, 5xx, 연결 오류는 기본 2회 재시도하고, 대체 모델을 적으면 그 뒤 한 번 더 시도한다. 비우면 해당 경로가 partial로 남는다 |
+| MODEL_INPUT_TOKEN_BUDGET | Agent | 기본 12000. 모델 입력의 전역 상한이며 호출 종류별 상한이 더 낮으면 그 값을 사용한다. 토크나이저 어휘를 못 받는 환경에서는 UTF-8 바이트 수로 보수적으로 제한한다 |
+
+Agent의 모든 구조화 응답 호출은 출력 상한 1000~4500토큰과 입력 상한을 함께 적용한다.
+광고 문구는 12000, 증빙 문서 요약과 도구 선택은 6000, 사진·OCR 호출은 이미지
+예약분 6000을 포함해 10000토큰이다. 나머지 호출은 5000~8000토큰이다.
+고정 지침과 응답 스키마는 자르지 않는다. 입력이 넘으면 앞과 최근 끝을 남기고 중간을
+줄이며, 광고 문구가 줄었다면 결과를 `partial`로 표시한다. 도구 선택 대화에서는
+오래된 호출과 응답을 쌍으로 상태 요약으로 바꾸고 최신 도구 결과를 우선 보존한다.
+고정 부분조차 예산에 안 들어가면 모델에 보내지 않고 오류로 처리한다.
+사진 토큰은 로컬에서 정확히 계수할 수 없어 예약분으로 계산한다.
 | MFDS_SERVICE_KEY, MFDS_REPORT_URL | Business MCP | 공식 getRptPrdlstInq01 기본 주소 제공, 키와 정상 실응답 검증 필요 |
 | KIPRIS_SERVICE_KEY | Business MCP | KIPRIS Plus 해당 오퍼레이션 이용 권한 |
 | KIPRIS_WORD_SEARCH_URL | Business MCP | 공식 getWordSearch 경로 기본값, 청구항 원문 경로가 아님 |
