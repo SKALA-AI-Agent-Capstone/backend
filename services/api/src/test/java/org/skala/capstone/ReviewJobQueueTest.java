@@ -47,7 +47,7 @@ class ReviewJobQueueTest {
         doThrow(new IOException("temporary")).when(reviews).runQueued(any());
         queue.consume(message(),channel);
         verify(jdbc).queryForList(contains("AND next_attempt_at<=now()"),eq(ID),eq(1));
-        verify(jdbc).update(contains("status='retry'"),eq(5),eq("IOException"),eq(ID),eq(1));
+        verify(jdbc).update(contains("status='retry'"),eq(5),eq("IOException"),isNull(),eq(ID),eq(1));
         verify(channel).basicAck(7,false);
         verify(reviews,never()).failQueued(anyString(),anyString(),anyInt());
     }
@@ -60,8 +60,21 @@ class ReviewJobQueueTest {
         queue.consume(message(),channel);
         var order=inOrder(reviews,jdbc,channel);
         order.verify(reviews).failQueued("tenant",ID,1);
-        order.verify(jdbc).update(contains("status='failed'"),eq("IOException"),eq(ID),eq(1));
+        order.verify(jdbc).update(contains("status='failed'"),eq("IOException"),isNull(),eq(ID),eq(1));
         order.verify(channel).basicReject(7,false);
+    }
+
+    @Test void agentFailureRecordsItsTraceIdForRetryAndFailure()throws Exception{
+        String trace="0b6f1f3c-7a5e-4d0c-9a51-2b8f0d6c1e11";
+        doThrow(new AgentClient.AgentFailure(500,"RUN_FAILED",trace)).when(reviews).runQueued(any());
+        queue.consume(message(),channel);
+        verify(jdbc).update(contains("last_trace_id=?"),eq(5),eq("AgentFailure"),eq(trace),eq(ID),eq(1));
+
+        when(jdbc.queryForList(startsWith("UPDATE app.review_jobs SET status='running'"),eq(ID),eq(1)))
+            .thenReturn(List.of(Map.of("request","{\"reviewId\":\""+ID+"\",\"tenantId\":\"tenant\",\"versionNo\":1}",
+                "attempts",3)));
+        queue.consume(message(),channel);
+        verify(jdbc).update(contains("status='failed'"),eq("AgentFailure"),eq(trace),eq(ID),eq(1));
     }
 
     @Test void duplicateDeliveryDoesNotRerunOrCharge()throws Exception{
@@ -78,6 +91,6 @@ class ReviewJobQueueTest {
         queue.consume(message(),channel);
         verify(channel).basicNack(7,false,true);
         verify(reviews,never()).failQueued(anyString(),anyString(),anyInt());
-        verify(jdbc,never()).update(contains("status='retry'"),anyInt(),anyString(),anyString(),anyInt());
+        verify(jdbc,never()).update(contains("status='retry'"),anyInt(),anyString(),any(),anyString(),anyInt());
     }
 }

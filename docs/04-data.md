@@ -47,8 +47,8 @@ GitHub는 소스, 마이그레이션과 출처 목록을 공유한다. 실행 DB
 
 | collection_key | 범위 | 검색 도구 |
 | --- | --- | --- |
-| rules | 법령, 고시, 식약처 안내서, 협회 기준 | 목표 search_regulations, 현재 search_rules 기반 |
-| cases | 확보한 과거 사례, 보조 참고 전용 | 목표 search_precedents, 현재 search_cases 기반 |
+| rules | 법령, 고시, 식약처 안내서, 협회 기준 | search_regulations |
+| cases | 확보한 과거 사례, 보조 참고 전용 | search_precedents |
 
 source_type은 문서 종류다. 컬렉션과 종류를 함께 저장한다.
 공식 출처 여부와 법적 구속력은 다르므로 수집 시 별도로 검증한다.

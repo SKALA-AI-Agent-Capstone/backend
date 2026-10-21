@@ -4,7 +4,6 @@ import argparse
 import json
 from pathlib import Path
 
-from capstone_shared.contracts import SearchRulesInput, SearchRulesResult
 from capstone_shared.rag_contracts import ClaimRulesResult, PrecedentSearchResult, RegulationSearchResult
 from capstone_shared.review_contracts import RunRequest, ResumeRequest, RewriteRequest, RewriteSuggestion, VerifyRewriteRequest, RewriteVerification, TextAssessment, VisualAssessment, ResultTile
 
@@ -13,8 +12,6 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--check", action="store_true")
 args = parser.parse_args()
 for name, model in [
-    ("search-rules.input.schema.json", SearchRulesInput),
-    ("search-rules.output.schema.json", SearchRulesResult),
     ("search-regulations.output.schema.json", RegulationSearchResult),
     ("search-precedents.output.schema.json", PrecedentSearchResult),
     ("lookup-claim-rules.output.schema.json", ClaimRulesResult),
