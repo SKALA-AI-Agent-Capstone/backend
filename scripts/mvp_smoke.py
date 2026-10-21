@@ -125,7 +125,8 @@ def main():
         assert review["versions"][1]["approval"]["state"]=="pending"
         assert call("POST",f"/reviews/{rid}/decision",reviewer,json={"versionNo":1,"state":"approved","comment":"old version"}).status_code==409
         checks.append("new version with independent approval history")
-        assert len(call("GET","/reference-sources",token).json()["sources"])==9
+        sources = call("GET", "/reference-sources", token).json()["sources"]
+        assert {"S05", "S06", "S10"} <= {source["id"] for source in sources}
         assert call("DELETE","/users/logout",other["accessToken"]).status_code==200
         assert call("GET","/users/me",other["accessToken"]).status_code==401
         checks.append("handoff source manifest and revoked logout token")

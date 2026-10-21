@@ -4,15 +4,16 @@ An existing (document_key, version_label, content_sha256) row is never rewritten
 Only its effective range may move when a newer statute version arrives.
 """
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 import hashlib
 from pathlib import Path
+import re
 
 import psycopg
 
 from .embedding import Embedder
+from .lawapi import LawApiDocument
 from .legalize import LawVersion, blob_url
-from .preview import chunk_pages
 
 ISSUERS = {"mfds": "식품의약품안전처", "kcia": "대한화장품협회", "law": "법제처 국가법령정보센터"}
 
@@ -56,6 +57,91 @@ def from_law(version: LawVersion) -> Document:
     )
 
 
+def from_lawapi(source: dict, doc: LawApiDocument) -> Document:
+    acquisition = source["acquisition"]
+    kind = acquisition["source_type"] if acquisition["method"] == "lawapi" else "regulation"
+    return Document(
+        document_key=f"lawapi:{source['id']}",
+        version_label=doc.version_label,
+        title=doc.title,
+        issuer=doc.issuer,
+        collection="rules",
+        source_type=kind,
+        source_url=source["official_page"],
+        content_sha256=doc.sha256,
+        storage_key=f"lawapi:{doc.target}:{doc.law_id}",
+        published_on=doc.published_on,
+        effective_from=doc.effective_from,
+        chunks=[{"section": c.section, "context": c.context, "body": c.body, "page_from": None} for c in doc.chunks],
+    )
+
+
+def from_lawapi_statute(document_key: str, doc: LawApiDocument, source_url: str) -> Document:
+    """화장품법 법률, 시행령, 시행규칙 loaded from the Law API when legalize-kr is unreachable."""
+    return Document(
+        document_key=document_key, version_label=doc.version_label, title=doc.title, issuer=doc.issuer,
+        collection="rules", source_type="law" if doc.kind == "법률" else "regulation", source_url=source_url,
+        content_sha256=doc.sha256, storage_key=f"lawapi:{doc.target}:{doc.law_id}", published_on=doc.published_on,
+        effective_from=doc.effective_from,
+        chunks=[{"section": c.section, "context": c.context, "body": c.body, "page_from": None} for c in doc.chunks],
+    )
+
+
+HEADING = re.compile(r"^(?:[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]+\.|\d{1,2}\.\s|[가-하]\.\s|\[별표\s*\d*\]|제\d+[장절조])")
+TOP_HEADING = re.compile(r"^(?:[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]+\.|\[별표\s*\d*\]|제\d+장)")
+FRONT_MATTER = ("점검표", "개정 이력", "개정이력", "이력서", "목 차", "목차", "CONTENTS")
+MAX_PDF_CHUNK = 1200
+
+
+def chunk_pdf_sections(pages: list[str], first_page: int = 1) -> list[dict]:
+    """Split guideline PDFs at their own headings (Ⅰ., 1., 가., [별표]) and keep the heading as section.
+
+    Slide decks (short pages) are kept one slide per chunk with the slide title as section.
+    Front matter such as revision checklists and tables of contents is skipped.
+    """
+    texts = [(first_page + i, p or "") for i, p in enumerate(pages)]
+    texts = [(n, p) for n, p in texts if p.strip() and not any(k in p[:80] for k in FRONT_MATTER)]
+    if not texts:
+        return []
+    if sum(len(p) for _, p in texts) / len(texts) < 500:
+        return [{"section": p.strip().split("\n")[0][:60], "body": p.strip(), "page_from": n, "page_until": n}
+                for n, p in texts]
+    chunks: list[dict] = []
+    top = heading = None
+    buffer: list[str] = []
+    start = None
+
+    def flush(end_page):
+        body = "\n".join(buffer).strip()
+        if len(body) > 20:
+            section = " > ".join(h for h in (top, heading) if h) or None
+            chunks.append({"section": section[:90] if section else None, "body": body,
+                           "page_from": start, "page_until": end_page})
+
+    page = first_page
+    for page, text in texts:
+        for line in text.split("\n"):
+            line = line.strip()
+            if not line or re.fullmatch(r"-?\s*\d+\s*-?", line):
+                continue  # 쪽 번호
+            starts_section = len(line) < 70 and (TOP_HEADING.match(line) or re.match(r"^\d{1,2}\.\s", line))
+            if starts_section:
+                flush(page)
+                buffer, start = [], page
+                if TOP_HEADING.match(line):
+                    top, heading = line[:50], None
+                else:
+                    heading = line[:50]
+            if start is None:
+                start = page
+            buffer.append(line)
+            if sum(len(b) for b in buffer) > MAX_PDF_CHUNK:
+                flush(page)
+                buffer, start = [], page
+    flush(page)
+    return chunks
+
+
 def read_pdf_pages(path: Path) -> list[str]:
     import pdfplumber
 
@@ -72,10 +158,8 @@ def from_pdf(source: dict, path: Path, *, pages: list[str] | None = None,
     raw = path.read_bytes()
     pages = pages if pages is not None else read_pdf_pages(path)
     first, last = page_range or (1, len(pages))
-    chunks = []
-    for chunk in chunk_pages(pages[first - 1:last]):
-        page = chunk["page"] + first - 1
-        chunks.append({"section": None, "context": source["title"], "body": chunk["body"], "page_from": page})
+    chunks = [{"section": c["section"], "context": source["title"], "body": c["body"], "page_from": c["page_from"],
+               "page_until": c["page_until"]} for c in chunk_pdf_sections(pages[first - 1:last], first)]
     return Document(
         document_key=f"pdf:{source['id']}{key_suffix}",
         version_label=str(source.get("reported_version_date") or "unverified"),
@@ -108,11 +192,11 @@ def write(conn: psycopg.Connection, doc: Document, *, corpus_version: str,
         existing = cur.fetchone()
         if existing:
             status = "exists"
-            if (existing[1], existing[2]) != (doc.effective_from, doc.effective_until):
-                cur.execute("""UPDATE knowledge.document_versions SET effective_from = %s, effective_until = %s
-                               WHERE document_version_id = %s""",
-                            (doc.effective_from, doc.effective_until, existing[0]))
+            if existing[1] != doc.effective_from:
+                cur.execute("UPDATE knowledge.document_versions SET effective_from = %s WHERE document_version_id = %s",
+                            (doc.effective_from, existing[0]))
                 status = "range_updated"
+            recompute_ranges(cur, doc.document_key)
             if embedder:
                 _embed_missing(cur, existing[0], embedder)
             conn.commit()
@@ -131,12 +215,28 @@ def write(conn: psycopg.Connection, doc: Document, *, corpus_version: str,
             cur.execute(
                 """INSERT INTO knowledge.chunks (document_version_id, chunk_index, section, page_from,
                    page_until, body, context) VALUES (%s,%s,%s,%s,%s,%s,%s)""",
-                (version_id, index, chunk["section"], chunk["page_from"], chunk["page_from"],
+                (version_id, index, chunk["section"], chunk["page_from"], chunk.get("page_until", chunk["page_from"]),
                  chunk["body"], chunk["context"]))
         if embedder:
             _embed_missing(cur, version_id, embedder)
+        recompute_ranges(cur, doc.document_key)
     conn.commit()
     return "inserted"
+
+
+def recompute_ranges(cur, document_key: str) -> None:
+    """Every version of a document ends the day before the next one (by effective date) starts.
+
+    A batch may fetch only the newest version, so ranges are rebuilt from all stored versions.
+    """
+    cur.execute("""SELECT document_version_id, effective_from FROM knowledge.document_versions
+                   WHERE document_key = %s AND effective_from IS NOT NULL
+                   ORDER BY effective_from, published_on NULLS FIRST, retrieved_at""", (document_key,))
+    rows = cur.fetchall()
+    for (version_id, _), following in zip(rows, rows[1:] + [None]):
+        until = following[1] - timedelta(days=1) if following else None
+        cur.execute("UPDATE knowledge.document_versions SET effective_until = %s WHERE document_version_id = %s",
+                    (until, version_id))
 
 
 def _embed_missing(cur, version_id, embedder: Embedder, batch: int = 16) -> None:

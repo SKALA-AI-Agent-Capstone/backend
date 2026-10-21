@@ -4,6 +4,71 @@
 search_regulations와 search_precedents다. 기존 기반의 이름을 목표 API처럼 사용하지 않는다.
 공통 인터페이스와 미확정 항목은 docs/03-contracts.md에 모았다.
 
+## 2026-10-21 근거 수집과 검토 흐름 (feat/review-evidence-pipeline)
+
+이 절이 아래 2026-10-20 절보다 우선한다.
+
+### 출처와 수집 경로
+
+| 출처 | 경로 | 적재 단위 |
+| --- | --- | --- |
+| S05 화장품법 법률, 시행령, 시행규칙 | legalize-kr. GitHub가 막히면 법제처 API 현행본(lawapi:화장품법/*) | 조문 |
+| S06 시행규칙 별표 5 | 법제처 API 법령 본문의 별표 | 호와 목 (별표 5 제2호 가목 등) |
+| S07 표시광고 실증 규정 | 법제처 API 행정규칙 | 조문, 별표는 표현별 행 |
+| S08 기능성화장품 심사 규정 | 법제처 API 행정규칙 | 조문과 별표 4 |
+| S09 표시광고법 | 법제처 API 법령 | 조문 |
+| S10 화장품 안전기준 등에 관한 규정 (신규) | 법제처 API 행정규칙 | 조문, 별표 1(사용 금지)과 별표 2(사용 제한) |
+| S01 관리 지침, S02 협회 기준, S03 시험방법 | PDF (없으면 공식 주소에서 내려받음) | 문서 자체의 제목(Ⅰ., 1., [별표]) 단위 |
+| S04 2026 지침과 위반사례 | PDF, 2~7쪽 rules, 8~27쪽 cases | 슬라이드. 사례 본문은 이미지라 제목 위주 |
+
+```sh
+uv run --all-packages --frozen python scripts/ingest_rag.py all      # 호스트에서 전체
+docker compose run --rm rag-ingest                                   # 컨테이너에서 (knowledge가 비었을 때만)
+```
+
+- compose를 올리면 rag-ingest가 한 번 돌고, knowledge.chunks가 비어 있을 때만 전체를 적재한다. LAW_OC가 있어야 법제처 경로가 동작한다.
+- 같은 문서를 다시 받으면 버전 전체의 시행 기간을 다시 계산한다. 검색은 검토일에 시행 중인 버전만 본다.
+- knowledge.article_links에 조문 사이의 인용, 위임(implements), 별표 연결을 저장한다. 인용 대상이 8개를 넘는 허브 조문(권한의 위임, 벌칙)은 뺀다.
+
+### 규칙표 (services/rag-mcp/src/capstone_rag_mcp/claim_rules.json)
+
+주장 유형(claimType)이나 문구 패턴으로 규칙이 걸리면, 정해진 현행 조항과 실행할 대조가 붙는다. 검색 운에 맡기지 않는다.
+
+| 규칙 | 조항 | 대조 |
+| --- | --- | --- |
+| drug 의약품 오인 | 법 제13조 제1항제1호, 별표 5 제2호 가목, 지침 별표 1 | |
+| functional 기능성 효능 | 법 제13조 제1항제2호, 별표 5 제2호 나목, 지침 별표 2 | 기능성 보고품목 |
+| official_endorsement 식약처, 전문가, 인증 | 별표 5 제2호 다목과 사목, 법 제13조 제1항제2호 | 기능성 보고품목 |
+| substantiation 수치, 시험, 임상 | 법 제14조, 시행규칙 제23조, 실증 규정 제3조와 제4조, 실증 별표 행 | 실증자료 제출 |
+| absolute_comparison 절대, 비교 | 별표 5 제2호 바목과 사목 | |
+| unverifiable_effect 효능 과장 | 법 제13조 사실과 다른 표현 호, 별표 5 제2호 사목과 아목, 실증 별표 행 | |
+| ingredient, human_derived 성분 | 지침 별표 2 '무(無)' 표현, 추출물 함량 기준, 별표 5 사목 | 안전기준 별표 1, 2와 식약처 규제정보 |
+| gmp, patent, natural_organic | 별표 5 사목과 아목, 지침 천연 지수 기준 | GMP 업체 목록, 특허 번호 |
+
+- 호 번호는 하드코딩하지 않고 현행 조문 본문에서 item_hint 문구로 찾는다. 개정으로 호가 바뀌어도 맞는 호를 가리킨다.
+- sweep=true 규칙은 OCR 전체 줄에도 적용해, 모델이 뽑지 않은 고위험 줄을 문구로 보충한다(source=rule_sweep).
+- 규칙에 걸렸다는 것은 위반 판정이 아니라 담당자가 볼 근거 후보라는 뜻이다. 규칙을 바꾸면 version을 올린다.
+
+### 대조 결과 (finding.checks)
+
+| 대조 | 상태 |
+| --- | --- |
+| functional_report | consistent, mismatch(보고 기능과 다른 효능), not_found, ambiguous, unavailable |
+| substantiation | evidence_missing, evidence_submitted(내용 대조는 담당자) |
+| ingredient | prohibited, restricted, not_listed, needs_input |
+| gmp | gmp_listed, gmp_not_listed, needs_input(제조업체 모름) |
+| patent | needs_input(번호 없음), evidence_submitted |
+
+attention=true인 상태는 담당자가 확인할 항목이다. 어떤 상태도 자동 위반 판정이 아니다.
+
+### 알려진 한계
+
+- 검색 순위는 아직 키워드 방식이다. 임베딩은 선택 기능으로만 있다.
+- S04 사례 쪽은 이미지 슬라이드라 search_precedents가 제목 수준만 찾는다.
+- 성분 대조는 고시에 적힌 이름과 흔한 표기 차이(하이드로/히드로 등)만 맞춘다. 동의어 사전은 없다.
+- 실증자료는 제출 여부만 본다. 증빙 내용이 해당 표현을 뒷받침하는지는 담당자가 대조한다.
+- 리라이트 재검증이 수치를 키운 문안("20.48% 더 좋아진")을 통과시키는 경우가 있다(Agent 담당 과제).
+
 ## 2026-10-20 수집 경로 변경
 
 노션 참고자료 9건 중 화장품법은 [legalize-kr](https://github.com/legalize-kr/legalize-kr/tree/main/kr/%ED%99%94%EC%9E%A5%ED%92%88%EB%B2%95)에서, 나머지는 PDF로 적재한다.
