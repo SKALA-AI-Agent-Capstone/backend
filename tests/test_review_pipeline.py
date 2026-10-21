@@ -352,6 +352,61 @@ async def test_rewrite_guard_rejects_same_fragment_kept_and_added_claims():
     assert await rewrite_guard("건강하게 빛나는 윤기를 선사합니다", "건강해 보이는 윤기를 더합니다", call) is None
 
 
+async def test_business_tool_loop_follows_llm_choice_and_guardrail_caps_repeats(monkeypatch):
+    """select_business_tools: the LLM picks which available tool to call (never the one it never asks
+    for, even though it is available), and a tool it keeps re-requesting stops executing once
+    MAX_SAME_TOOL_CALLS is hit."""
+    import capstone_agent.review_engine as engine
+    from capstone_agent.review_engine import select_business_tools, MAX_SAME_TOOL_CALLS
+
+    class FakeToolCall:
+        def __init__(self, name, call_id):
+            self.id = call_id
+            self.function = type("F", (), {"name": name})()
+        def model_dump(self):
+            return {"id": self.id, "type": "function", "function": {"name": self.function.name, "arguments": "{}"}}
+
+    class FakeMessage:
+        content = ""
+        def __init__(self, names):
+            self.tool_calls = [FakeToolCall(n, f"{n}-{i}") for i, n in enumerate(names)] if names else None
+
+    class FakeToolProvider:
+        client = True
+        def __init__(self, turns):
+            self.turns = list(turns)
+            self.calls = 0
+        async def call_with_tools(self, messages, tools):
+            names = self.turns[self.calls] if self.calls < len(self.turns) else []
+            self.calls += 1
+            return FakeMessage(names)
+
+    class FakeAsset:
+        role = "evidence"
+        def model_dump(self): return {"id": "e1", "role": "evidence"}
+
+    class FakeRequest:
+        assets = [FakeAsset()]
+
+    mcp_calls = []
+    async def fake_mcp_call(name, arguments, request=None):
+        mcp_calls.append(name)
+        return {"status": "found"}
+    monkeypatch.setattr(engine, "mcp_call", fake_mcp_call)
+
+    # Model repeatedly re-requests verify_functional_approval and never once asks for
+    # structure_evidence, even though both are available (evidence file submitted, product named).
+    provider = FakeToolProvider([["verify_functional_approval"]] * (MAX_SAME_TOOL_CALLS + 2) + [[]])
+    state = {"product": {"name": "수분크림"}, "texts": [], "findings": []}
+    evidence, public, patents, warnings, trace = await select_business_tools(provider, state, FakeRequest())
+
+    assert mcp_calls == ["verify_functional_approval"] * MAX_SAME_TOOL_CALLS  # guardrail stopped the rest
+    assert "structure_evidence" not in mcp_calls  # never chosen, so never executed despite being available
+    assert public == {"status": "found"}
+    assert {"tool": "structure_evidence", "called": False} in trace
+    assert trace.count({"tool": "verify_functional_approval", "called": True}) == MAX_SAME_TOOL_CALLS
+
+
 async def test_unverified_rewrite_is_not_stored_as_suggestion():
     from capstone_agent.review_engine import build_violations
     from capstone_agent.review_models import RewriteVerification
