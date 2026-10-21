@@ -8,7 +8,7 @@ from starlette.responses import JSONResponse
 
 from capstone_shared.contracts import ScaffoldResult
 from capstone_shared.settings import internal_token, required_env
-from .review_tools import functional_report, mfds_list, patents, structure
+from .review_tools import functional_report, functional_reports_by_name, mfds_list, patents, structure
 
 
 def create_server() -> FastMCP:
@@ -55,6 +55,14 @@ def create_server() -> FastMCP:
     async def verify_patent(patent_numbers: list[str]) -> list[dict]:
         """Query KIPRIS exact registration candidates; do not infer claim coverage."""
         return await patents(patent_numbers)
+
+    @mcp.tool(annotations={"readOnlyHint":True})
+    async def find_functional_reports(product_name: str, functional_approval_no: str | None = None) -> dict:
+        """Find MFDS functional cosmetic reports by product name (report number optional).
+        Returns exact name matches with reported functions (미백, 주름개선, 자외선차단) and efficacy text,
+        plus partial-name candidates. Use when an ad claims a functional effect or 식약처 심사/보고.
+        not_found means no report was located by this name, not that the product is unreported."""
+        return await functional_reports_by_name(product_name,functional_approval_no)
 
     @mcp.tool(annotations={"readOnlyHint":True})
     async def verify_gmp_company(company_name: str) -> dict:

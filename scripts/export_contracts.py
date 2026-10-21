@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from capstone_shared.contracts import SearchRulesInput, SearchRulesResult
-from capstone_shared.rag_contracts import PrecedentSearchResult, RegulationSearchResult
+from capstone_shared.rag_contracts import ClaimRulesResult, PrecedentSearchResult, RegulationSearchResult
 from capstone_shared.review_contracts import RunRequest, ResumeRequest, RewriteRequest, RewriteSuggestion, VerifyRewriteRequest, RewriteVerification, TextAssessment, VisualAssessment, ResultTile
 
 root = Path(__file__).resolve().parents[1]
@@ -17,6 +17,7 @@ for name, model in [
     ("search-rules.output.schema.json", SearchRulesResult),
     ("search-regulations.output.schema.json", RegulationSearchResult),
     ("search-precedents.output.schema.json", PrecedentSearchResult),
+    ("lookup-claim-rules.output.schema.json", ClaimRulesResult),
     ("mvp-agent-run.input.schema.json", RunRequest),
     ("mvp-agent-resume.input.schema.json", ResumeRequest),
     ("mvp-agent-rewrite.input.schema.json", RewriteRequest),

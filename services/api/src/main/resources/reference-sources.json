@@ -81,8 +81,17 @@
       "file": "S04.pdf",
       "source_type": "guideline",
       "collection": "mixed_rules_cases",
-      "page_ranges": null,
-      "note": "규정 쪽과 사례 쪽 페이지 범위를 확인해 page_ranges에 적기 전까지 적재하지 않는다."
+      "page_ranges": {
+        "rules": [
+          2,
+          7
+        ],
+        "cases": [
+          8,
+          27
+        ]
+      },
+      "note": "정책설명회 자료. 2~7쪽은 지침 개정사항과 판단 기준(rules), 8~27쪽은 위반사례(cases). 사례 쪽은 본문 대부분이 이미지라 제목 위주로 적재된다."
     }
   },
   {
@@ -125,15 +134,21 @@
     "notes": "Known candidate direct URL, not independently downloaded/verified in this environment. Use browser or API annex listing.",
     "candidate_download_url": "https://www.law.go.kr/flDownload.do?bylClsCd=110201&flSeq=157585857&gubun=",
     "acquisition": {
-      "method": "legalize_kr+pdf",
+      "method": "legalize_kr+lawapi",
       "paths": [
         "kr/화장품법/시행규칙.md"
       ],
-      "file": "S06.pdf",
       "source_type": "regulation",
       "collection": "rules",
-      "annex_pdf_url": "https://www.law.go.kr/LSW/flDownload.do?flSeq=162933359",
-      "note": "시행규칙 본문 조문(제22조 등)은 legalize-kr에서 오지만, 별표 5 표 본문은 Markdown에 없고 첨부 PDF 링크만 있다. 별표 5는 PDF로 따로 적재한다. URL은 legalize-kr 2026-03-31 공포본 front matter의 PDF링크다."
+      "lawapi": {
+        "target": "eflaw",
+        "name": "화장품법 시행규칙",
+        "articles": false,
+        "annexes": [
+          "5"
+        ]
+      },
+      "note": "시행규칙 조문은 legalize-kr, 별표 5는 법제처 API 본문에서 항목(호, 목) 단위로 적재한다."
     }
   },
   {
@@ -150,11 +165,15 @@
     "raw_available_in_bundle": false,
     "notes": "official page / downloadable binary needs local run; no original included",
     "acquisition": {
-      "method": "pdf",
-      "file": "S07.pdf",
+      "method": "lawapi",
       "source_type": "regulation",
       "collection": "rules",
-      "note": "식약처 고시(행정규칙). legalize-kr는 법률, 시행령, 시행규칙만 다룬다."
+      "lawapi": {
+        "target": "admrul",
+        "name": "화장품 표시\u00b7광고 실증에 관한 규정",
+        "annexes": null
+      },
+      "note": "식약처 고시. 별표의 표시광고 표현별 실증자료를 행 단위로 적재한다."
     }
   },
   {
@@ -171,11 +190,17 @@
     "raw_available_in_bundle": false,
     "notes": "official page / downloadable binary needs local run; no original included",
     "acquisition": {
-      "method": "pdf",
-      "file": "S08.pdf",
+      "method": "lawapi",
       "source_type": "regulation",
       "collection": "rules",
-      "note": "식약처 고시(행정규칙). legalize-kr는 법률, 시행령, 시행규칙만 다룬다."
+      "lawapi": {
+        "target": "admrul",
+        "name": "기능성화장품 심사에 관한 규정",
+        "annexes": [
+          "4"
+        ]
+      },
+      "note": "식약처 고시. 별표 1~3은 시험법이라 제외하고 별표 4(자료제출이 생략되는 기능성화장품 성분과 함량)만 적재한다."
     }
   },
   {
@@ -192,17 +217,43 @@
     "raw_available_in_bundle": false,
     "notes": "requires your LAW_OC key and live API lookup",
     "acquisition": {
-      "method": "pdf",
-      "file": "S09.pdf",
+      "method": "lawapi",
       "source_type": "law",
       "collection": "rules",
-      "alternative": {
-        "method": "legalize_kr",
-        "paths": [
-          "kr/표시ㆍ광고의공정화에관한법률/법률.md"
+      "lawapi": {
+        "target": "eflaw",
+        "name": "표시ㆍ광고의 공정화에 관한 법률",
+        "annexes": []
+      },
+      "note": "법률 전체 조문을 적재한다."
+    }
+  },
+  {
+    "id": "S10",
+    "title": "화장품 안전기준 등에 관한 규정",
+    "reported_version_date": "check_current",
+    "method": "admrul_api",
+    "official_page": "https://www.law.go.kr/LSW/admRulLsInfoP.do?admRulId=2100000276068",
+    "verified_direct_download_url": null,
+    "collection": "rules",
+    "provider": "law",
+    "preferred_attachment_keyword": "화장품 안전기준",
+    "source_verified": false,
+    "raw_available_in_bundle": false,
+    "notes": "성분 주장 대조용으로 추가. 사용할 수 없는 원료(별표 1)와 사용상 제한이 필요한 원료(별표 2).",
+    "acquisition": {
+      "method": "lawapi",
+      "source_type": "regulation",
+      "collection": "rules",
+      "lawapi": {
+        "target": "admrul",
+        "name": "화장품 안전기준 등에 관한 규정",
+        "annexes": [
+          "1",
+          "2"
         ]
       },
-      "note": "화장품법이 아니어서 PDF 경로로 분류했다. legalize-kr에도 같은 법률이 있어 method만 바꾸면 전환된다."
+      "note": "식약처 고시. 성분 주장이 금지 또는 제한 원료와 겹치는지 대조하는 데 쓴다."
     }
   }
 ]

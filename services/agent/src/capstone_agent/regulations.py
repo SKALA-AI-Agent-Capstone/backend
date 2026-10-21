@@ -1,20 +1,20 @@
-"""Legal basis lookup through rag-mcp search_regulations.
+"""Legal basis for each claim: rule-mapped provisions first, search as a supplement, cases as reference.
 
-The agent picks the query: the claim phrase plus statute wording for its claim
-type. A raw ad phrase rarely shares words with statute text, so the hint is what
-lets keyword retrieval reach 제13조 or 제14조. Hits are attached as citation
-candidates for the reviewer; the agent does not decide legality here.
+1. rag.lookup_claim_rules  the versioned claim rule table gives the exact provisions for the claim type
+                           and phrase (제13조 제1항제1호, 별표 5 제2호 가목 ...), linked provisions,
+                           substantiation rows and which cross-checks to run.
+2. rag.search_regulations  catches guideline and association text the rules do not name.
+3. rag.search_precedents   past violation cases, shown as unverified reference only.
+
+Hits are citation candidates for the reviewer. The agent does not decide legality here.
 """
 import asyncio
 from datetime import date
 import re
 
-from fastmcp import Client
-from fastmcp.client.transports import StreamableHttpTransport
+from .tools import McpTools
 
-from capstone_shared.settings import internal_token, required_env
-
-# Wording taken from 화장품법 제13조, 제14조 and 시행규칙 제2조.
+# Statute wording per claim type, used for the supplementary search query.
 CLAIM_HINTS = {
     "drug": "의약품으로 잘못 인식할 우려가 있는 표시 또는 광고",
     "wrinkle": "기능성화장품 주름개선 심사결과와 다른 표시 또는 광고",
@@ -25,11 +25,9 @@ CLAIM_HINTS = {
     "ingredient": "화장품 원료 성분 표시 기재",
     "patent": "표시ㆍ광고 내용의 실증 특허",
 }
-TOP_SIMILARITY = 0.25    # keep the best hit only if it shares this much statute wording
-EXTRA_SIMILARITY = 0.45  # further hits need a stronger match
-MAX_BASIS = 3
-PER_QUERY = 2
-MAX_FINDINGS = 40
+SEARCH_MIN_SIMILARITY = 0.45
+MAX_SEARCH_BASIS = 1
+PRECEDENT_MIN_SIMILARITY = 0.3
 SOURCE_TYPES = {"law": "law", "regulation": "law", "guideline": "guideline", "association": "association"}
 
 
@@ -37,121 +35,186 @@ def build_queries(finding: dict) -> list[str]:
     """One search per legal angle. Mixing two hints in one query dilutes both, so they run separately."""
     claim_type = finding.get("claimType", "")
     queries = [f"{finding['phrase']}\n{CLAIM_HINTS.get(claim_type, CLAIM_HINTS['exaggeration'])}"]
-    # A figure (90%, 7일) is a factual claim that must be substantiated, whatever its claim type.
     if claim_type != "clinical" and re.search(r"\d", finding["phrase"]):
         queries.append(f"{finding['phrase']}\n{CLAIM_HINTS['clinical']}")
     return queries
 
 
-def to_basis(hit: dict) -> dict:
+def to_basis(hit: dict, rule: dict | None = None) -> dict:
     """Map a RegulationHit to the frontend basis shape (BasisItem.vue)."""
-    article = hit.get("section") or (f"p.{hit['page']}" if hit.get("page") else "")
+    location = hit.get("section") or (f"p.{hit['page']}" if hit.get("page") else "")
+    article = " ".join(p for p in (location, hit.get("item")) if p)
+    if rule:
+        how = "주장 유형" if rule["matched_by"] == "claim_type" else "문구"
+        plain = (f"'{rule['label']}' 규칙에 따라 붙은 조항입니다 ({how}: {rule['matched_text']}). "
+                 "적용 여부와 위반 판단은 담당자가 원문으로 확인합니다.")
+    else:
+        plain = "검색으로 찾은 관련 기준 후보입니다. 적용 여부와 위반 판단은 담당자가 원문으로 확인합니다."
     return {
         "sourceId": hit["document_key"],
         "sourceType": SOURCE_TYPES.get(hit.get("source_type", ""), "law"),
         "sourceName": hit["source"],
         "article": article,
-        "plain": "광고 주장과 관련된 조문 후보입니다. 적용 여부와 위반 판단은 담당자가 원문으로 확인합니다.",
+        "plain": plain,
         "original": hit["excerpt"],
         "version": hit["version"],
         "revisedAt": hit.get("effective_from"),
         "scope": hit.get("scope"),
         "sourceUrl": hit.get("source_url"),
         "similarity": hit.get("similarity"),
-        "retrieval": "rag-mcp search_regulations",
+        "retrieval": hit.get("retrieval", "search"),
+        "ruleId": rule["rule_id"] if rule else None,
+        "related": [{"sourceName": r["source"], "article": r.get("section"), "relation": r["relation"],
+                     "original": r["excerpt"], "version": r["version"], "sourceUrl": r.get("source_url")}
+                    for r in hit.get("related", [])],
     }
 
 
 def select_hits(hits: list[dict]) -> list[dict]:
-    selected = []
-    for index, hit in enumerate(hits):
-        limit = TOP_SIMILARITY if index == 0 else EXTRA_SIMILARITY
-        if hit.get("similarity", 0) >= limit:
-            selected.append(hit)
-        if len(selected) == PER_QUERY:
-            break
-    return selected
+    return [h for h in hits if h.get("similarity", 0) >= SEARCH_MIN_SIMILARITY][:MAX_SEARCH_BASIS]
 
 
-def merge_hits(responses: list[dict]) -> list[dict]:
-    merged, seen = [], set()
-    for response in responses:
-        for hit in select_hits(response.get("hits", [])):
-            key = (hit["document_key"], hit.get("section"), hit.get("page"))
-            if key not in seen:
-                seen.add(key)
-                merged.append(hit)
-    return merged[:MAX_BASIS]
+async def basis_for(call, finding: dict, day: str) -> dict:
+    phrase, claim_type = finding["phrase"], finding.get("claimType")
+    rules, search, cases = await asyncio.gather(
+        call("rag", "lookup_claim_rules", {"phrase": phrase, "claim_type": claim_type, "review_date": day}),
+        call("rag", "search_regulations", {"query_text": build_queries(finding)[0], "top_k": 3, "review_date": day}),
+        call("rag", "search_precedents", {"query_text": phrase, "top_k": 2}),
+        return_exceptions=True)
+    statuses = [r.get("status") if isinstance(r, dict) else "SEARCH_ERROR" for r in (rules, search)]
+    basis, seen = [], set()
+    rule_view, evidence, checks, missing = [], [], set(), []
+    if isinstance(rules, dict):
+        for match in rules.get("matches", []):
+            rule_view.append({"id": match["rule_id"], "label": match["label"], "matchedBy": match["matched_by"],
+                              "matchedText": match["matched_text"], "checks": match["checks"], "missing": match["missing"]})
+            checks |= set(match["checks"])
+            missing += match["missing"]
+            evidence += [{**e, "ruleId": match["rule_id"]} for e in match["evidence_requirements"]]
+            for hit in match["provisions"]:
+                key = (hit["document_key"], hit.get("section"), hit.get("item"))
+                if key not in seen:
+                    seen.add(key)
+                    basis.append(to_basis(hit, match))
+    if isinstance(search, dict):
+        rule_articles = {(doc, section) for doc, section, _ in seen}
+        for hit in select_hits(search.get("hits", [])):
+            # The rule already cites this article (with its item); a search copy would only repeat it.
+            if (hit["document_key"], hit.get("section")) not in rule_articles:
+                seen.add((hit["document_key"], hit.get("section"), hit.get("item")))
+                basis.append(to_basis(hit))
+    references = []
+    if isinstance(cases, dict):
+        references = [{"id": f"{c['document_key']}:{c.get('page')}", "verified": False, "summary": c["excerpt"][:300],
+                       "source": c["source"], "page": c.get("page"), "sourceUrl": c.get("source_url"),
+                       "similarity": c.get("similarity")}
+                      for c in cases.get("hits", []) if c.get("similarity", 0) >= PRECEDENT_MIN_SIMILARITY]
+    if all(s == "SEARCH_ERROR" for s in statuses):
+        state = "failed"
+    elif all(s == "CORPUS_NOT_INDEXED" for s in statuses):
+        state = "not_indexed"
+    else:
+        state = "basis_found" if basis else "no_match"
+    return {"basis": basis, "rules": rule_view, "evidence": evidence, "checks": sorted(checks), "missing": missing,
+            "references": references, "state": state}
 
 
-async def search_basis(findings: list[dict], *, review_date: date | None = None, call=None) -> dict:
-    """Return {"findings": [...with basis], "status": ..., "snapshot": [...], "warnings": [...]}.
+SWEEP_CLAIM_TYPES = {"drug": "drug", "patent": "patent", "substantiation": "clinical", "absolute_comparison": "absolute"}
 
-    status: connected (searched), not_indexed (rag-mcp has no corpus), error (rag-mcp unreachable),
-    skipped (no claims to search).
+
+def squeeze(text: str) -> str:
+    return re.sub(r"\s+", "", text or "")
+
+
+async def sweep_findings(call, texts: list[dict], findings: list[dict]) -> list[dict]:
+    """Add OCR lines that match a high-signal rule but that the model did not extract (NFR-2: recall first).
+
+    The phrase is the whole OCR line, so it is grounded in the ad text like model findings are.
     """
-    if not findings:
-        return {"findings": findings, "status": "skipped", "snapshot": [], "warnings": []}
+    if not texts:
+        return []
+    result = await call("rag", "scan_claim_lines", {"lines": [t["text"] for t in texts]})
+    known = [squeeze(f["phrase"]) for f in findings]
+    added = []
+    for match in result.get("matches", []):
+        line, source = match["line"].strip(), texts[match["index"]]
+        compact = squeeze(line)
+        if not compact or any(k and (k in compact or compact in k) for k in known):
+            continue
+        # The same figure or expression already sits in another claim (often an OCR-noisy duplicate line).
+        if all(any(squeeze(token) in k for k in known) for token in match["matched"]):
+            continue
+        claim_type = next((SWEEP_CLAIM_TYPES[r] for r in match["rules"] if r in SWEEP_CLAIM_TYPES), None) or \
+            ("wrinkle" if "주름" in line else "whitening" if re.search("미백|기미", line) else "exaggeration")
+        known.append(compact)
+        added.append({"id": f"rule-{match['index']}", "phrase": line, "start": source["text"].find(line),
+                      "end": source["text"].find(line) + len(line), "location": source["location"], "textId": source["id"],
+                      "severity": "low", "baseSeverity": "low", "claimType": claim_type,
+                      "reason": f"규칙 패턴('{', '.join(match['matched'])}')에 해당하는 표현이라 확인이 필요합니다. 모델이 뽑지 않은 줄이어서 규칙으로 추가했습니다.",
+                      "title": "규칙으로 찾은 확인할 문구", "basis": [], "baseBasis": [], "confidence": None, "rewrites": [],
+                      "references": [], "category": "확인할 광고 주장", "legalStatus": "not_evaluated", "escalation": None,
+                      "source": "rule_sweep"})
+    return added
+
+
+async def run_all(call, findings: list[dict], day: str) -> list[dict]:
+    limit = asyncio.Semaphore(6)
+
+    async def one(finding):
+        async with limit:
+            return await basis_for(call, finding, day)
+    return await asyncio.gather(*(one(f) for f in findings))
+
+
+async def legal_basis(findings: list[dict], *, review_date: date | None = None, call=None, texts: list[dict] | None = None) -> dict:
+    """Return {"findings": [...], "status": connected|not_indexed|error|skipped, "snapshot": [...], "warnings": [...]}.
+
+    Every finding is searched; there is no count limit (a cap once skipped the riskiest late claims).
+    """
     day = (review_date or date.today()).isoformat()
-    targets = findings[:MAX_FINDINGS]
-    jobs = [(index, query) for index, finding in enumerate(targets) for query in build_queries(finding)]
-    results: list[dict | None] = [None] * len(jobs)
 
-    async def run(client_call):
-        limit = asyncio.Semaphore(4)
-
-        async def one(position, query):
-            async with limit:
-                try:
-                    results[position] = await client_call("search_regulations",
-                        {"query_text": query, "top_k": 3, "review_date": day})
-                except Exception:
-                    results[position] = None
-        await asyncio.gather(*(one(position, query) for position, (_, query) in enumerate(jobs)))
+    async def run(session_call):
+        swept = []
+        if texts:
+            try:
+                swept = await sweep_findings(session_call, texts, findings)
+            except Exception:
+                swept = []
+        combined = findings + swept
+        return combined, (await run_all(session_call, combined, day) if combined else [])
 
     try:
-        if call is not None:
-            await run(call)
+        if call is None:
+            async with McpTools(servers=("rag",)) as session_call:
+                findings, results = await run(session_call)
         else:
-            transport = StreamableHttpTransport(required_env("RAG_MCP_URL"), auth=internal_token())
-            async with asyncio.timeout(60):
-                async with Client(transport) as client:
-                    async def client_call(name, arguments):
-                        response = await client.call_tool(name, arguments)
-                        if response.is_error:
-                            raise RuntimeError("RAG_TOOL_FAILED")
-                        return response.structured_content
-                    await run(client_call)
+            findings, results = await run(call)
     except Exception:
-        return {"findings": findings, "status": "error", "snapshot": [],
-                "warnings": ["LEGAL_SEARCH_UNAVAILABLE"]}
-
-    statuses = [r.get("status") if r else "SEARCH_ERROR" for r in results]
-    if statuses and all(s == "CORPUS_NOT_INDEXED" for s in statuses):
-        return {"findings": findings, "status": "not_indexed", "snapshot": [],
-                "warnings": ["LEGAL_CORPUS_NOT_INDEXED"]}
-    if all(s == "SEARCH_ERROR" for s in statuses):
+        return {"findings": findings, "status": "error", "snapshot": [], "warnings": ["LEGAL_SEARCH_UNAVAILABLE"]}
+    if not findings:
+        return {"findings": findings, "status": "skipped", "snapshot": [], "warnings": []}
+    states = [r["state"] for r in results]
+    if all(s == "not_indexed" for s in states):
+        return {"findings": findings, "status": "not_indexed", "snapshot": [], "warnings": ["LEGAL_CORPUS_NOT_INDEXED"]}
+    if all(s == "failed" for s in states):
         return {"findings": findings, "status": "error", "snapshot": [], "warnings": ["LEGAL_SEARCH_FAILED"]}
-
-    searched: dict[int, list[dict]] = {}
-    for (index, _), result in zip(jobs, results):
-        if result is not None and result.get("status") not in ("SEARCH_ERROR", "CORPUS_NOT_INDEXED"):
-            searched.setdefault(index, []).append(result)
     enriched, snapshot, warnings = [], {}, []
-    for index, finding in enumerate(findings):
-        if index not in searched:
-            enriched.append({**finding, "legalSearch": "failed" if index < len(targets) else "not_searched"})
-            continue
-        hits = merge_hits(searched[index])
-        basis = [to_basis(hit) for hit in hits]
-        for hit in hits:
-            snapshot[(hit["source"], hit["version"])] = {"name": hit["source"], "version": hit["version"],
-                                                          "revisedAt": hit.get("effective_from")}
-        enriched.append({**finding, "basis": basis, "baseBasis": basis,
-                         "legalSearch": "basis_found" if basis else "no_match",
-                         "title": "법령 근거 후보와 대조할 문구" if basis else finding.get("title")})
-    if any(s == "SEARCH_ERROR" for s in statuses):
+    for finding, result in zip(findings, results):
+        for item in result["basis"]:
+            snapshot[(item["sourceName"], item["version"])] = {"name": item["sourceName"], "version": item["version"],
+                                                               "revisedAt": item.get("revisedAt")}
+        enriched.append({**finding, "basis": result["basis"], "baseBasis": result["basis"], "rules": result["rules"],
+                         "evidenceRequirements": result["evidence"], "requiredChecks": result["checks"],
+                         "references": result["references"] or finding.get("references", []),
+                         "legalSearch": result["state"] if result["state"] in ("basis_found", "no_match") else "failed",
+                         "title": "법령 근거 후보와 대조할 문구" if result["basis"] else finding.get("title")})
+        if result["missing"]:
+            warnings.append("LEGAL_RULE_PROVISION_NOT_LOADED")
+    if any(r["state"] == "failed" for r in results):
         warnings.append("LEGAL_SEARCH_PARTIAL")
-    if len(findings) > MAX_FINDINGS:
-        warnings.append(f"LEGAL_SEARCH_LIMITED_TO_{MAX_FINDINGS}")
-    return {"findings": enriched, "status": "connected", "snapshot": list(snapshot.values()), "warnings": warnings}
+    return {"findings": enriched, "status": "connected", "snapshot": list(snapshot.values()),
+            "warnings": list(dict.fromkeys(warnings))}
+
+
+# Older name used by rewrite_phrase and tests.
+search_basis = legal_basis

@@ -84,11 +84,10 @@ def test_keyword_rank_finds_the_article_about_medicine_like_claims():
 def test_every_source_has_a_single_acquisition_route():
     sources = json.loads((ROOT / "services/api/src/main/resources/reference-sources.json").read_text(encoding="utf-8"))
     routes = {s["id"]: s["acquisition"]["method"] for s in sources}
-    assert routes["S05"] == "legalize_kr"
-    assert routes["S06"] == "legalize_kr+pdf"
-    assert {routes[i] for i in ["S01", "S02", "S03", "S04", "S07", "S08", "S09"]} == {"pdf"}
-    assert all(p.startswith("kr/화장품법/") for s in sources if "legalize_kr" in s["acquisition"]["method"]
-               for p in s["acquisition"]["paths"])
+    assert routes["S05"] == "legalize_kr" and routes["S06"] == "legalize_kr+lawapi"
+    assert {routes[i] for i in ["S01", "S02", "S03", "S04"]} == {"pdf"}
+    assert {routes[i] for i in ["S07", "S08", "S09", "S10"]} == {"lawapi"}
+    assert all(s["acquisition"]["lawapi"]["name"] for s in sources if "lawapi" in s["acquisition"]["method"])
 
 
 async def test_regulation_search_reports_a_database_failure_instead_of_an_empty_result():
@@ -121,13 +120,12 @@ def test_pdf_source_keeps_pages_and_mixed_documents_need_page_ranges(tmp_path):
     from capstone_rag_mcp.ingest import from_pdf
 
     sources = json.loads((ROOT / "services/api/src/main/resources/reference-sources.json").read_text(encoding="utf-8"))
-    s06 = next(s for s in sources if s["id"] == "S06")
-    path = tmp_path / "S06.pdf"
+    s01 = next(s for s in sources if s["id"] == "S01")
+    path = tmp_path / "S01.pdf"
     path.write_bytes(b"synthetic test bytes")
-    doc = from_pdf(s06, path, pages=["", "별표 5 화장품 표시ㆍ광고의 범위 및 준수사항"])
-    assert doc.document_key == "pdf:S06"
-    assert doc.collection == "rules" and doc.source_type == "regulation"
+    doc = from_pdf(s01, path, pages=["", "1. 적용 범위\n이 지침은 화장품 표시 광고에 적용한다."])
+    assert doc.document_key == "pdf:S01"
+    assert doc.collection == "rules" and doc.source_type == "guideline"
     assert [c["page_from"] for c in doc.chunks] == [2]
-    assert doc.source_url.startswith("https://www.law.go.kr/")
     s04 = next(s for s in sources if s["id"] == "S04")
-    assert s04["acquisition"]["page_ranges"] is None
+    assert s04["acquisition"]["page_ranges"] == {"rules": [2, 7], "cases": [8, 27]}

@@ -8,6 +8,8 @@ COPY packages ./packages
 COPY services/agent ./services/agent
 COPY services/business-mcp ./services/business-mcp
 COPY services/rag-mcp ./services/rag-mcp
+# Source registry for the corpus batch (rag-ingest). PDFs come from the mounted ./data folder or are downloaded.
+COPY services/api/src/main/resources/reference-sources.json ./registry/reference-sources.json
 RUN uv sync --all-packages --frozen --no-dev
 RUN useradd --create-home --uid 10001 capstone
 USER capstone

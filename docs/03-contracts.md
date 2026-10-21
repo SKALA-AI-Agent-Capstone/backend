@@ -38,7 +38,7 @@
 | 전체 이력 삭제 | DELETE /api/v1/reviews | 사용자 확인 UI |
 | 재검토 | POST /api/v1/reviews/{reviewId}/re-review | 생략된 파일을 부모 건에서 재사용하는 규칙 협의 |
 | 테스트 결제 설정 | GET /api/v1/billing/config | 테스트 키 구성 여부, 토스 공개 클라이언트 키, 활성 금액권 목록(packages)과 검사 비용(reviewCost) |
-| 크레딧 잔액 | GET /api/v1/billing/balance | 로그인 회원의 app.users.credit_balance, JWT 회원·기업 범위 |
+| 크레딧 잔액 | GET /api/v1/billing/balance | 로그인 회원의 app.users.credit_balance, JWT 회원, 기업 범위 |
 | 검사 크레딧 기록 | GET /api/v1/billing/reviews/{reviewId}/charge?versionNo={no} | 로그인 회원 자신의 버전별 차감 금액과 상태. 기록이 없으면 charged=false |
 | 충전 주문 | POST /api/v1/billing/orders | credits와 method(toss), 가격은 서버에서 확정 |
 | 토스 테스트 승인 | POST /api/v1/billing/orders/{orderId}/confirm-toss | paymentKey 및 금액 대조 후 1회 적립 |
@@ -82,6 +82,10 @@ EvidenceFile의 필드는 노션에서 타입 이름과 PDF 또는 이미지 참
 | business.match_patent_claims | patent: PatentVerifyResult, ad_claims: 문자열 목록 | PatentClaimMatchResult | registered 결과만 대조. 현재 초안은 명칭과 초록 및 IPC 범위 |
 | rag.search_regulations | query_text: 문자열, top_k=5 | RegulationHit 목록 | 컬렉션 A의 법령과 기준만 검색 |
 | rag.search_precedents | query_text: 문자열, top_k=3 | PrecedentHit 목록 | 컬렉션 B 사례만 보조 검색, verified=False 고정 |
+| rag.lookup_claim_rules | phrase, claim_type=None, review_date=None | ClaimRulesResult | 2026-10-21 추가. 규칙표(claim_rules.json)로 정해진 현행 조항, 호, 연결 조항, 실증 별표 행, 실행할 대조를 돌려준다 |
+| rag.scan_claim_lines | lines: 문자열 목록 | 규칙 패턴에 걸린 줄 목록 | 2026-10-21 추가. 모델이 놓친 고위험 줄 보충용. DB를 쓰지 않는다 |
+| rag.check_ingredient_standard | ingredient, review_date=None | prohibited, restricted, not_listed | 2026-10-21 추가. 화장품 안전기준 별표 1, 2를 표 행 단위로 정확 대조 |
+| business.find_functional_reports | product_name, functional_approval_no=None | 정확 일치와 후보 보고품목, 기능 | 2026-10-21 추가. 보고번호 없이 제품명으로 조회하고 효능효과 문구로 기능을 판별 |
 | business.verify_gmp_company | company_name | 상태와 일치 업체 목록 | 2026-10-20 추가. 식약처 GMP 적합 업체현황(API03) 보조 확인 |
 | business.lookup_ingredient_regulation | ingredient_name | 상태와 일치 성분 목록 | 2026-10-20 추가. 식약처 화장품 규제정보(API04)의 금지 및 제한 국가 |
 
