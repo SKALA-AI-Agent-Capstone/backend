@@ -96,6 +96,13 @@ status는 FOUND, NO_RELEVANT_EVIDENCE, CORPUS_NOT_INDEXED, SEARCH_ERROR다. 뒤�
 RegulationHit에는 노션 필드 외에 document_key, section, page, source_url, acquisition, effective_from, effective_until을 더했다.
 search_regulations는 선택 인자 review_date를 받아 그날 시행 중인 법령 버전만 찾는다. 이 봉투와 추가 필드는 Agent 담당의 확인이 필요한 제안이다.
 기존 v0.1 search_rules, search_cases, get_evidence는 호환을 위해 그대로 둔다.
+
+rag-mcp Resource는 모델이 아니라 앱(근거 패널)이 고르는 읽기 전용 원문이다. 검색 도구는 발췌를 돌려주고 Resource는 적재한 원문 전체를 돌려준다.
+
+| Resource | 반환 | 비고 |
+| --- | --- | --- |
+| regulation://corpus | documents: document_version_id, document_key, title, 버전, 시행일, 조각 수 | 원문을 읽을 id 목록. /health/corpus와 같은 목록 |
+| regulation://documents/{document_version_id} | 제목, 버전, source_url, 시행일과 sections(section, page, text) 목록 | 적재 순서 그대로의 원문. 없는 id와 DB 장애는 ResourceError |
 GMP와 규제정보 API는 검색 인자가 없어 최대 20쪽(2,000건)을 훑어 이름으로 거르고, 다 못 훑으면 incomplete를 반환한다.
 
 ### RAG 반환 필드
@@ -296,6 +303,7 @@ findings와 visualFindings의 각 항목은 대표 구간 하나의 tileId를 �
 result.evidence는 documents(문서별 id, name, docType, pages, scannedPages, characters, text), failures(documentId, name, code, page), summaries(문서별 시험 요약), claimMatches(findingId, documentId, documentName, verdict, reason, needed)를 가진다. verdict는 supports, different_test, condition_mismatch, not_covered 중 하나이고, 실증 대조 check의 status는 evidence_supports, evidence_mismatch, evidence_conditions, evidence_not_covering, evidence_unread가 된다.
 문구 finding의 rewrites에는 규칙 검사와 모델 검증을 통과한 수정안만 들어간다. 통과한 수정안이 없으면 rewrites는 비고 rewriteNote에 마지막 실패 이유를 남긴다.
 이 필드가 추가되기 전에 저장된 결과에는 tiles와 tileId가 없으므로 소비자는 두 필드가 없는 경우를 기존 표시로 처리한다.
+LangSmith trace가 켜진 실행은 result.traceId(LangSmith run id)를 가진다. 꺼져 있으면 필드가 없다.
 retrievalStatus는 connected, not_indexed, error, skipped(문구 없음) 중 하나이고, 이전 결과에는 not_connected가 남아 있다. legalStatus는 not_evaluated로 유지한다.
 basis와 standardsSnapshot은 rag-mcp 검색 결과로만 채우며, finding.legalSearch(basis_found, no_match, failed, not_searched)로 문구별 상태를 남긴다.
 현재 PDF 리포트는 DB 결과를 읽는 프론트의 인쇄/PDF 저장이다. 서버 PDF 바이너리 엔드포인트와 SSE, 배치, 과금은 후속이다.

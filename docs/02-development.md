@@ -32,6 +32,7 @@ bootstrap은 .env의 누락된 설정만 보충하고 기존 비밀번호를 바
 | --- | --- | --- |
 | OPENAI_API_KEY | Agent | 실제 문구 모델과 사진 VLM 호출 |
 | TEXT_MODEL, VISION_MODEL | Agent | 기본 gpt-5.4-mini, 사용 계정의 모델 권한 확인 필요 |
+| MODEL_MAX_RETRIES, FALLBACK_TEXT_MODEL, FALLBACK_VISION_MODEL | Agent | 선택. 429, 5xx, 연결 오류는 기본 2회 재시도하고, 대체 모델을 적으면 그 뒤 한 번 더 시도한다. 비우면 해당 경로가 partial로 남는다 |
 | MFDS_SERVICE_KEY, MFDS_REPORT_URL | Business MCP | 공식 getRptPrdlstInq01 기본 주소 제공, 키와 정상 실응답 검증 필요 |
 | KIPRIS_SERVICE_KEY | Business MCP | KIPRIS Plus 해당 오퍼레이션 이용 권한 |
 | KIPRIS_WORD_SEARCH_URL | Business MCP | 공식 getWordSearch 경로 기본값, 청구항 원문 경로가 아님 |
@@ -41,6 +42,8 @@ bootstrap은 .env의 누락된 설정만 보충하고 기존 비밀번호를 바
 | INTERNAL_SERVICE_TOKEN | 서버 간 | bootstrap이 생성하는 내부 인증 토큰 |
 | DB 및 REDIS 비밀번호 | 서비스별 | bootstrap이 생성, 프론트에 전달하지 않음 |
 | LAW_OC | 향후 RAG 수집 배치 | 법제처 XML 수집을 선택하는 경우 |
+| LANGSMITH_TRACING, LANGSMITH_API_KEY, LANGSMITH_PROJECT, LANGSMITH_ENDPOINT | Agent | 선택. 둘 다 있을 때만 LangSmith로 노드, 도구, 모델 호출 trace를 보낸다. 실행마다 review_id 메타데이터와 result.traceId가 남는다. trace는 LANGSMITH_PROJECT(기본 beauty-capstone) 프로젝트에 쌓인다. LangSmith agent 주소(LANGSMITH_AGENT_ID, LANGSMITH_AGENT_ENVIRONMENT)는 프로젝트와 함께 쓸 수 없어 컨테이너에 넘기지 않는다 |
+| LANGSMITH_HIDE_INPUTS, LANGSMITH_HIDE_OUTPUTS | Agent | 기본 true. trace는 외부로 나가므로 광고 문구, 증빙과 이미지를 숨기고 경로, 지연, 토큰과 오류만 남긴다. 합성 자료로 로컬 디버깅할 때만 false |
 
 PDF 문자 추출, Tesseract 한국어 OCR와 Pillow 타일 분할에는 외부 API 키가 없다.
 키가 없어도 로그인, 업로드, 로컬 추출, 저장과 승인 연결을 확인할 수 있다. AI 분석 성공을 흉내 내지는 않는다.

@@ -514,3 +514,58 @@ def test_ocr_typos_in_an_institution_name_are_not_a_mismatch():
     assert same_institution("*연구기관 : (주)프로봄 피부임상연구센터", "㈜프로브엠 피부임상연구센터")
     assert same_institution("*연구기관: (주)프로렙 피부임상연구센터", "㈜프로브엠 피부임상연구센터")
     assert not same_institution("*연구기관: 한국피부과학연구원", "㈜프로브엠 피부임상연구센터")
+
+
+def _api_error(cls, status):
+    import httpx
+    response = httpx.Response(status, request=httpx.Request("POST", "https://api.openai.com/v1/responses"))
+    return cls("synthetic", response=response, body=None)
+
+
+async def test_provider_tries_fallback_model_only_for_retryable_failures(monkeypatch):
+    import openai
+    from capstone_agent.review_engine import Provider
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-real")
+    monkeypatch.setenv("TEXT_MODEL", "primary-model")
+    monkeypatch.setenv("FALLBACK_TEXT_MODEL", "fallback-model")
+    monkeypatch.setenv("MODEL_MAX_RETRIES", "2")
+    provider = Provider()
+    assert provider.client.max_retries == 2
+    calls = []
+    class Responses:
+        def __init__(self, error):
+            self.error = error
+        async def parse(self, *, model, **kwargs):
+            calls.append(model)
+            if model == "primary-model":
+                raise self.error
+            class Done:
+                output_parsed = OcrCorrection(lines=["대체 모델 결과"])
+            return Done()
+    class FakeClient:
+        def __init__(self, error):
+            self.responses = Responses(error)
+    provider.client = FakeClient(_api_error(openai.RateLimitError, 429))
+    result = await provider.parse("합성", OcrCorrection, text="합성")
+    assert result.lines == ["대체 모델 결과"] and calls == ["primary-model", "fallback-model"]
+
+    calls.clear()
+    provider.client = FakeClient(_api_error(openai.BadRequestError, 400))
+    try:
+        await provider.parse("합성", OcrCorrection, text="합성")
+    except openai.BadRequestError:
+        pass
+    else:
+        raise AssertionError("a bad request must not be retried on another model")
+    assert calls == ["primary-model"]
+
+    calls.clear()
+    monkeypatch.setenv("FALLBACK_TEXT_MODEL", "")
+    provider.client = FakeClient(_api_error(openai.InternalServerError, 503))
+    try:
+        await provider.parse("합성", OcrCorrection, text="합성")
+    except openai.InternalServerError:
+        pass
+    else:
+        raise AssertionError("without a fallback model the provider error must surface")
+    assert calls == ["primary-model"]
