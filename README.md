@@ -5,14 +5,14 @@ Python Agent와 Business MCP, RAG MCP는 형제 `ai_agent` 저장소에 있다. 
 
 ## 저장소와 통합 실행
 
-세 저장소를 같은 상위 폴더에 둔다. 이식 기간에는 backend와 ai_agent의 `refactor/service-repository-boundaries` 브랜치를 사용한다.
+세 저장소를 같은 상위 폴더에 둔다. backend와 ai_agent의 main을 사용한다.
 Frontend는 기존 main을 그대로 사용한다. backend의 `ai-agent.ref`에는 검증한 AI 커밋이 기록된다.
 
 ```sh
 mkdir beauty-capstone
 cd beauty-capstone
-git clone --branch refactor/service-repository-boundaries https://github.com/SKALA-AI-Agent-Capstone/backend.git
-git clone --branch refactor/service-repository-boundaries https://github.com/SKALA-AI-Agent-Capstone/ai_agent.git
+git clone --branch main https://github.com/SKALA-AI-Agent-Capstone/backend.git
+git clone --branch main https://github.com/SKALA-AI-Agent-Capstone/ai_agent.git
 git clone https://github.com/SKALA-AI-Agent-Capstone/frontend.git
 cd ai_agent
 git checkout $(cat ../backend/ai-agent.ref)
@@ -67,4 +67,4 @@ Backend의 Python 파일은 환경 생성과 Java 실행, 개발환경 회귀 �
 공개 출처 목록은 ai_agent/resources가 원본이며 Spring의 resources는 배포용 스냅샷이다.
 AI의 `scripts/check_backend_registry.py --backend ../backend`로 일치를 검사한다.
 한쪽 저장소의 PR만으로 호환 버전이 달라지지 않도록 연결 변경과 AI 고정 커밋을 함께 검토한다.
-이식 브랜치는 push까지만 하며 PR과 main 병합은 사용자 요청 후 수행한다.
+후속 작업은 각 저장소의 main에서 기능 브랜치를 만들고 PR로 검토한다.
