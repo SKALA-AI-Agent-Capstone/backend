@@ -73,8 +73,13 @@ docs는 두 저장소의 공통 구현 안내다. 프론트엔드에 문서 내�
 | services/rag-mcp | FastMCP 4.1.1 | 8003 |
 | infra/postgres | PostgreSQL 17, pgvector 0.8.7 | 55432 |
 | redis-cache | Redis 7.4, 원본 캐시 준비 | 56379 |
-| rabbitmq | RabbitMQ 4.3.6, queue 프로필 | 5672, 관리 UI 15672 |
+| rabbitmq | RabbitMQ 4.3.6, 검사 작업 알림과 실패 큐 | 5672, 관리 화면 15672 |
 | packages/shared | Pydantic 공통 계약과 연결 도우미 | 실행 서비스 아님 |
+
+Compose에서는 RabbitMQ 검사 대기열을 사용한다. 단독 API 실행에서는 기본값
+`REVIEW_QUEUE_ENABLED=false`로 기존 프로세스 내부 작업자를 사용한다.
+단독 실행에서 대기열을 검증하려면 RabbitMQ를 실행하고 `REVIEW_QUEUE_ENABLED=true` 및
+`RABBITMQ_*` 환경 변수를 설정한다. 대기 작업과 재시도 상태는 `app.review_jobs`에 저장된다.
 
 PostgreSQL 안에 벡터를 저장하므로 별도 Vector DB 서비스는 없다.
 각 팀원의 DB는 로컬에 따로 생성되며 GitHub에 데이터가 자동 공유되는 구조는 아니다.
