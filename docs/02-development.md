@@ -61,7 +61,7 @@ docker compose up -d agent business-mcp
 | Spring Boot | http://127.0.0.1:8080 | /api/v1, 업무 DB와 원본 관리 |
 | Agent | http://127.0.0.1:8001 | 내부 실행, HITL 재개 |
 | Business MCP | http://127.0.0.1:8002/mcp | 증빙과 외부 조회 |
-| RAG MCP | http://127.0.0.1:8003/mcp | 미구현 검색 stub |
+| RAG MCP | http://127.0.0.1:8003/mcp | legalize-kr 코퍼스는 pgvector 검색 연결, 나머지 출처는 적재 중 |
 | PostgreSQL | 127.0.0.1:55432 | app, agent와 knowledge |
 | Redis | 127.0.0.1:56379 | 원본 임시 캐시 |
 

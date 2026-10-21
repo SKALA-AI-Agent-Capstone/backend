@@ -100,11 +100,11 @@ finding에는 basis(규칙 조항 retrieval=rule, 보조 검색 retrieval=search
 | 단건 즉시 응답과 SSE | 접수 후 202, 인증된 1.5초 상태 폴링 |
 | 다건 Backend → Agent API → RabbitMQ → 내부 Worker | RabbitMQ 선택 프로필만 제공, 업무 발행과 Worker 없음 |
 | 한도 있는 Agent 도구선택 loop | 문구와 사진 분리 및 입력 조건에 따른 3개 Business 도구 호출 |
-| search_regulations, search_precedents | Handoff DB 계획과 출처 목록만 반영, 실제 수집과 검색 없음 |
+| search_regulations, search_precedents | legalize-kr 화장품법 코퍼스는 적재·임베딩과 pgvector 검색이 연결됨. 나머지 출처(PDF) 적재는 원문 확보 후 진행 중 |
 | 증빙 및 제품 주장 대조와 특허 청구항 대조 | 증빙 문자 추출과 조회 adapter까지만 구현 |
-| 사용량 이벤트와 별도 과금 원장 | 과금 비활성, 크레딧 0은 무료 서비스 보장이 아닌 미구현 표시 |
+| 사용량 이벤트와 별도 과금 원장 | app 스키마 내 Toss 테스트결제·크레딧 구매·리뷰당 크레딧 차감이 실제 동작. ERD v2의 judged_at 기준 reserve/charge/release와 별도 과금 DB 분리는 미구현 |
 | 서버 리포트 PDF | 브라우저 인쇄와 HTML 내보내기 |
-| violation 단위 HITL(위반 줄마다 원문유지/자동리라이트채택/직접수정) + review 전체 승인, 반려, 원본재업로드요청 결정 분리(2026-10-20 HITL 재설계) | review_engine.py의 단일 `interrupt()` 승인 1단계만 구현. `app.violations`/`app.violation_rewrites` 테이블은 V4 마이그레이션으로 이미 생성됐지만 Agent/결정 API/화면은 아직 `reviews.document` 기준 |
+| violation 단위 HITL(위반 줄마다 원문유지/자동리라이트채택/직접수정) + review 전체 승인, 반려, 원본재업로드요청 결정 분리(2026-10-20 HITL 재설계) | 구현됨. `app.violations`/`app.violation_rewrites`가 원본이며, decision/rewrite-requests REST API와 rewritten_manual 재검증(`/internal/rewrites/verify`)까지 Backend·Agent에 연결됐고 프론트(ViolationCard.vue/RevisionOptions.vue)도 해당 API를 호출함 |
 
 현재 실행 풀은 프로세스 재시작 후 대기 작업을 복구하지 않는다. 운영용 durable queue나 자동 장애 복구 구현으로 설명하지 않는다.
 다건의 목표는 접수 기록 저장 후 202, 승인 대기 checkpoint 저장 후 ACK, 승인 결정 저장 후 별도 재개 메시지다.

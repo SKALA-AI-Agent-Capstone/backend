@@ -16,7 +16,7 @@
 | 문구 예비검토 | Agent 문구 노드 | OpenAI Responses + Pydantic Structured Output | 원문에 존재하는 주장 후보와 확인 사유, 수정 제안 |
 | 사진 독립 검토 | Agent 사진 노드 | OpenAI 이미지 입력, 별도 프롬프트와 모델 응답 Schema | 시각적 관찰, 우려와 비교 조건의 한계 |
 | 증빙 읽기 | Business MCP | structure_evidence, 같은 순수 파서와 로컬 OCR | 증빙 원문과 실패 목록 |
-| 근거 검색 | 향후 RAG MCP | 공개 문서 버전과 pgvector | 현재 미연결 |
+| 근거 검색 | RAG MCP | 공개 문서 버전과 pgvector | legalize-kr 코퍼스는 연결됨, 나머지 출처는 적재 중 |
 
 광고 파싱과 Vision은 Agent다. 증빙 처리만 Business MCP 도구다.
 공통 파서 재사용을 위해 prepare_input이라는 새 필수 MCP를 만들지 않았다.
@@ -95,7 +95,7 @@ RAG를 연결할 때도 문구의 법령 근거와 사진의 관찰은 별도 �
 | 모델 키 없음 | text와 visual에 not_configured, 가짜 분석 결과 없음 |
 | 모델 실패 | 해당 경로 partial과 경고, 다른 결과 보존 |
 | 식약처 또는 KIPRIS 장애 | 해당 항목 error, 제품 부재나 위법으로 바꾸지 않음 |
-| RAG 미연결 | not_connected와 not_evaluated, 인용과 적합성 점수 없음 |
+| 미적재 출처 검색 | not_connected와 not_evaluated, 인용과 적합성 점수 없음(legalize-kr 코퍼스는 검색 연결됨) |
 | 캐시 만료 | 410 내부 원본 요청 오류, 새 파일 제출 |
 | 새 광고 버전 | 기존 승인을 복사하지 않고 새 pending |
 
