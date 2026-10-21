@@ -44,6 +44,7 @@ class VisualObservation(BaseModel):
 
 
 class VisualAssessment(BaseModel):
+    sectionTitle: str
     findings: list[VisualObservation]
     unreadable: bool
 
@@ -59,6 +60,8 @@ class ResultTile(BaseModel):
     fileName: str
     page: int = Field(ge=1)
     region: list[float] = Field(min_length=4, max_length=4)
+    # 구간 내용을 한 줄로 부른 이름(예: "임상 시험 결과"). 사진 경로가 실패하면 없다.
+    title: str | None = None
 
 
 class ResumeRequest(BaseModel):
@@ -93,6 +96,8 @@ class VerifyRewriteRequest(BaseModel):
     tenantId: str
     text: str = Field(min_length=1, max_length=2000)
     reason: str = Field(default="", max_length=4000)
+    # 지적된 원문. 있으면 원문의 규칙 표현이 남았는지, 새 주장이 들어갔는지까지 검사한다.
+    phrase: str = Field(default="", max_length=2000)
 
 
 class RewriteVerification(BaseModel):
