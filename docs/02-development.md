@@ -32,6 +32,7 @@ bootstrap은 .env의 누락된 설정만 보충하고 기존 비밀번호를 바
 | --- | --- | --- |
 | OPENAI_API_KEY | Agent | 실제 문구 모델과 사진 VLM 호출 |
 | TEXT_MODEL, VISION_MODEL | Agent | 기본 gpt-5.4-mini, 사용 계정의 모델 권한 확인 필요 |
+| MODEL_MAX_RETRIES, FALLBACK_TEXT_MODEL, FALLBACK_VISION_MODEL | Agent | 선택. 429, 5xx, 연결 오류는 기본 2회 재시도하고, 대체 모델을 적으면 그 뒤 한 번 더 시도한다. 비우면 해당 경로가 partial로 남는다 |
 | MFDS_SERVICE_KEY, MFDS_REPORT_URL | Business MCP | 공식 getRptPrdlstInq01 기본 주소 제공, 키와 정상 실응답 검증 필요 |
 | KIPRIS_SERVICE_KEY | Business MCP | KIPRIS Plus 해당 오퍼레이션 이용 권한 |
 | KIPRIS_WORD_SEARCH_URL | Business MCP | 공식 getWordSearch 경로 기본값, 청구항 원문 경로가 아님 |

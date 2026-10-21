@@ -2,6 +2,7 @@
 import asyncio
 from datetime import datetime, timezone
 import json
+import logging
 import os
 import re
 import time
@@ -12,6 +13,7 @@ from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import interrupt
+import openai
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
@@ -72,10 +74,22 @@ class ReviewState(TypedDict, total=False):
     reportReady: bool
 
 
+logger = logging.getLogger(__name__)
+
+# Provider failures worth another model: rate limits, 5xx and connection or timeout errors.
+# Bad requests and refusals would fail the same way on any model, so they are raised as is.
+RETRYABLE_MODEL_ERRORS = (openai.RateLimitError, openai.InternalServerError, openai.APIConnectionError)
+
+
 class Provider:
+    """Model calls for every node. The SDK retries 429, 5xx and connection errors with backoff
+    (MODEL_MAX_RETRIES, default 2). If the call still fails and FALLBACK_TEXT_MODEL or FALLBACK_VISION_MODEL
+    is set, it is tried once; otherwise the error reaches the node, which records partial or failed."""
+
     def __init__(self):
         key = os.getenv("OPENAI_API_KEY", "").strip()
-        self.client = AsyncOpenAI(api_key=key, timeout=50, max_retries=1) if key else None
+        retries = int(os.getenv("MODEL_MAX_RETRIES", "2"))
+        self.client = AsyncOpenAI(api_key=key, timeout=50, max_retries=retries) if key else None
         self.limit = asyncio.Semaphore(int(os.getenv("MODEL_CONCURRENCY", "2")))
 
     async def parse(self, prompt, schema, *, image=None, text=""):
@@ -84,11 +98,20 @@ class Provider:
         content = [{"type":"input_text", "text":text or "제공한 광고 영역을 분석하세요."}]
         if image:
             content.append({"type":"input_image", "image_url":image, "detail":"high"})
+        kind = "VISION" if image else "TEXT"
+        primary = os.getenv(f"{kind}_MODEL", "gpt-5.4-mini")
+        fallback = os.getenv(f"FALLBACK_{kind}_MODEL", "").strip()
+        request = {"input":[{"role":"system", "content":prompt}, {"role":"user", "content":content}],
+                   "text_format":schema, "store":False, "max_output_tokens":4500}
         async with self.limit:
-            response = await self.client.responses.parse(
-                model=os.getenv("VISION_MODEL" if image else "TEXT_MODEL", "gpt-5.4-mini"),
-                input=[{"role":"system", "content":prompt}, {"role":"user", "content":content}],
-                text_format=schema, store=False, max_output_tokens=4500)
+            try:
+                response = await self.client.responses.parse(model=primary, **request)
+            except RETRYABLE_MODEL_ERRORS as error:
+                if not fallback or fallback == primary:
+                    raise
+                logger.warning("model %s failed after retries (%s); trying fallback %s",
+                               primary, type(error).__name__, fallback)
+                response = await self.client.responses.parse(model=fallback, **request)
         if response.output_parsed is None:
             raise RuntimeError("MODEL_REFUSED_OR_INCOMPLETE")
         return response.output_parsed
