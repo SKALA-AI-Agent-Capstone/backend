@@ -129,7 +129,7 @@ class Provider:
         async with self.limit:
             response = await self.client.chat.completions.create(
                 model=os.getenv("TEXT_MODEL", "gpt-5.4-mini"), messages=messages,
-                tools=tools, tool_choice="auto", max_tokens=600)
+                tools=tools, tool_choice="auto", max_completion_tokens=600)
         return response.choices[0].message
 
 
@@ -574,6 +574,13 @@ async def select_business_tools(provider, state, request):
             message = await provider.call_with_tools(messages, BUSINESS_TOOL_SPECS)
         except Exception:
             warnings.append("TOOL_SELECTION_FAILED")
+            # The model could not choose (provider error). Run the structurally relevant tools that have not
+            # run yet, as the no-key path does, so a model outage does not silently skip the checks (NFR-16).
+            for name, usable in available.items():
+                if usable and name not in called:
+                    called.append(name)
+                    await invoke(name)
+                    trace.append({"tool": name, "called": True, "fallback": True})
             break
         tool_calls = message.tool_calls or []
         if not tool_calls:
