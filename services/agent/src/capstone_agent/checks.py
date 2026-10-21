@@ -111,8 +111,9 @@ def substantiation_check(finding: dict, evidence: dict, evidence_count: int, mat
         return check("substantiation", MATCH_STATUS[matched["verdict"]],
                      f"{matched.get('documentName') or '제출 증빙'}: {matched['reason']}{needed}",
                      source=source, detail={"requirements": rows, "match": matched})
-    if not evidence.get("documents"):
-        # 증빙을 읽지 못했다. 광고의 문제가 아니라 파일을 다시 확인할 일이다.
+    if not evidence.get("documents") and evidence.get("failures"):
+        # 증빙을 읽으려 했지만 실패했다. 광고의 문제가 아니라 파일을 다시 확인할 일이다.
+        # (도구 선택 loop가 증빙 도구를 부르지 않았으면 failures도 없으니 아래 evidence_submitted로 간다.)
         codes = ", ".join(sorted({f.get("code", "") for f in evidence.get("failures", [])})) or evidence.get("error") or "UNKNOWN"
         return check("substantiation", "evidence_unread",
                      f"제출한 증빙 {evidence_count}건을 읽지 못해 이 표현과 대조하지 못했습니다 ({codes}).",

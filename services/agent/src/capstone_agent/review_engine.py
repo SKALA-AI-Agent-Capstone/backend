@@ -102,7 +102,8 @@ class Provider:
         async with self.limit:
             response = await self.client.chat.completions.create(
                 model=os.getenv("TEXT_MODEL", "gpt-5.4-mini"), messages=messages,
-                tools=tools, tool_choice="auto", max_tokens=600)
+                # gpt-5 계열은 max_tokens를 400으로 거부한다. 거부되면 도구가 하나도 호출되지 않는다.
+                tools=tools, tool_choice="auto", max_completion_tokens=600)
         return response.choices[0].message
 
 

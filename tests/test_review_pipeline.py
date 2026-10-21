@@ -487,6 +487,8 @@ def test_substantiation_uses_the_claim_match_and_flags_unread_evidence():
     assert supported["status"] == "evidence_supports" and not supported["attention"]
     unread = substantiation_check(finding, {"documents": [], "failures": [{"code": "EVIDENCE_PAGE_LIMIT"}]}, 1)
     assert unread["status"] == "evidence_unread" and "EVIDENCE_PAGE_LIMIT" in unread["summary"]
+    not_read = substantiation_check(finding, {"status": "not_submitted"}, 1)
+    assert not_read["status"] == "evidence_submitted"  # the tool loop did not read it; that is not a read failure
 
 
 async def test_claim_match_keeps_only_known_claims_and_passes_ad_conditions():
@@ -505,3 +507,10 @@ async def test_claim_match_keeps_only_known_claims_and_passes_ad_conditions():
     result = await match(FakeProvider(), findings, summaries, ["*연구 기간 : 2024.12.30 ~ 2025.01.28 | 20명 대상 | 2주 후 비교", "촉촉한 크림"])
     assert set(result) == {"f"} and result["f"]["documentName"] == "r.pdf"
     assert "20명 대상" in seen["text"] and "촉촉한 크림" not in seen["text"]
+
+
+def test_ocr_typos_in_an_institution_name_are_not_a_mismatch():
+    from capstone_agent.evidence import same_institution
+    assert same_institution("*연구기관 : (주)프로봄 피부임상연구센터", "㈜프로브엠 피부임상연구센터")
+    assert same_institution("*연구기관: (주)프로렙 피부임상연구센터", "㈜프로브엠 피부임상연구센터")
+    assert not same_institution("*연구기관: 한국피부과학연구원", "㈜프로브엠 피부임상연구센터")
