@@ -4,6 +4,7 @@ Keyword ranking always runs, so the corpus is searchable before an embedding
 model is chosen. When chunks carry embeddings from the configured model, the
 two rankings are merged with reciprocal rank fusion.
 """
+import asyncio
 from collections import Counter
 from dataclasses import dataclass
 from datetime import date
@@ -17,6 +18,14 @@ from .embedding import Embedder
 
 MIN_COVERAGE = 0.12
 RRF_K = 60
+# Hybrid order. Three ways were measured on the same claims (docs/12-hybrid-retrieval.md, compare.py):
+# rrf      rank fusion of keyword and vector rankings (default). The agent attached relevant search evidence to
+#          13 of 14 claims, against 10 with keywords alone. Statutes it ranks lower are attached by the rules anyway.
+# confirm  keyword order, each hit carrying its cosine; vector-only hits after. Same top 3 as keywords alone.
+# cascade  strong keyword hits, then vector-only hits, then weak keyword hits. Lowest relevance; kept for the table.
+STRONG_KEYWORD = 0.45
+STRONG_VECTOR = 0.45
+VECTOR_WEIGHT = 1.0
 
 CANDIDATES_SQL = """
 WITH docs AS (
@@ -46,6 +55,8 @@ LIMIT %(limit)s
 class Ranked:
     row: dict
     similarity: float
+    keyword: float | None = None  # idf-weighted share of query bigrams found
+    vector: float | None = None   # cosine similarity with the query embedding
 
 
 def bigrams(text: str) -> list[str]:
@@ -70,24 +81,49 @@ def keyword_rank(query: str, rows: list[dict], *, k1: float = 1.2, b: float = 0.
                     for t in query_terms if t in terms)
         coverage = sum(idf[t] for t in query_terms if t in terms) / total_weight
         if coverage >= MIN_COVERAGE:
-            ranked.append((score, Ranked(row, round(coverage, 4))))
+            ranked.append((score, Ranked(row, round(coverage, 4), keyword=round(coverage, 4))))
     return [item for _, item in sorted(ranked, key=lambda pair: pair[0], reverse=True)]
 
 
-def fuse(keyword: list[Ranked], vector: list[Ranked]) -> list[Ranked]:
+def cascade(keyword: list[Ranked], vector: list[Ranked]) -> list[Ranked]:
+    """Keyword ranking leads; vectors confirm it (each keyword hit carries its cosine) and add what it missed."""
+    cosine = {v.row["chunk_id"]: v.vector for v in vector}
+    scored = [Ranked(k.row, max(k.keyword or 0, cosine.get(k.row["chunk_id"]) or 0), keyword=k.keyword,
+                     vector=cosine.get(k.row["chunk_id"])) for k in keyword]
+    found = {k.row["chunk_id"] for k in keyword}
+    strong = [r for r in scored if (r.keyword or 0) >= STRONG_KEYWORD]
+    added = [v for v in vector if v.row["chunk_id"] not in found and (v.vector or 0) >= STRONG_VECTOR]
+    weak = [r for r in scored if (r.keyword or 0) < STRONG_KEYWORD]
+    return strong + added + weak
+
+
+def confirm(keyword: list[Ranked], vector: list[Ranked]) -> list[Ranked]:
+    """Keyword order stays; every keyword hit carries its cosine so a semantically close match with weak word
+    overlap can still clear the agent's vector threshold. Strong vector-only hits come after the keyword hits."""
+    cosine = {v.row["chunk_id"]: v.vector for v in vector}
+    found = {k.row["chunk_id"] for k in keyword}
+    scored = [Ranked(k.row, max(k.keyword or 0, cosine.get(k.row["chunk_id"]) or 0), keyword=k.keyword,
+                     vector=cosine.get(k.row["chunk_id"])) for k in keyword]
+    return scored + [v for v in vector if v.row["chunk_id"] not in found and (v.vector or 0) >= STRONG_VECTOR]
+
+
+def fuse(keyword: list[Ranked], vector: list[Ranked], vector_weight: float = VECTOR_WEIGHT) -> list[Ranked]:
+    """Reciprocal rank fusion. Each result keeps both signals so callers can apply a threshold per scale."""
     scores: dict[str, float] = {}
-    best: dict[str, Ranked] = {}
-    for ranking in (keyword, vector):
+    merged: dict[str, Ranked] = {}
+    for ranking, weight in ((keyword, 1.0), (vector, vector_weight)):
         for position, item in enumerate(ranking):
             key = item.row["chunk_id"]
-            scores[key] = scores.get(key, 0) + 1 / (RRF_K + position + 1)
-            if key not in best or item.similarity > best[key].similarity:
-                best[key] = item
-    return [best[key] for key in sorted(scores, key=scores.get, reverse=True)]
+            scores[key] = scores.get(key, 0) + weight / (RRF_K + position + 1)
+            seen = merged.get(key)
+            k = item.keyword if item.keyword is not None else (seen.keyword if seen else None)
+            v = item.vector if item.vector is not None else (seen.vector if seen else None)
+            merged[key] = Ranked(item.row, max(x for x in (k, v) if x is not None), keyword=k, vector=v)
+    return [merged[key] for key in sorted(scores, key=scores.get, reverse=True)]
 
 
 async def search(dsn: str, *, collection: str, query: str, top_k: int, review_date: date,
-                 embedder: Embedder | None = None) -> tuple[str, list[Ranked], list[str]]:
+                 embedder: Embedder | None = None, order: str = "rrf") -> tuple[str, list[Ranked], list[str]]:
     """Return (mode, ranked, corpus_versions). Raises psycopg.Error on database failure.
 
     An empty candidate list means the collection has nothing indexed for the date.
@@ -101,15 +137,19 @@ async def search(dsn: str, *, collection: str, query: str, top_k: int, review_da
         keyword = keyword_rank(query, rows)
         if embedder is None:
             return "keyword", keyword[:top_k], corpus
+        # The query embedding is an API call (OpenAI) or model inference; keep it off the event loop.
+        query_vector = (await asyncio.to_thread(embedder.embed, [query]))[0]
         vector_rows = await (await conn.execute(VECTOR_SQL, {
-            "vector": str(embedder.embed([query])[0]), "ids": [row["chunk_id"] for row in rows],
+            "vector": str(query_vector), "ids": [row["chunk_id"] for row in rows],
             "model": embedder.model_name, "limit": max(top_k * 4, 20),
         })).fetchall()
         if not vector_rows:
             return "keyword", keyword[:top_k], corpus
         by_id = {row["chunk_id"]: row for row in rows}
-        vector = [Ranked(by_id[v["chunk_id"]], round(max(0.0, min(1.0, v["cosine"])), 4)) for v in vector_rows]
-        return "hybrid", fuse(keyword, vector)[:top_k], corpus
+        vector = [Ranked(by_id[v["chunk_id"]], c, vector=c)
+                  for v in vector_rows for c in [round(max(0.0, min(1.0, v["cosine"])), 4)]]
+        merged = {"confirm": confirm, "cascade": cascade}.get(order, fuse)(keyword, vector)
+        return "hybrid", merged[:top_k], corpus
 
 
 INVENTORY_SQL = """

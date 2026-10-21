@@ -26,7 +26,7 @@ from .retrieval import Ranked, corpus_inventory, document_text, search
 
 
 def regulation_hit(item: Ranked, related=None) -> RegulationHit:
-    return to_hit(item.row, similarity=item.similarity, related=related)
+    return to_hit(item.row, similarity=item.similarity, related=related, keyword=item.keyword, vector=item.vector)
 
 
 def create_server() -> FastMCP:
@@ -187,6 +187,7 @@ def create_server() -> FastMCP:
             return PrecedentSearchResult(status=RetrievalStatus.CORPUS_NOT_INDEXED,
                                          warnings=["No case collection is indexed yet."])
         hits = [PrecedentHit(source=item.row["title"], excerpt=item.row["body"], similarity=item.similarity,
+                             keyword_score=item.keyword, vector_score=item.vector,
                              document_key=item.row["document_key"], page=item.row["page_from"],
                              source_url=item.row["source_url"]) for item in ranked]
         return PrecedentSearchResult(

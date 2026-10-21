@@ -22,7 +22,7 @@ import httpx
 import psycopg
 
 from .embedding import load_embedder
-from .ingest import from_law, from_lawapi, from_lawapi_statute, from_pdf, read_pdf_pages, write
+from .ingest import embed_missing_all, from_law, from_lawapi, from_lawapi_statute, from_pdf, read_pdf_pages, write
 from .lawapi import LawApi
 from .legalize import fetch_versions
 from .links import rebuild_links
@@ -199,6 +199,14 @@ async def collect(command: str, as_of: date) -> tuple[list, list[dict]]:
 
 def run(command: str, *, as_of: date, corpus_version: str, dry_run=False, embed=False, if_empty=False) -> int:
     dsn = os.environ["RAG_INGEST_DATABASE_URL"]
+    if command == "embed" or (if_empty and embed and corpus_rows(dsn) > 0):
+        # Chunks already stored: give them vectors without downloading sources again.
+        embedder = load_embedder()
+        if embedder is None:
+            raise SystemExit("Set RAG_EMBEDDING_MODEL and install the ingest extra to embed.")
+        with psycopg.connect(dsn, connect_timeout=5) as conn:
+            print(json.dumps({"embed": embed_missing_all(conn, embedder, log=lambda row: print(json.dumps(row), flush=True))}))
+        return 0
     if if_empty and corpus_rows(dsn) > 0:
         print(json.dumps({"skipped": "corpus already loaded", "command": command}))
         return 0
@@ -227,7 +235,8 @@ def run(command: str, *, as_of: date, corpus_version: str, dry_run=False, embed=
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=["legalize", "lawapi", "pdf", "links", "all"])
+    parser.add_argument("command", choices=["legalize", "lawapi", "pdf", "links", "all", "embed"],
+                        help="embed: vectorize stored chunks that have none (no download)")
     parser.add_argument("--as-of", type=date.fromisoformat, default=date.today(),
                         help="Keep statute versions back to the one in force on this date.")
     parser.add_argument("--corpus-version", default=f"{date.today().isoformat()}.1")

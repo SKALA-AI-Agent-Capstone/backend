@@ -64,6 +64,34 @@
           "title": "Similarity",
           "type": "number"
         },
+        "keyword_score": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Keyword Score"
+        },
+        "vector_score": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Vector Score"
+        },
         "trust_level": {
           "const": "high",
           "default": "high",

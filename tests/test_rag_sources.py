@@ -130,3 +130,34 @@ def test_pdf_source_keeps_pages_and_mixed_documents_need_page_ranges(tmp_path):
     assert [c["page_from"] for c in doc.chunks] == [2]
     s04 = next(s for s in sources if s["id"] == "S04")
     assert s04["acquisition"]["page_ranges"] == {"rules": [2, 7], "cases": [8, 27]}
+
+
+def test_fusion_keeps_keyword_and_vector_scores_apart():
+    from capstone_rag_mcp.retrieval import Ranked, fuse
+    a, b, c = ({"chunk_id": key} for key in "abc")
+    keyword = [Ranked(a, 0.5, keyword=0.5), Ranked(b, 0.2, keyword=0.2)]
+    vector = [Ranked(c, 0.71, vector=0.71), Ranked(a, 0.66, vector=0.66)]
+    fused = fuse(keyword, vector)
+    assert [r.row["chunk_id"] for r in fused][0] == "a"  # found by both signals, ranked first
+    first = fused[0]
+    assert (first.keyword, first.vector, first.similarity) == (0.5, 0.66, 0.66)
+    only_vector = next(r for r in fused if r.row["chunk_id"] == "c")
+    assert only_vector.keyword is None and only_vector.vector == 0.71
+
+
+def test_agent_applies_a_threshold_per_signal():
+    from capstone_agent.regulations import relevant
+    assert relevant({"keyword_score": 0.5, "vector_score": 0.3}, 0.45, 0.6)
+    assert relevant({"keyword_score": 0.1, "vector_score": 0.62}, 0.45, 0.6)
+    assert not relevant({"keyword_score": 0.1, "vector_score": 0.55, "similarity": 0.55}, 0.45, 0.6)
+    assert relevant({"similarity": 0.5}, 0.45, 0.6)  # older server without split scores
+
+
+def test_confirm_order_keeps_keyword_ranking_and_adds_strong_vector_hits():
+    from capstone_rag_mcp.retrieval import Ranked, confirm
+    a, b, c, d = ({"chunk_id": key} for key in "abcd")
+    keyword = [Ranked(a, 0.5, keyword=0.5), Ranked(b, 0.2, keyword=0.2)]
+    vector = [Ranked(b, 0.62, vector=0.62), Ranked(c, 0.5, vector=0.5), Ranked(d, 0.3, vector=0.3)]
+    order = confirm(keyword, vector)
+    assert [r.row["chunk_id"] for r in order] == ["a", "b", "c"]  # d is below the vector threshold
+    assert order[1].keyword == 0.2 and order[1].vector == 0.62
