@@ -356,3 +356,19 @@ GET /api/v1/reviews/{id}/events로 중계한다. 프론트는 1.5초 폴링 대�
 - `uv run --all-packages --frozen pytest -q`: Python 88건 통과. 공통 계약 export 검사 통과. 변경한 mvp_smoke.py는 모델 미설정 결과의 예약분 반환을 기대하도록 갱신했으며 전체 Compose 스모크를 이번 작업에서 재실행하지 않았다.
 - 합성 API와 PNG를 사용하는 로컬 브라우저에서 잔액 요청 보류(업로드와 SSE 요청 0건) 중 모달 표시, 업로드 응답 보류 중 모달 표시와 중복 제출 방지, 502 후 같은 파일로 재시도, 202 후 SSE 응답 보류 중 상세 화면 모달 유지, 닫은 모달의 자동 재등장 방지와 재열기, snapshot 후 실시간 표시를 확인했다. 실계정, 실제 결제와 외부 모델은 사용하지 않았다.
 - Vercel과 Render 배포는 수행하지 않았다. 배포 환경에서 업로드와 SSE를 다시 확인해야 한다.
+
+## 2026-10-21 결정 후 Agent 재개 작업 큐
+
+승인 후 재개를 직접 HTTP 한 번에서 `app.review_jobs`(kind=resume) outbox와 RabbitMQ 작업으로 옮겼다(V14).
+
+- `mvn test` 55건 통과. 큐 단위 테스트 10건을 추가했다.
+  - 재개 성공 후 done과 ACK, 503의 재시도(크레딧과 버전 실패 처리 없음), 3번째 시도의 2분 간격
+  - 404 CHECKPOINT_NOT_FOUND의 즉시 실패와 DLQ, 5회 소진 실패, 이미 완료된 재개의 재전달, kind 없는 예전 메시지, 알 수 없는 kind 거부, 멈춘 재개와 분석 작업의 복구 분기
+- 통합 테스트 4건을 추가했다.
+  - 결정과 재개 작업이 한 트랜잭션인지(거절된 승인은 작업 없음), 승인 API가 Agent를 부르지 않는지
+  - 자동 승인 결과와 함께 재개 작업이 생기는지, 재개 실패가 hitl_status와 크레딧을 바꾸지 않는지, 재개 대기 중 SSE 스트림 유지
+- Python `pytest` 104건 통과, 1건 건너뜀. 재개 테스트 4건은 두 번째 재개의 alreadyResumed, 잠금 아래 동시 재개 1회 실행, 없는 checkpoint 404, 실제 PostgreSQL advisory lock 직렬화를 확인한다. 마지막 건은 `RESUME_LOCK_DATABASE_URL`이 있을 때만 실행되며 로컬 Compose DB로 통과했다.
+- 로컬 Compose(큐 켜짐)에서 합성 광고로 두 경로를 확인했다.
+  - 정상: 위반 3건을 원문 유지로 결정하고 승인했다. 승인 API는 0.07초에 `agentResume=pending`으로 응답했고, 재개 작업은 1.4초 뒤 1회 시도로 done, `agentResume=completed`가 됐다.
+  - 장애: Agent 컨테이너를 멈춘 뒤 승인했다. 승인 API는 0.13초에 응답했다. 재개는 연결 실패로 2회 재시도 상태가 됐다. Agent를 다시 켠 뒤 3번째 시도(30초 대기 후)에 done, `agentResume=completed`가 됐다. hitl_status는 approved, 크레딧은 charged로 그대로였다.
+- 화면의 재개 대기와 실패 표시는 프론트 `feat/resume-job-queue`의 `npm run build`까지만 확인했다.

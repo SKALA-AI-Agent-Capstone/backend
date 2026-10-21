@@ -22,7 +22,8 @@ class ReviewJobQueueTest {
     RabbitTemplate rabbit=mock(RabbitTemplate.class);
     ReviewService reviews=mock(ReviewService.class);
     Channel channel=mock(Channel.class);
-    ReviewJobQueue queue=new ReviewJobQueue(jdbc,rabbit,new ObjectMapper(),reviews);
+    ViolationService violations=mock(ViolationService.class);
+    ReviewJobQueue queue=new ReviewJobQueue(jdbc,rabbit,new ObjectMapper(),reviews,violations);
 
     Message message(){
         MessageProperties props=new MessageProperties();
@@ -30,7 +31,7 @@ class ReviewJobQueueTest {
         return new Message((ID+":1").getBytes(StandardCharsets.UTF_8),props);
     }
     @BeforeEach void setup(){
-        when(jdbc.queryForList(startsWith("UPDATE app.review_jobs SET status='running'"),eq(ID),eq(1)))
+        when(jdbc.queryForList(startsWith("UPDATE app.review_jobs SET status='running'"),eq(ID),eq(1),eq("run")))
             .thenReturn(List.of(Map.of("request","{\"reviewId\":\""+ID+"\",\"tenantId\":\"tenant\",\"versionNo\":1}",
                 "attempts",1)));
     }
@@ -39,28 +40,28 @@ class ReviewJobQueueTest {
         queue.consume(message(),channel);
         var order=inOrder(reviews,jdbc,channel);
         order.verify(reviews).runQueued(any());
-        order.verify(jdbc).update(startsWith("UPDATE app.review_jobs SET status='done'"),eq(ID),eq(1));
+        order.verify(jdbc).update(startsWith("UPDATE app.review_jobs SET status='done'"),eq(ID),eq(1),eq("run"));
         order.verify(channel).basicAck(7,false);
     }
 
     @Test void transientFailureSchedulesRetryAndAcknowledgesOriginal()throws Exception{
         doThrow(new IOException("temporary")).when(reviews).runQueued(any());
         queue.consume(message(),channel);
-        verify(jdbc).queryForList(contains("AND next_attempt_at<=now()"),eq(ID),eq(1));
-        verify(jdbc).update(contains("status='retry'"),eq(5),eq("IOException"),isNull(),eq(ID),eq(1));
+        verify(jdbc).queryForList(contains("AND next_attempt_at<=now()"),eq(ID),eq(1),eq("run"));
+        verify(jdbc).update(contains("status='retry'"),eq(5),eq("IOException"),isNull(),eq(ID),eq(1),eq("run"));
         verify(channel).basicAck(7,false);
         verify(reviews,never()).failQueued(anyString(),anyString(),anyInt());
     }
 
     @Test void exhaustedFailureReleasesCreditAndDeadLetters()throws Exception{
-        when(jdbc.queryForList(startsWith("UPDATE app.review_jobs SET status='running'"),eq(ID),eq(1)))
+        when(jdbc.queryForList(startsWith("UPDATE app.review_jobs SET status='running'"),eq(ID),eq(1),eq("run")))
             .thenReturn(List.of(Map.of("request","{\"reviewId\":\""+ID+"\",\"tenantId\":\"tenant\",\"versionNo\":1}",
                 "attempts",3)));
         doThrow(new IOException("temporary")).when(reviews).runQueued(any());
         queue.consume(message(),channel);
         var order=inOrder(reviews,jdbc,channel);
         order.verify(reviews).failQueued("tenant",ID,1);
-        order.verify(jdbc).update(contains("status='failed'"),eq("IOException"),isNull(),eq(ID),eq(1));
+        order.verify(jdbc).update(contains("status='failed'"),eq("IOException"),isNull(),eq(ID),eq(1),eq("run"));
         order.verify(channel).basicReject(7,false);
     }
 
@@ -68,17 +69,17 @@ class ReviewJobQueueTest {
         String trace="0b6f1f3c-7a5e-4d0c-9a51-2b8f0d6c1e11";
         doThrow(new AgentClient.AgentFailure(500,"RUN_FAILED",trace)).when(reviews).runQueued(any());
         queue.consume(message(),channel);
-        verify(jdbc).update(contains("last_trace_id=?"),eq(5),eq("AgentFailure"),eq(trace),eq(ID),eq(1));
+        verify(jdbc).update(contains("last_trace_id=?"),eq(5),eq("AgentFailure"),eq(trace),eq(ID),eq(1),eq("run"));
 
-        when(jdbc.queryForList(startsWith("UPDATE app.review_jobs SET status='running'"),eq(ID),eq(1)))
+        when(jdbc.queryForList(startsWith("UPDATE app.review_jobs SET status='running'"),eq(ID),eq(1),eq("run")))
             .thenReturn(List.of(Map.of("request","{\"reviewId\":\""+ID+"\",\"tenantId\":\"tenant\",\"versionNo\":1}",
                 "attempts",3)));
         queue.consume(message(),channel);
-        verify(jdbc).update(contains("status='failed'"),eq("AgentFailure"),eq(trace),eq(ID),eq(1));
+        verify(jdbc).update(contains("status='failed'"),eq("AgentFailure"),eq(trace),eq(ID),eq(1),eq("run"));
     }
 
     @Test void duplicateDeliveryDoesNotRerunOrCharge()throws Exception{
-        when(jdbc.queryForList(startsWith("UPDATE app.review_jobs SET status='running'"),eq(ID),eq(1)))
+        when(jdbc.queryForList(startsWith("UPDATE app.review_jobs SET status='running'"),eq(ID),eq(1),eq("run")))
             .thenReturn(List.of());
         queue.consume(message(),channel);
         verify(channel).basicAck(7,false);
@@ -86,11 +87,105 @@ class ReviewJobQueueTest {
     }
 
     @Test void completionWriteFailureNeverTurnsCompletedReviewIntoFailure()throws Exception{
-        when(jdbc.update(startsWith("UPDATE app.review_jobs SET status='done'"),eq(ID),eq(1)))
+        when(jdbc.update(startsWith("UPDATE app.review_jobs SET status='done'"),eq(ID),eq(1),eq("run")))
             .thenThrow(new IllegalStateException("database temporarily unavailable"));
         queue.consume(message(),channel);
         verify(channel).basicNack(7,false,true);
         verify(reviews,never()).failQueued(anyString(),anyString(),anyInt());
-        verify(jdbc,never()).update(contains("status='retry'"),anyInt(),anyString(),any(),anyString(),anyInt());
+        verify(jdbc,never()).update(contains("status='retry'"),anyInt(),anyString(),any(),anyString(),anyInt(),anyString());
+    }
+
+    // ---------- 승인 후 Agent 재개 작업 (kind=resume) ----------
+
+    Message message(String body){
+        MessageProperties props=new MessageProperties();
+        props.setDeliveryTag(7);
+        return new Message(body.getBytes(StandardCharsets.UTF_8),props);
+    }
+    void claimResume(int attempts){
+        when(jdbc.queryForList(startsWith("UPDATE app.review_jobs SET status='running'"),eq(ID),eq(1),eq("resume")))
+            .thenReturn(List.of(Map.of("request","{\"reviewId\":\""+ID+"\",\"tenantId\":\"tenant\",\"versionNo\":1,\"state\":\"approved\"}",
+                "attempts",attempts)));
+    }
+
+    @Test void legacyMessageWithoutKindIsAnAnalysisRun()throws Exception{
+        queue.consume(message(ID+":1"),channel);
+        verify(reviews).runQueued(any());
+        verify(violations,never()).resumeQueued(anyString(),anyString(),anyInt(),anyString());
+    }
+
+    @Test void resumeSuccessRecordsDoneThenAcknowledges()throws Exception{
+        claimResume(1);
+        queue.consume(message(ID+":1:resume"),channel);
+        var order=inOrder(violations,jdbc,channel);
+        order.verify(violations).resumeQueued("tenant",ID,1,"approved");
+        order.verify(jdbc).update(startsWith("UPDATE app.review_jobs SET status='done'"),eq(ID),eq(1),eq("resume"));
+        order.verify(channel).basicAck(7,false);
+        verify(reviews,never()).runQueued(any());
+    }
+
+    @Test void transientResumeFailureRetriesWithoutTouchingCreditsOrTheVersion()throws Exception{
+        claimResume(2);
+        doThrow(new AgentClient.AgentFailure(503,"")).when(violations).resumeQueued(anyString(),anyString(),anyInt(),anyString());
+        queue.consume(message(ID+":1:resume"),channel);
+        verify(jdbc).update(contains("status='retry'"),eq(30),eq("AgentFailure"),isNull(),eq(ID),eq(1),eq("resume"));
+        verify(channel).basicAck(7,false);
+        verify(reviews,never()).failQueued(anyString(),anyString(),anyInt());
+        verify(reviews,never()).retryScheduled(anyString(),anyInt(),anyInt(),anyInt());
+        verify(violations,never()).resumeFailed(anyString(),anyString(),anyInt(),anyString());
+    }
+
+    @Test void resumeGetsMoreAttemptsThanAnalysis()throws Exception{
+        claimResume(3);
+        doThrow(new IOException("agent down")).when(violations).resumeQueued(anyString(),anyString(),anyInt(),anyString());
+        queue.consume(message(ID+":1:resume"),channel);
+        verify(jdbc).update(contains("status='retry'"),eq(120),eq("IOException"),isNull(),eq(ID),eq(1),eq("resume"));
+    }
+
+    @Test void missingCheckpointFailsTheResumeOnlyAndKeepsCredits()throws Exception{
+        claimResume(1);
+        doThrow(new AgentClient.AgentFailure(404,"CHECKPOINT_NOT_FOUND")).when(violations).resumeQueued(anyString(),anyString(),anyInt(),anyString());
+        queue.consume(message(ID+":1:resume"),channel);
+        var order=inOrder(violations,jdbc,channel);
+        order.verify(violations).resumeFailed("tenant",ID,1,"CHECKPOINT_NOT_FOUND");
+        order.verify(jdbc).update(contains("status='failed'"),eq("AgentFailure"),isNull(),eq(ID),eq(1),eq("resume"));
+        order.verify(channel).basicReject(7,false);
+        verify(reviews,never()).failQueued(anyString(),anyString(),anyInt());
+    }
+
+    @Test void exhaustedResumeFails()throws Exception{
+        claimResume(ReviewJobQueue.MAX_RESUME_ATTEMPTS);
+        doThrow(new IOException("agent down")).when(violations).resumeQueued(anyString(),anyString(),anyInt(),anyString());
+        queue.consume(message(ID+":1:resume"),channel);
+        verify(violations).resumeFailed("tenant",ID,1,"IOException");
+        verify(channel).basicReject(7,false);
+        verify(reviews,never()).failQueued(anyString(),anyString(),anyInt());
+    }
+
+    @Test void redeliveredResumeThatAlreadyFinishedIsNotSentAgain()throws Exception{
+        claimResume(2);
+        when(violations.resumeCompleted("tenant",ID,1)).thenReturn(true);
+        queue.consume(message(ID+":1:resume"),channel);
+        verify(violations,never()).resumeQueued(anyString(),anyString(),anyInt(),anyString());
+        verify(jdbc).update(startsWith("UPDATE app.review_jobs SET status='done'"),eq(ID),eq(1),eq("resume"));
+        verify(channel).basicAck(7,false);
+    }
+
+    @Test void unknownKindIsRejected()throws Exception{
+        queue.consume(message(ID+":1:delete"),channel);
+        verify(channel).basicReject(7,false);
+        verify(jdbc,never()).queryForList(anyString(),any(Object[].class));
+    }
+
+    @Test void staleResumeIsRetriedAndStaleRunStillUsesAnalysisChecks(){
+        when(jdbc.queryForList(startsWith("SELECT review_id::text,version_no,kind,attempts"))).thenReturn(List.of(
+            Map.of("review_id",ID,"version_no",1,"kind","resume","attempts",1,"tenant","tenant"),
+            Map.of("review_id",ID,"version_no",1,"kind","run","attempts",1,"tenant","tenant")));
+        when(reviews.completed("tenant",ID,1)).thenReturn(true);
+        queue.recoverStale();
+        verify(violations).resumeCompleted("tenant",ID,1);
+        verify(jdbc).update(contains("status=?"),eq("retry"),eq("retry"),eq(ID),eq(1),eq("resume"));
+        verify(jdbc).update(contains("status=?"),eq("done"),eq("done"),eq(ID),eq(1),eq("run"));
+        verify(reviews,never()).failQueued(anyString(),anyString(),anyInt());
     }
 }

@@ -90,7 +90,7 @@ finding에는 basis(규칙 조항 retrieval=rule, 보조 검색 retrieval=search
 - 같은 브라우저의 선택한 File은 임시 미리보기가 가능하지만 새로고침하거나 다른 기기에서 열면 원본이 없다. 같은 파일 재열람 기능은 후속이다.
 - 파일이 손상됐거나 지원하지 않는 형식이면 접수 또는 파싱 단계에서 실패한다. 실패한 작업은 새 원본을 제출한다.
 - 모델과 공공 API 오류는 적합 판정으로 바꾸지 않는다. 정상 조회 결과 없음과 API 설정 또는 연결 실패를 구분한다.
-- 승인 결정은 저장됐지만 Agent 재개에 실패하면 `approval.agentResume=pending`을 보존한다. 자동 재개 재시도는 후속이다.
+- 승인 결정과 Agent 재개 작업(app.review_jobs, kind=resume)을 한 트랜잭션에 저장하고, RabbitMQ 큐가 재개를 보내고 재시도한다. `approval.agentResume`은 pending, completed, failed 중 하나다. 재개 실패는 결정과 크레딧에 영향을 주지 않는다.
 - 삭제는 실행 중인 작업을 막고 체크포인트부터 삭제한 뒤 app 이력과 asset 메타데이터를 삭제한다.
 
 ## 노션 목표와 현재 MVP의 차이

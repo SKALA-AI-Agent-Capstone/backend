@@ -24,8 +24,9 @@ public class AgentClient {
     public AgentClient(ObjectMapper json,@Value("${capstone.agent-base-url}")String agentUrl,@Value("${capstone.internal-token}")String internalToken){
         this.json=json;this.agentUrl=agentUrl;this.internalToken=internalToken;
     }
-    public JsonNode post(String path,JsonNode body)throws Exception{
-        return send(HttpRequest.newBuilder(URI.create(agentUrl+path)).timeout(Duration.ofSeconds(300))
+    public JsonNode post(String path,JsonNode body)throws Exception{return post(path,body,Duration.ofSeconds(300));}
+    public JsonNode post(String path,JsonNode body,Duration timeout)throws Exception{
+        return send(HttpRequest.newBuilder(URI.create(agentUrl+path)).timeout(timeout)
             .header("Content-Type","application/json").POST(HttpRequest.BodyPublishers.ofString(body.toString())));
     }
     public JsonNode get(String path)throws Exception{

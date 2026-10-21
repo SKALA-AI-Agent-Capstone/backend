@@ -356,6 +356,19 @@ changes_requested는 revision_requested로 저장한다. approved는 모든 viol
 이미 결정되었거나 자동 승인된 review는 409 `ALREADY_DECIDED`. 결정은 app.reviews.hitl_*에 저장하고, 프론트 호환을 위해 최신 버전 JSONB approval(state는 기존 값 changes_requested 유지)과 history에도 같이 남긴다.
 Agent resume 계약(contracts/mvp-agent-resume.input.schema.json)은 바꾸지 않았고 changes_requested로 전달한다.
 
+### 결정 후 Agent 재개 작업 (feat/resume-job-queue)
+
+- 수동 결정(decision API)과 위반 0건 자동 승인 모두 결정 저장과 같은 트랜잭션에 `app.review_jobs`의 `kind='resume'` 행을 기록한다(V14).
+  작업 키는 (review_id, version_no, kind)이고 request는 reviewId, tenantId, versionNo, state다. 승인 API는 Agent를 기다리지 않고 `agentResume=pending`으로 응답한다.
+- 메시지 본문은 `reviewId:versionNo:kind`다. kind가 없는 예전 메시지는 분석(run)으로 읽는다.
+- 재개는 60초 타임아웃으로 /internal/runs/resume을 부른다. 연결 실패, 5xx, 429는 최대 5회(5초, 30초, 2분 간격) 재시도한다.
+  404 `CHECKPOINT_NOT_FOUND`와 그 밖의 4xx는 바로 실패다. 실패하면 `agentResume=failed`, `agentResumeError`를 남기고 메시지는 DLQ로 간다.
+- 재개 실패는 크레딧 반환이나 버전 실패 처리를 하지 않는다. 크레딧은 분석 결과 저장 때 이미 정산된다.
+- 3분 넘게 running인 재개 작업은 agentResume을 확인해 done 또는 retry로 되돌린다.
+- Agent는 thread id의 PostgreSQL advisory lock 안에서 재개한다. 같은 재개가 겹쳐 와도 한 번만 이어서 실행하고 나머지는 `alreadyResumed`로 답한다.
+- 재개가 끝나면 SSE로 `resume_completed` 또는 `resume_failed`(error)를 보낸다. agentResume이 pending인 리뷰는 이 이벤트까지 스트림을 연다.
+- 큐를 끈 개발 모드는 커밋 뒤 한 번 직접 호출하며 재시도는 없다.
+
 Agent 내부 POST /internal/rewrites: 입력 contracts/mvp-agent-rewrite.input.schema.json(reviewId, tenantId, phrase, reason, claimType, previousRewrites, retryNote),
 출력 mvp-agent-rewrite.output.schema.json(text). 내부 토큰 필수. 모델 키가 없으면 503 `TEXT_MODEL_NOT_CONFIGURED`, 공급자 실패는 502.
 한도 판정과 저장은 Backend가 하고 Agent는 문안만 만든다. 법 적합을 판정하지 않는다.

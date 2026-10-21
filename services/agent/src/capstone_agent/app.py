@@ -18,8 +18,8 @@ from .review_models import RunRequest, ResumeRequest, RewriteRequest, VerifyRewr
 from .review_engine import Provider, prepare_assets, build_graph, progress, rewrite_phrase, verify_rewrite, RewriteRejected
 from .regulations import source_document
 from .tools import McpTools
+from .resume import resume_thread, thread_lock
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from langgraph.types import Command
 
 
 async def require_internal(authorization: str | None = Header(default=None)) -> None:
@@ -101,17 +101,13 @@ def create_app() -> FastAPI:
 
     @app.post("/internal/runs/resume", dependencies=[Depends(require_internal)])
     async def resume(request: ResumeRequest) -> dict:
-        async with AsyncPostgresSaver.from_conn_string(required_env("AGENT_DATABASE_URL")) as saver:
-            graph=build_graph([],[],Provider(),saver)
-            config=run_config(f"{request.tenantId}:{request.reviewId}:v{request.versionNo}", run_name="review-resume",
-                              review_id=request.reviewId, tenant_id=request.tenantId, version_no=request.versionNo)
-            snapshot=await graph.aget_state(config)
-            if not snapshot.values:
-                raise HTTPException(status_code=404,detail="CHECKPOINT_NOT_FOUND")
-            if not snapshot.next:
-                return {"reportReady":True,"alreadyResumed":True}
-            output=await graph.ainvoke(Command(resume=request.state),config)
-            return {"reportReady":output.get("reportReady",False)}
+        thread=f"{request.tenantId}:{request.reviewId}:v{request.versionNo}"
+        async with thread_lock(required_env("AGENT_DATABASE_URL"), thread):
+            async with AsyncPostgresSaver.from_conn_string(required_env("AGENT_DATABASE_URL")) as saver:
+                graph=build_graph([],[],Provider(),saver)
+                config=run_config(thread, run_name="review-resume",
+                                  review_id=request.reviewId, tenant_id=request.tenantId, version_no=request.versionNo)
+                return await resume_thread(graph, config, request.state)
 
     @app.post("/internal/rewrites", dependencies=[Depends(require_internal)])
     async def rewrite(request: RewriteRequest) -> dict:
