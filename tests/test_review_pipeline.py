@@ -4,7 +4,8 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 from capstone_shared.documents import tile_image, prepare_document
-from capstone_agent.review_engine import build_graph, Provider, deduplicate, correct_ocr_text, OcrCorrection
+from capstone_agent.review_engine import (build_graph, Provider, deduplicate, correct_ocr_text, OcrCorrection,
+    tile_manifest, assign_tile)
 
 
 async def test_ocr_correction_fixes_broken_spacing_without_changing_line_count():
@@ -46,6 +47,38 @@ def test_overlap_dedup_does_not_remove_separate_repeated_ad_claims():
     def block(y):
         return {"text":"같은 문구","location":{"fileId":"a","page":1,"bbox":[0,y,1,y+0.1]}}
     assert len(deduplicate([block(0),block(0.05),block(0.8)]))==2
+
+
+def test_tile_manifest_keeps_coordinates_only():
+    tiles=tile_image(Image.new("RGB",(64,3000)),"a","long.png")
+    manifest=tile_manifest(tiles)
+    assert [t["id"] for t in manifest]==[t.id for t in tiles]
+    assert [t["index"] for t in manifest]==[0,1,2]
+    assert manifest[1]=={"id":"a:p1:t1","index":1,"fileId":"a","fileName":"long.png","page":1,
+                         "region":[0.0,1360/3000,1.0,2960/3000]}
+
+
+def test_overlap_claim_belongs_to_the_tile_whose_center_is_nearest():
+    # Tiles: t0 0~1600, t1 1360~2960, t2 2720~3000. 1360~1600 is shared by t0 and t1.
+    manifest=tile_manifest(tile_image(Image.new("RGB",(64,3000)),"a","long.png"))
+    def at(y0,y1,tile_id=None):
+        return {"fileId":"a","page":1,"tileId":tile_id,"bbox":[0,y0/3000,1,y1/3000]}
+    assert assign_tile(at(100,140),manifest)=="a:p1:t0"
+    # OCR read this line in t1 but it sits closer to t0's center; one owner, not two.
+    assert assign_tile(at(1400,1440,"a:p1:t1"),manifest)=="a:p1:t0"
+    assert assign_tile(at(1560,1590,"a:p1:t0"),manifest)=="a:p1:t1"
+    assert assign_tile(at(2900,2950),manifest)=="a:p1:t2"
+
+
+def test_region_only_and_unmatched_locations():
+    manifest=tile_manifest(tile_image(Image.new("RGB",(64,3000)),"a","long.png"))
+    region_only={"fileId":"a","page":1,"tileId":"a:p1:t2","bbox":None,"region":manifest[2]["region"]}
+    assert assign_tile(region_only,manifest)=="a:p1:t2"
+    # PDF native text has a page box and no tile.
+    assert assign_tile({"fileId":"a","page":1,"bbox":[0,0.5,1,0.51]},manifest)=="a:p1:t1"
+    assert assign_tile({"fileId":"b","page":1,"bbox":[0,0.5,1,0.51]},manifest) is None
+    assert assign_tile({"fileId":"a","page":1,"tileId":"gone","bbox":None},manifest) is None
+    assert assign_tile(None,manifest) is None
 
 
 async def test_missing_provider_does_not_invent_findings_or_sources(monkeypatch):
@@ -90,6 +123,9 @@ async def test_both_paths_have_independent_results_and_checkpoint_contains_no_pi
                               {"configurable":{"thread_id":"t:r:1"}})
     assert len(output["result"]["findings"])==1
     assert len(output["result"]["visualFindings"])==1
+    assert [t["id"] for t in output["result"]["tiles"]]==[tile.id]
+    assert output["result"]["visualFindings"][0]["tileId"]==tile.id
+    assert output["result"]["findings"][0]["tileId"] is None  # synthetic OCR block has no box or tile
     assert "data:image" not in str(output)
     assert output["result"]["findings"][0]["basis"]==[]
     violations=output["result"]["violations"]
