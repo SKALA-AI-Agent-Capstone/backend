@@ -654,6 +654,50 @@ def merge_nested(findings):
     return kept
 
 
+async def review_text(provider, texts, manifest=()):
+    """Text review: claim candidates the model extracts from the ad copy, chunk by chunk within the token budget,
+    kept only when grounded in one text block. Returns (findings, failure warnings).
+    The harness evaluation (scripts/evaluate_harness.py) runs this same step, so a prompt, limit or model
+    change is measured on the code the review uses."""
+    findings, failures = [], []
+    ad = "\n".join(t["text"] for t in texts)
+    spans, offset = [], 0
+    for source in texts:
+        spans.append((offset, offset + len(source["text"]), source))
+        offset += len(source["text"]) + 1
+    try:
+        chunks = split_parse_text(instruction("text_review"), ad, TextAssessment)
+    except Exception:
+        chunks = []
+        failures.append("TEXT_REVIEW_BUDGET_FAILED")
+    for chunk_index, (chunk_start, chunk) in enumerate(chunks):
+        try:
+            output = await provider.parse(instruction("text_review"), TextAssessment, text=chunk)
+        except Exception:
+            failures.append(f"TEXT_REVIEW_CHUNK_FAILED:{chunk_index + 1}")
+            continue
+        phrase_counts = {}
+        for issue in output.findings:
+            if not issue.phrase:
+                continue
+            positions = [chunk_start + match.start() for match in re.finditer(re.escape(issue.phrase), chunk)]
+            valid = [(source, position - left) for position in positions
+                     for left, right, source in spans if left <= position and position + len(issue.phrase) <= right]
+            occurrence = phrase_counts.get(issue.phrase, 0)
+            phrase_counts[issue.phrase] = occurrence + 1
+            match = valid[occurrence] if occurrence < len(valid) else None
+            if match is None:
+                continue  # Reject ungrounded or cross-block model spans.
+            source, start = match
+            findings.append({"id":f"text-{len(findings)}","phrase":issue.phrase,"start":start,"end":start+len(issue.phrase),
+                "location":source["location"],"textId":source["id"],"tileId":assign_tile(source["location"],manifest),
+                "severity":"low","baseSeverity":"low",
+                "claimType":issue.claimType,"reason":issue.reason,"title":"근거 대조 전 확인할 문구",
+                "basis":[],"baseBasis":[],"confidence":None,"rewrites":issue.rewrites,"references":[],"category":"확인할 광고 주장",
+                "legalStatus":"not_evaluated","escalation":None})
+    return merge_nested(findings), failures
+
+
 def build_graph(native, tiles, provider, checkpointer, request=None):
     # tileId is set where each finding is created. Later nodes update these same finding dicts
     # (severity, escalation), so the result must not be built from copies.
@@ -666,44 +710,11 @@ def build_graph(native, tiles, provider, checkpointer, request=None):
         if not provider.client:
             status="not_configured"; warnings.append("TEXT_MODEL_NOT_CONFIGURED")
         elif texts:
-            ad = "\n".join(t["text"] for t in texts)
-            spans, offset = [], 0
-            for source in texts:
-                spans.append((offset, offset + len(source["text"]), source))
-                offset += len(source["text"]) + 1
-            try:
-                chunks = split_parse_text(instruction("text_review"), ad, TextAssessment)
-            except Exception:
-                chunks = []
-                status="partial"; warnings.append("TEXT_REVIEW_BUDGET_FAILED")
-            for chunk_index, (chunk_start, chunk) in enumerate(chunks):
-                try:
-                    output = await provider.parse(instruction("text_review"), TextAssessment, text=chunk)
-                except Exception:
-                    status="partial"; warnings.append(f"TEXT_REVIEW_CHUNK_FAILED:{chunk_index + 1}")
-                    continue
-                phrase_counts = {}
-                for issue in output.findings:
-                    if not issue.phrase:
-                        continue
-                    positions = [chunk_start + match.start() for match in re.finditer(re.escape(issue.phrase), chunk)]
-                    valid = [(source, position - left) for position in positions
-                             for left, right, source in spans if left <= position and position + len(issue.phrase) <= right]
-                    occurrence = phrase_counts.get(issue.phrase, 0)
-                    phrase_counts[issue.phrase] = occurrence + 1
-                    match = valid[occurrence] if occurrence < len(valid) else None
-                    if match is None:
-                        continue  # Reject ungrounded or cross-block model spans.
-                    source, start = match
-                    findings.append({"id":f"text-{len(findings)}","phrase":issue.phrase,"start":start,"end":start+len(issue.phrase),
-                        "location":source["location"],"textId":source["id"],"tileId":assign_tile(source["location"],manifest),
-                        "severity":"low","baseSeverity":"low",
-                        "claimType":issue.claimType,"reason":issue.reason,"title":"근거 대조 전 확인할 문구",
-                        "basis":[],"baseBasis":[],"confidence":None,"rewrites":issue.rewrites,"references":[],"category":"확인할 광고 주장",
-                        "legalStatus":"not_evaluated","escalation":None})
+            findings, failures = await review_text(provider, texts, manifest)
+            if failures:
+                status="partial"; warnings += failures
         else:
             status="needs_input";warnings.append("NO_READABLE_TEXT")
-        findings = merge_nested(findings)
         await progress(request,1)
         return {"texts":texts,"findings":findings,"textStatus":status,"textWarnings":warnings}
 
