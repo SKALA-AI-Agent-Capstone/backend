@@ -18,7 +18,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 @RestController @RequestMapping("/api/v1/billing")
 public class BillingController {
-    private static final Map<Integer,Integer> PRICES=Map.of(100,1000,200,1900,300,2700,400,3520,600,5160,800,6720,1000,8200,2000,16000);
+    private static final Map<Integer,Integer> PRICES=Map.of(100,5000,200,9500,300,13500,400,17600,600,25800,800,33600,1000,41000,2000,80000);
     private final JdbcTemplate jdbc;
     private final ObjectMapper json;
     private final HttpClient http=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
