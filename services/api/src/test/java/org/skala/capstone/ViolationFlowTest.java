@@ -51,6 +51,7 @@ class ViolationFlowTest {
     @Autowired ObjectMapper json;
     @Autowired ViolationService violations;
     @Autowired ReviewCreditService credits;
+    @Autowired CreditCatalog catalog;
     @Autowired DataSource dataSource;
     @MockitoBean AgentClient agent;
     @MockitoBean StringRedisTemplate redis;
@@ -69,6 +70,16 @@ class ViolationFlowTest {
             jdbc.update("INSERT INTO app.users (id,tenant_id,email,name,password_hash,role) VALUES (CAST(? AS uuid),CAST(? AS uuid),?,?,'x',?) ON CONFLICT DO NOTHING",
                 u.id(),u.tenant(),u.id()+"@test",u.role()+u.id().substring(35),u.role());
         when(agent.post(anyString(),any())).thenReturn(json.createObjectNode());
+    }
+
+    @Test
+    void creditCatalogAndReviewCostComeFromDatabase() {
+        assertThat(catalog.packages()).hasSize(8);
+        assertThat(catalog.price(100)).isEqualTo(5000);
+        assertThat(catalog.reviewCost()).isEqualTo(100);
+        jdbc.update("UPDATE app.credit_policy SET review_cost=120 WHERE id=true");
+        try { assertThat(catalog.reviewCost()).isEqualTo(120); }
+        finally { jdbc.update("UPDATE app.credit_policy SET review_cost=100 WHERE id=true"); }
     }
 
     RequestPostProcessor as(User u){return jwt().jwt(j->j.subject(u.id()).claim("tenantId",u.tenant()).claim("role",u.role()));}

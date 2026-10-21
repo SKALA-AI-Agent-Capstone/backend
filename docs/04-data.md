@@ -11,7 +11,7 @@
 | LangGraph 실행과 HITL 상태 | 주요 PostgreSQL의 agent | 전용 역할과 AsyncPostgresSaver checkpoint 구현 |
 | 공개 법령과 기준 및 사례의 원문 조각, 출처와 버전 | knowledge | 빈 스키마 구성 |
 | 공개 문서 조각의 임베딩 | knowledge.chunks.embedding | vector(1024), 아직 적재 없음 |
-| 크레딧과 과금 원장 | 목표: 별도 과금 DB | 로컬 테스트 결제용 app.credit_orders, app.credit_topups, app.review_credit_charges와 회원별 app.users.credit_balance 구현 |
+| 크레딧과 과금 원장 | 목표: 별도 과금 DB | 로컬 테스트 결제용 app.credit_orders, app.credit_topups, app.review_credit_charges, app.credit_packages, app.credit_policy와 회원별 app.users.credit_balance 구현 |
 | 다건 작업 메시지 | RabbitMQ | 볼륨과 계정, AMQP 연결 검사, 업무 발행과 Worker 미구현 |
 
 검토 결과에 자동 TTL을 적용하지 않는다. 개별 및 전체 삭제는 Backend가 제공하며 실행 중 삭제는 막는다.
@@ -34,7 +34,7 @@ docs/09-input-pipeline.md의 기준안은 초안 생성에 필요한 추출 완�
 
 PostgreSQL 확장 pgvector를 사용하면 관계형 데이터와 벡터를 같은 서버에 저장할 수 있다.
 현재 app, agent, knowledge는 하나의 개발 PostgreSQL 안에서 스키마와 계정으로 분리한다.
-별도 벡터 전용 DB 컨테이너는 없다. 과금 원장은 목표상 별도 DB다. 현재는 테스트 결제 흐름을 검증하기 위해 app 스키마에 주문·충전 기록과 회원별 credit_balance를 추가했다. 운영 전에는 별도 과금 DB로 이전해야 한다.
+별도 벡터 전용 DB 컨테이너는 없다. 과금 원장은 목표상 별도 DB다. 현재는 테스트 결제 흐름을 검증하기 위해 app 스키마에 주문·충전 기록, 금액권·검사 비용 설정과 회원별 credit_balance를 추가했다. 운영 전에는 별도 과금 DB로 이전해야 한다.
 공식 참고: https://github.com/pgvector/pgvector
 
 GitHub는 소스, 마이그레이션과 출처 목록을 공유한다. 실행 DB나 문서 데이터가 자동 공유되지 않는다.
@@ -119,7 +119,7 @@ LAW_OC는 수집 배치의 비밀 환경변수이고, MFDS_SERVICE_KEY와 KIPRIS
 
 기준: [Data 모델 ERD, App/State/Vector/과금 DB](https://app.notion.com/p/Data-ERD-App-State-Vector-DB-3ff616ab8fec81c7b57ac75358ced570).
 2026-10-20 v2 본문과 다이어그램을 재확인했다. 최종 목표는 주요 PostgreSQL 1개와 별도 과금 PostgreSQL 1개다.
-현재 로컬 MVP는 주요 PostgreSQL 하나만 실행한다. 테스트 결제 주문·충전 기록, 회원별 잔액과 검사당 100크레딧 예약·확정·반환 기록은 app 스키마에 있다. 별도 과금 DB와 실제 사용량 기반 정산은 아직 만들지 않았다.
+현재 로컬 MVP는 주요 PostgreSQL 하나만 실행한다. 테스트 결제 주문·충전 기록, 회원별 잔액, 금액권 설정과 검사당 비용 예약·확정·반환 기록은 app 스키마에 있다. 검사 비용 초기값은 100크레딧이다. 별도 과금 DB와 실제 사용량 기반 정산은 아직 만들지 않았다.
 노션의 app/state/vector는 논리 영역이며 현재 물리 이름은 app/agent/knowledge다. RAG 영역은 사용자 요청에 따라 Handoff의 knowledge 스키마를 유지한다.
 
 ```mermaid
@@ -224,13 +224,13 @@ erDiagram
 | evidence_structured, violation 근거, claim_match_result, approval_verify_result, patent 결과 | 버전별 result JSONB에 가능한 출력 보존 | 의미 대조와 검색 미구현, 정규화와 근거 스냅샷 FK 설계 |
 | state checkpointer | agent 스키마의 AsyncPostgresSaver | durable Worker 재개와 재시도 확장 |
 | regulation_doc, precedent_doc | knowledge.document_versions의 rules/cases, knowledge.chunks | 출처 및 적용일 검증, 임베딩과 검색 |
-| credit_ledger | 로컬 고정 검사 비용은 app.review_credit_charges에 버전별 1회 기록, 별도 DB 계획 유지 | 실제 사용량 기반 reserve/charge/release/refund와 테넌트 락 및 멱등키 |
+| credit_ledger | 로컬 검사 비용은 app.credit_policy에서 읽고 app.review_credit_charges에 버전별 1회 기록, 별도 DB 계획 유지 | 실제 사용량 기반 reserve/charge/release/refund와 테넌트 락 및 멱등키 |
 | 테스트 결제 주문 및 적립 | app.credit_orders, app.credit_topups, app.users.credit_balance | PG 테스트 승인 후 회원별로 주문당 한 번 적립, 운영 전 별도 과금 DB로 이전 |
 
 노션 v2는 과금 기준을 사람 승인 후 리포트가 아닌 judged_at으로 명시했다.
 목표는 요청 전 reserve, 판정 완료 시 charge, 중도 실패 시 release다. charge 후 정산 오류만 refund다.
 (review_id, entry_type) UNIQUE와 테넌트 단위 advisory transaction lock이 목표이며 이번 MVP는 이를 구현했다고 표시하지 않는다.
-초기 문서의 과금 타이밍 미확정 설명은 이 v2의 명시된 목표와 구분한다. 현재 로컬 MVP는 검사 시작 시 고정 100크레딧을 예약하고 결과 저장 시 확정한다. 실제 사용량 정책을 연결할 때 Graph 및 시퀀스와 소비자 계약을 다시 맞춘다.
+초기 문서의 과금 타이밍 미확정 설명은 이 v2의 명시된 목표와 구분한다. 현재 로컬 MVP는 검사 시작 시 app.credit_policy.review_cost만큼 예약하고 결과 저장 시 확정한다. 실제 사용량 정책을 연결할 때 Graph 및 시퀀스와 소비자 계약을 다시 맞춘다.
 
 NFR-17~20도 재확인했다. 현재 비밀번호 해시와 세션 무효화, API 키 환경변수 및 역할 권한은 구현했다.
 운영 HTTPS, 로그인 실패 잠금, refresh/reset, 삭제와 로그인에 대한 별도 감사 이벤트 저장, 전체 데스크톱 브라우저 접근성 검증은 남아 있다.

@@ -13,12 +13,14 @@ import static org.mockito.Mockito.*;
 
 class ReviewCreditServiceTest {
     private final JdbcTemplate jdbc=mock(JdbcTemplate.class);
-    private final ReviewCreditService credits=new ReviewCreditService(jdbc);
+    private final CreditCatalog catalog=mock(CreditCatalog.class);
+    private final ReviewCreditService credits=new ReviewCreditService(jdbc,catalog);
     private static final String TENANT="00000000-0000-0000-0000-000000000001";
     private static final String USER="00000000-0000-0000-0000-000000000002";
     private static final String REVIEW="00000000-0000-0000-0000-000000000003";
 
     @Test void insufficientBalanceNeverCreatesChargeRecord() {
+        when(catalog.reviewCost()).thenReturn(100);
         when(jdbc.update(startsWith("UPDATE app.users SET credit_balance=credit_balance-"),any(Object[].class))).thenReturn(0);
         var error=assertThrows(ResponseStatusException.class,()->credits.reserve(TENANT,USER,REVIEW,1));
         assertEquals(HttpStatus.PAYMENT_REQUIRED,error.getStatusCode());
@@ -28,9 +30,11 @@ class ReviewCreditServiceTest {
     }
 
     @Test void successfulReservationRecordsOneReviewVersion() {
+        when(catalog.reviewCost()).thenReturn(120);
         when(jdbc.update(startsWith("UPDATE app.users SET credit_balance=credit_balance-"),any(Object[].class))).thenReturn(1);
         credits.reserve(TENANT,USER,REVIEW,2);
-        verify(jdbc).update(startsWith("INSERT INTO app.review_credit_charges"),eq(REVIEW),eq(2),eq(TENANT),eq(USER),eq(100));
+        verify(jdbc).update(startsWith("UPDATE app.users SET credit_balance=credit_balance-"),eq(120),eq(USER),eq(TENANT),eq(120));
+        verify(jdbc).update(startsWith("INSERT INTO app.review_credit_charges"),eq(REVIEW),eq(2),eq(TENANT),eq(USER),eq(120));
     }
 
     @Test void releaseRefundsOnlyAReservedCharge() {
