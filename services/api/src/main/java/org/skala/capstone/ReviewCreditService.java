@@ -11,20 +11,21 @@ import org.springframework.web.server.ResponseStatusException;
 /** Reserves credit before analysis and settles it once per review version. */
 @Service
 public class ReviewCreditService {
-    public static final int CREDITS_PER_REVIEW = 100;
     private final JdbcTemplate jdbc;
+    private final CreditCatalog catalog;
 
-    public ReviewCreditService(JdbcTemplate jdbc) { this.jdbc=jdbc; }
+    public ReviewCreditService(JdbcTemplate jdbc,CreditCatalog catalog) { this.jdbc=jdbc;this.catalog=catalog; }
 
     @Transactional
     public void reserve(String tenant,String user,String reviewId,int versionNo) {
+        int cost=catalog.reviewCost();
         int updated=jdbc.update("UPDATE app.users SET credit_balance=credit_balance-? "+
             "WHERE id=CAST(? AS uuid) AND tenant_id=CAST(? AS uuid) AND credit_balance>=?",
-            CREDITS_PER_REVIEW,user,tenant,CREDITS_PER_REVIEW);
+            cost,user,tenant,cost);
         if(updated!=1) throw new ResponseStatusException(HttpStatus.PAYMENT_REQUIRED,"INSUFFICIENT_CREDITS");
         jdbc.update("INSERT INTO app.review_credit_charges(review_id,version_no,tenant_id,user_id,credits,status) "+
             "VALUES (CAST(? AS uuid),?,CAST(? AS uuid),CAST(? AS uuid),?,'reserved')",
-            reviewId,versionNo,tenant,user,CREDITS_PER_REVIEW);
+            reviewId,versionNo,tenant,user,cost);
     }
 
     @Transactional

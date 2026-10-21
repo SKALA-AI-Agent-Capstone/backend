@@ -6,7 +6,9 @@ import time
 import uuid
 from io import BytesIO
 import httpx
+import psycopg
 from PIL import Image, ImageDraw, ImageFont
+from local_config import load_env
 
 
 def synthetic_pdf():
@@ -55,6 +57,28 @@ def main():
         return response.json()["accessToken"]
     author=login("author");reviewer=login("reviewer")
     checks.append("server JWT and controlled tenant roles")
+    author_identity=call("GET","/users/me",author).json()["user"]
+    credit_config=call("GET","/billing/config",author)
+    assert credit_config.status_code==200,credit_config.text
+    review_cost=credit_config.json()["reviewCost"]
+    assert isinstance(review_cost,int) and review_cost>0,review_cost
+    if "APP_DB_PASSWORD" not in os.environ:
+        load_env()
+    with psycopg.connect(host="127.0.0.1",port=int(os.getenv("POSTGRES_PORT","55432")),
+            dbname=os.getenv("POSTGRES_DB","beauty_capstone"),user="app_user",
+            password=os.environ["APP_DB_PASSWORD"],connect_timeout=5) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("UPDATE app.users SET credit_balance=%s "
+                "WHERE id=%s::uuid AND tenant_id=%s::uuid AND email=%s AND credit_balance=0 RETURNING id",
+                (2*review_cost,author_identity["id"],author_identity["tenantId"],
+                    f"author-{suffix}@example.test"))
+            assert cursor.fetchone() is not None,"Synthetic author credit setup failed"
+    def balance():
+        response=call("GET","/billing/balance",author)
+        assert response.status_code==200,response.text
+        return response.json()["balance"]
+    assert balance()==2*review_cost
+    checks.append("synthetic author funded for two reviews at server-configured cost")
     metadata={"product":{"name":"Synthetic-only product","functionalReportNo":"SYNTHETIC"},"media":[],"evidence":[{"docType":"other"}]}
     image=synthetic_image();pdf=synthetic_pdf()
     def upload(path):
@@ -77,6 +101,7 @@ def main():
         raise AssertionError("Review did not finish within synthetic smoke timeout")
     try:
         review=wait(1);version=review["versions"][-1];result=version["result"]
+        assert balance()==review_cost,"First review did not charge the configured credit cost"
         assert result["texts"] and any("SYNTHETIC" in text["text"] for text in result["texts"])
         # Without a model key no claim is extracted, so the legal search step has nothing to search.
         expected={"skipped"} if not result["findings"] else {"connected","not_indexed"}
@@ -95,6 +120,7 @@ def main():
         assert response.json()["versions"][-1]["approval"]["agentResume"]=="completed",response.text
         checks.append("tenant isolation, role check, persisted HITL and PostgreSQL resume")
         upload(f"/reviews/{rid}/re-review");review=wait(2)
+        assert balance()==0,"Re-review did not charge the configured credit cost"
         assert review["versions"][0]["approval"]["state"]=="approved"
         assert review["versions"][1]["approval"]["state"]=="pending"
         assert call("POST",f"/reviews/{rid}/decision",reviewer,json={"versionNo":1,"state":"approved","comment":"old version"}).status_code==409
