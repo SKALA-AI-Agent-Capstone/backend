@@ -100,7 +100,7 @@ def main(require_queue=False):
                 return doc
             time.sleep(1)
         raise AssertionError("Review did not finish within synthetic smoke timeout")
-    def verify_queue(no):
+    def verify_queue(no,kind="run"):
         if not require_queue:
             return
         deadline=time.monotonic()+15
@@ -111,13 +111,28 @@ def main(require_queue=False):
                     password=os.environ["APP_DB_PASSWORD"],connect_timeout=5) as connection:
                 with connection.cursor() as cursor:
                     cursor.execute("SELECT status,attempts,last_error FROM app.review_jobs "
-                        "WHERE review_id=%s::uuid AND version_no=%s",(rid,no))
+                        "WHERE review_id=%s::uuid AND version_no=%s AND kind=%s",(rid,no,kind))
                     row=cursor.fetchone()
             if row and row[0]=="done":
                 assert row[1]==1 and row[2] is None,(no,row)
                 return
             time.sleep(1)
-        raise AssertionError(f"Queue job for version {no} did not finish: {row}")
+        raise AssertionError(f"Queue {kind} job for version {no} did not finish: {row}")
+    def wait_resume(no):
+        deadline=time.monotonic()+100
+        approval=None
+        while time.monotonic()<deadline:
+            response=call("GET",f"/reviews/{rid}",author)
+            assert response.status_code==200,response.text
+            version=next(v for v in response.json()["versions"] if v["no"]==no)
+            approval=version["approval"]
+            assert approval["state"]=="approved",approval
+            state=approval.get("agentResume")
+            if state=="completed":
+                return
+            assert state=="pending",("Unexpected resume state",approval)
+            time.sleep(1)
+        raise AssertionError(f"Agent resume for version {no} timed out: {approval}")
     try:
         review=wait(1);version=review["versions"][-1];result=version["result"]
         verify_queue(1)
@@ -137,7 +152,12 @@ def main(require_queue=False):
         assert call("POST",f"/reviews/{rid}/decision",reviewer,json={"versionNo":1,"state":"approved","comment":""}).status_code==400
         response=call("POST",f"/reviews/{rid}/decision",reviewer,json={"versionNo":1,"state":"approved","comment":"Synthetic manual check; no legal basis was attached."})
         assert response.status_code==200,response.text
-        assert response.json()["versions"][-1]["approval"]["agentResume"]=="completed",response.text
+        approval=response.json()["versions"][-1]["approval"]
+        assert approval["state"]=="approved",approval
+        assert approval.get("agentResume") in {"pending","completed"},approval
+        wait_resume(1)
+        verify_queue(1,"resume")
+        assert balance()==2*review_cost,"Agent resume changed the settled credits"
         checks.append("tenant isolation, role check, persisted HITL and PostgreSQL resume")
         upload(f"/reviews/{rid}/re-review");review=wait(2)
         verify_queue(2)
@@ -157,7 +177,7 @@ def main(require_queue=False):
     assert call("GET",f"/reviews/{rid}",author).status_code==404
     checks.append("review deletion")
     if require_queue:
-        checks.append("RabbitMQ-backed jobs reached done once for both review versions")
+        checks.append("RabbitMQ-backed run jobs for both versions and the approval resume job reached done once")
     print(json.dumps({"checks":checks,"paid_model_calls":0,"customer_files_used":0},ensure_ascii=False,indent=2))
 
 
