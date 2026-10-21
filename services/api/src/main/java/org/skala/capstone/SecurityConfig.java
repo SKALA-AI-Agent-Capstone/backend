@@ -1,5 +1,6 @@
 package org.skala.capstone;
 
+import jakarta.servlet.DispatcherType;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
@@ -75,6 +76,8 @@ public class SecurityConfig {
         return http.csrf(c -> c.disable())
             .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(a -> a
+                // SSE streams finish on an async dispatch. The request was already authorized when it started.
+                .dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR).permitAll()
                 .requestMatchers(PUBLIC_AUTH.toArray(String[]::new)).permitAll()
                 .anyRequest().authenticated())
             .oauth2ResourceServer(o -> o.bearerTokenResolver(bearerTokens())

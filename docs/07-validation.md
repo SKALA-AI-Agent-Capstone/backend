@@ -289,3 +289,16 @@ Compose의 API에서 RabbitMQ를 활성화하고, DB outbox(`app.review_jobs`)�
 (실행 1, 실패 0, 건너뜀 0). `docker compose config --quiet` 통과.
 실제 광고 입력부터 Agent 결과까지 RabbitMQ 경로로 돌리는 전체 서비스 검사는
 수행하지 않았다. 다건 Agent 내부 Worker, Agent 재개 명령의 큐 처리도 후속이다.
+
+## 2026-10-21 검토 진행 SSE
+
+Agent가 단계 완료와 도구 실행 시작 및 끝을 Spring 내부 API로 보내고, Spring이 실행 시작, 재시도, 승인 필요, 완료와 실패를 더해
+GET /api/v1/reviews/{id}/events로 중계한다. 프론트는 1.5초 폴링 대신 이 스트림을 구독하고, 세 번 연속 연결하지 못하면 폴링으로 돌아간다.
+
+- `mvn test -Dtest=ViolationFlowTest` 16건 통과. 새 2건은 다른 기업 404, 실행 토큰 불일치 403, 알 수 없는 이벤트 400, step 저장, 이벤트 순서(approval_required 다음 completed), Last-Event-ID 재전송, 끝난 검토의 snapshot 단독 응답을 확인한다.
+- Python `pytest` 87건 통과. 새 3건은 도구 시작과 끝 이벤트, 어댑터 api_error의 ok=false, Backend 장애 무시를 확인한다.
+- 로컬 Compose(RabbitMQ 큐 경로 켜짐)에서 합성 광고 이미지 한 건을 접수해 스트림을 끝까지 읽었다. 약 18초 동안 snapshot, started, step_done 0~4,
+  legal_basis와 식약처 및 특허 도구의 시작과 끝, approval_required, completed 순으로 받았고 스트림이 닫혔다. 저장된 steps는 모두 100이었다.
+- 같은 흐름을 Vite 개발 서버 화면에서 확인했다. 진행 모달에 실시간 연결 표시와 현재 도구가 바뀌었고, 분석 중 상세 조회 반복 요청이 없었다.
+- 식약처와 KIPRIS 조회는 로컬 키 문제로 실패(ok=false)했으며 이번 범위에서 다루지 않았다.
+- Vercel 재작성 프록시와 Render를 거친 배포 환경의 스트림 유지는 배포 후 확인이 필요하다. 끊기면 재접속과 폴링 대체로 동작한다.

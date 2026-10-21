@@ -123,6 +123,64 @@ class ViolationFlowTest {
         assertThat(jdbc.queryForObject("SELECT credit_balance FROM app.users WHERE id=CAST(? AS uuid)",Integer.class,AUTHOR.id())).isZero();
     }
 
+    @Autowired ReviewEvents events;
+
+    @Test
+    void progressEventsAreStoredAndRelayedToTheTenantStreamOnly()throws Exception{
+        String id=review();
+        jdbc.update("UPDATE app.reviews SET document=jsonb_set(document,'{versions,0,steps}','[0,0,0,0,0]'::jsonb) WHERE id=CAST(? AS uuid)",id);
+        String token="run-token-for-sse-test-0123456789abcdef";
+        jdbc.update("INSERT INTO app.review_runs VALUES (CAST(? AS uuid),1,?)",id,ReviewService.hash(token.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        String internal="Bearer unit-test-only-token-not-for-production-12345";
+
+        // 다른 기업은 스트림을 열 수 없다.
+        mvc.perform(get("/api/v1/reviews/"+id+"/events").with(as(OUTSIDER))).andExpect(status().isNotFound());
+
+        var stream=mvc.perform(get("/api/v1/reviews/"+id+"/events").with(as(AUTHOR)).accept(MediaType.TEXT_EVENT_STREAM))
+            .andExpect(request().asyncStarted()).andReturn();
+        assertThat(events.subscriberCount(id)).isEqualTo(1);
+
+        // 실행 토큰이 틀리면 이벤트를 받지 않는다.
+        mvc.perform(post("/internal/reviews/"+id+"/events").header("Authorization",internal).header("X-Run-Token","wrong")
+                .contentType(MediaType.APPLICATION_JSON).content("{\"versionNo\":1,\"type\":\"step_done\",\"step\":0}"))
+            .andExpect(status().isForbidden());
+        mvc.perform(post("/internal/reviews/"+id+"/events").header("Authorization",internal).header("X-Run-Token",token)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"versionNo\":1,\"type\":\"made_up\"}"))
+            .andExpect(status().isBadRequest());
+        for(String body:List.of("{\"versionNo\":1,\"type\":\"step_done\",\"step\":1}",
+                "{\"versionNo\":1,\"type\":\"tool_started\",\"tool\":\"verify_patent\"}",
+                "{\"versionNo\":1,\"type\":\"tool_finished\",\"tool\":\"verify_patent\",\"ok\":false}"))
+            mvc.perform(post("/internal/reviews/"+id+"/events").header("Authorization",internal).header("X-Run-Token",token)
+                .contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isOk());
+        assertThat(read(id).path("versions").get(0).path("steps").get(1).asInt()).isEqualTo(100);
+
+        events.publish(id,1,"approval_required");
+        events.publish(id,1,"completed");
+        String text=stream.getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(text).contains("event:snapshot").contains("event:step_done").contains("\"step\":1")
+            .contains("event:tool_started").contains("\"tool\":\"verify_patent\"").contains("\"ok\":false")
+            .contains("event:approval_required").contains("event:completed");
+        assertThat(text.indexOf("event:approval_required")).isLessThan(text.indexOf("event:completed"));
+        assertThat(events.subscriberCount(id)).isZero();
+
+        // 다시 접속하면 Last-Event-ID 이후 이벤트만 다시 받는다.
+        jdbc.update("UPDATE app.reviews SET document=jsonb_set(document,'{versions,0,status}','\"analyzing\"'::jsonb) WHERE id=CAST(? AS uuid)",id);
+        long last=events.replay(id).get(events.replay(id).size()-2).id();
+        var again=mvc.perform(get("/api/v1/reviews/"+id+"/events").with(as(AUTHOR)).header("Last-Event-ID",Long.toString(last)))
+            .andExpect(request().asyncStarted()).andReturn();
+        String replayed=again.getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(replayed).contains("event:snapshot").contains("event:completed").doesNotContain("event:tool_started");
+    }
+
+    @Test
+    void finishedReviewStreamSendsOnlyTheSnapshot()throws Exception{
+        String id=reviewWithTwoFindings();
+        var result=mvc.perform(get("/api/v1/reviews/"+id+"/events").with(as(REVIEWER))).andReturn();
+        String text=result.getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(text).contains("event:snapshot").contains("\"violations\"");
+        assertThat(events.subscriberCount(id)).isZero();
+    }
+
     /** 분석 중인 1버전 review를 만든다. */
     String review(){
         String id=UUID.randomUUID().toString();

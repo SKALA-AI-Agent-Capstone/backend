@@ -306,7 +306,29 @@ result.evidence는 documents(문서별 id, name, docType, pages, scannedPages, c
 LangSmith trace가 켜진 실행은 result.traceId(LangSmith run id)를 가진다. 꺼져 있으면 필드가 없다.
 retrievalStatus는 connected, not_indexed, error, skipped(문구 없음) 중 하나이고, 이전 결과에는 not_connected가 남아 있다. legalStatus는 not_evaluated로 유지한다.
 basis와 standardsSnapshot은 rag-mcp 검색 결과로만 채우며, finding.legalSearch(basis_found, no_match, failed, not_searched)로 문구별 상태를 남긴다.
-현재 PDF 리포트는 DB 결과를 읽는 프론트의 인쇄/PDF 저장이다. 서버 PDF 바이너리 엔드포인트와 SSE, 배치, 과금은 후속이다.
+현재 PDF 리포트는 DB 결과를 읽는 프론트의 인쇄/PDF 저장이다. 서버 PDF 바이너리 엔드포인트와 배치 SSE, 배치는 후속이다.
+
+### 검토 진행 SSE (feat/review-progress-sse)
+
+GET /api/v1/reviews/{reviewId}/events, `text/event-stream`. 일반 JSON API와 같은 Bearer JWT를 받고 기업 범위 밖이면 404다.
+브라우저 EventSource는 헤더를 못 보내므로 프론트는 fetch 스트림으로 읽는다. 토큰을 주소에 넣지 않는다.
+
+- 첫 이벤트는 항상 `snapshot`(GET /api/v1/reviews/{id}와 같은 본문)이다. 최신 버전이 queued나 analyzing이 아니면 snapshot만 보내고 닫는다.
+- 이후 이벤트의 data는 type, reviewId, versionNo, at과 아래 필드를 가진다. 각 이벤트에는 증가하는 id가 있고, 재접속 때 `Last-Event-ID`를 보내면 그 뒤의 최근 이벤트(검토별 50개)를 다시 보낸다.
+
+| event | 보내는 곳 | 추가 필드 |
+| --- | --- | --- |
+| started | Spring, 실행 시작 | |
+| step_done | Agent, 단계 완료(0 준비, 1 문구, 2 사진, 3 법령과 공식 조회, 4 결과 저장) | step |
+| tool_started, tool_finished | Agent, 법령 검색(legal_basis)과 business-mcp 도구 | tool, ok(끝날 때. 어댑터의 api_error와 미설정은 false) |
+| retry_scheduled | Spring 큐, 일시 실패 후 재시도 예약 | attempt, delaySeconds |
+| approval_required | Spring, 결과 저장 후 사람 승인이 필요할 때 | hitlStatus |
+| completed | Spring, 결과와 차감 저장 후. 스트림을 닫는다 | hitlStatus(pending 또는 자동 승인 approved) |
+| failed | Spring, 최종 실패. 스트림을 닫는다 | error |
+
+15초마다 `:ping` 주석을 보낸다. Agent는 POST /internal/reviews/{id}/events(내부 토큰과 X-Run-Token)로 step_done, tool_started, tool_finished만 보낼 수 있다.
+기존 /internal/reviews/{id}/progress는 step_done으로 처리한다. 저장된 결과가 원본이며 이벤트는 보조 신호다.
+구독자와 재전송 버퍼는 API 프로세스 메모리에 있다. API를 여러 대로 늘리면 Redis pub/sub 같은 공유 채널이 필요하다.
 
 내부 /internal/runs와 /internal/runs/resume의 원본 모델은 packages/shared/src/capstone_shared/review_contracts.py,
 JSON Schema는 contracts/mvp-*.schema.json이다. runToken은 서버 전용이고 모델 입력 및 checkpoint에 넣지 않는다.

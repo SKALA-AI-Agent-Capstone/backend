@@ -107,6 +107,7 @@ public class ReviewJobQueue {
                         "next_attempt_at=now()+(? * interval '1 second'),last_error=? "+
                         "WHERE review_id=CAST(? AS uuid) AND version_no=?",delay,failure.getClass().getSimpleName(),id,no);
                     channel.basicAck(tag,false);
+                    reviews.retryScheduled(id,no,attempt,delay);
                 }else{
                     reviews.failQueued(tenant,id,no);
                     jdbc.update("UPDATE app.review_jobs SET status='failed',request='{}'::jsonb,updated_at=now(),last_error=? "+
