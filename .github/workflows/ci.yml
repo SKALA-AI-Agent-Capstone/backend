@@ -41,10 +41,10 @@ jobs:
           python-version: "3.12"
       - run: python3 scripts/bootstrap.py
       - run: docker compose config --quiet
-      - run: docker compose --profile queue up --build --wait --wait-timeout 240
+      - run: docker compose up --build --wait --wait-timeout 240 postgres redis-cache rabbitmq api business-mcp rag-mcp agent
       - run: uv sync --all-packages --frozen
       - run: uv run --all-packages --frozen --env-file .env python scripts/smoke.py --include-queue
-      - run: uv run --all-packages --frozen python scripts/mvp_smoke.py
+      - run: uv run --all-packages --frozen python scripts/mvp_smoke.py --require-queue
         env:
           MVP_API_URL: http://127.0.0.1:8080
       - run: docker compose exec -T redis-cache redis-cli ping

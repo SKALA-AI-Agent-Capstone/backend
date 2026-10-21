@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Synthetic local integration checks. No customer files or paid model calls."""
 import json
+import argparse
 import os
 import time
 import uuid
@@ -33,7 +34,7 @@ def synthetic_image():
     output=BytesIO();image.save(output,format="PNG");return output.getvalue()
 
 
-def main():
+def main(require_queue=False):
     base=os.getenv("MVP_API_URL","http://127.0.0.1:8080")+"/api/v1"
     client=httpx.Client(base_url=base,timeout=45)
     checks=[];suffix=uuid.uuid4().hex[:10]
@@ -99,16 +100,35 @@ def main():
                 return doc
             time.sleep(1)
         raise AssertionError("Review did not finish within synthetic smoke timeout")
+    def verify_queue(no):
+        if not require_queue:
+            return
+        deadline=time.monotonic()+15
+        row=None
+        while time.monotonic()<deadline:
+            with psycopg.connect(host="127.0.0.1",port=int(os.getenv("POSTGRES_PORT","55432")),
+                    dbname=os.getenv("POSTGRES_DB","beauty_capstone"),user="app_user",
+                    password=os.environ["APP_DB_PASSWORD"],connect_timeout=5) as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT status,attempts,last_error FROM app.review_jobs "
+                        "WHERE review_id=%s::uuid AND version_no=%s",(rid,no))
+                    row=cursor.fetchone()
+            if row and row[0]=="done":
+                assert row[1]==1 and row[2] is None,(no,row)
+                return
+            time.sleep(1)
+        raise AssertionError(f"Queue job for version {no} did not finish: {row}")
     try:
         review=wait(1);version=review["versions"][-1];result=version["result"]
+        verify_queue(1)
         assert balance()==review_cost,"First review did not charge the configured credit cost"
         assert result["texts"] and any("SYNTHETIC" in text["text"] for text in result["texts"])
         # Without a model key no claim is extracted, so the legal search step has nothing to search.
         expected={"skipped"} if not result["findings"] else {"connected","not_indexed"}
         assert result["retrievalStatus"] in expected and result["legalStatus"]=="not_evaluated",result["retrievalStatus"]
         assert result["visualFindings"]==[] and result["pipelineStatus"]["visual"]=="not_configured"
-        assert result["evidence"]["text"] and result["publicData"]["status"]=="error"
-        assert result["patents"] and result["patents"][0]["status"]=="error"
+        assert result["evidence"]["text"] and result["publicData"]["reportNo"]=="SYNTHETIC" and result["publicData"]["status"],result["publicData"]
+        assert result["patents"] and result["patents"][0]["id"]=="10-1234567",result["patents"]
         assert "data:image" not in json.dumps(review)
         assert "runToken" not in json.dumps(review)
         checks.append("real PNG and PDF bytes, local OCR, evidence via authenticated MCP")
@@ -120,6 +140,7 @@ def main():
         assert response.json()["versions"][-1]["approval"]["agentResume"]=="completed",response.text
         checks.append("tenant isolation, role check, persisted HITL and PostgreSQL resume")
         upload(f"/reviews/{rid}/re-review");review=wait(2)
+        verify_queue(2)
         assert balance()==0,"Re-review did not charge the configured credit cost"
         assert review["versions"][0]["approval"]["state"]=="approved"
         assert review["versions"][1]["approval"]["state"]=="pending"
@@ -135,7 +156,12 @@ def main():
         assert response.status_code==200,("cleanup",response.status_code,response.text)
     assert call("GET",f"/reviews/{rid}",author).status_code==404
     checks.append("review deletion")
+    if require_queue:
+        checks.append("RabbitMQ-backed jobs reached done once for both review versions")
     print(json.dumps({"checks":checks,"paid_model_calls":0,"customer_files_used":0},ensure_ascii=False,indent=2))
 
 
-if __name__=="__main__":main()
+if __name__=="__main__":
+    parser=argparse.ArgumentParser()
+    parser.add_argument("--require-queue",action="store_true",help="Assert that each review completed through the database-backed RabbitMQ worker")
+    main(parser.parse_args().require_queue)
