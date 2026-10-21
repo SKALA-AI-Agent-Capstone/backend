@@ -74,8 +74,13 @@ class ViolationFlowTest {
 
     @Test
     void creditCatalogAndReviewCostComeFromDatabase() {
-        assertThat(catalog.packages()).hasSize(8);
+        // V11: 활성 금액권은 100, 500, 1,000, 2,000 네 종류다
+        assertThat(catalog.packages()).hasSize(4);
         assertThat(catalog.price(100)).isEqualTo(5000);
+        assertThat(catalog.price(500)).isEqualTo(23000);
+        assertThat(catalog.price(1000)).isEqualTo(42000);
+        assertThat(catalog.price(2000)).isEqualTo(70000);
+        assertThat(catalog.price(200)).isNull();
         assertThat(catalog.reviewCost()).isEqualTo(100);
         jdbc.update("UPDATE app.credit_policy SET review_cost=120 WHERE id=true");
         try { assertThat(catalog.reviewCost()).isEqualTo(120); }
