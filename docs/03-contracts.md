@@ -291,8 +291,9 @@ Agent 및 MCP 밖의 별도 Application 서비스가 책임진다. 중도 실패
 
 반환은 제공된 프론트의 review/versions 형식으로 고정했다. public ID는 camelCase이고 Graph 내부와는 명시적으로 매핑한다.
 문구 결과 findings와 사진 결과 visualFindings, 두 pipelineStatus를 따로 보존한다.
-result.tiles는 분석에 쓴 타일의 좌표 목록이다(ResultTile, contracts/mvp-result-tile.schema.json). id, index, fileId, fileName, page와 원본 페이지 기준 0~1 region을 가지며 픽셀은 저장하지 않는다.
-findings와 visualFindings의 각 항목은 대표 타일 하나의 tileId를 가진다. 겹치는 240px 구간의 문구는 박스를 온전히 담는 타일 중 중심이 가장 가까운 타일 하나에만 속하고, 대표 타일을 정할 수 없으면 null이다.
+result.tiles는 분석에 쓴 내용 구간의 좌표 목록이다(ResultTile, contracts/mvp-result-tile.schema.json). id, index, fileId, fileName, page와 원본 페이지 기준 0~1 region, 구간 이름 title(없으면 null)을 가지며 픽셀은 저장하지 않는다.
+findings와 visualFindings의 각 항목은 대표 구간 하나의 tileId를 가진다. 구간은 겹치지 않지만, 예전 결과처럼 겹치는 타일이 있으면 박스를 온전히 담는 타일 중 중심이 가장 가까운 타일 하나에만 속하고, 대표 구간을 정할 수 없으면 null이다.
+문구 finding의 rewrites에는 규칙 검사와 모델 검증을 통과한 수정안만 들어간다. 통과한 수정안이 없으면 rewrites는 비고 rewriteNote에 마지막 실패 이유를 남긴다.
 이 필드가 추가되기 전에 저장된 결과에는 tiles와 tileId가 없으므로 소비자는 두 필드가 없는 경우를 기존 표시로 처리한다.
 retrievalStatus는 connected, not_indexed, error, skipped(문구 없음) 중 하나이고, 이전 결과에는 not_connected가 남아 있다. legalStatus는 not_evaluated로 유지한다.
 basis와 standardsSnapshot은 rag-mcp 검색 결과로만 채우며, finding.legalSearch(basis_found, no_match, failed, not_searched)로 문구별 상태를 남긴다.

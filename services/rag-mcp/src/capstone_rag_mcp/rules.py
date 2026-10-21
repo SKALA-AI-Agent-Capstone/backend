@@ -80,5 +80,5 @@ def scan_lines(lines: list[str]) -> list[dict]:
         hits = [m for m in match_rules(line, None) if m.rule.sweep]
         if hits:
             out.append({"index": index, "line": line, "rules": [m.rule.id for m in hits],
-                        "matched": [m.matched_text for m in hits]})
+                        "labels": [m.rule.label for m in hits], "matched": [m.matched_text for m in hits]})
     return out
