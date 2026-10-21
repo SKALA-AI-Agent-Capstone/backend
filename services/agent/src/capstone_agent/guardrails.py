@@ -29,9 +29,22 @@ def mask_personal_data(text: str) -> tuple[str, int]:
 
 def mask_tool_result(tool: str, data):
     """Tool result boundary for business-mcp calls. structure_evidence carries the text of uploaded
-    evidence; it is masked here, before the business tool loop shows it to the model or it is stored.
-    Other business tools return public registry records and pass through unchanged."""
-    if tool != "structure_evidence" or not isinstance(data, dict) or not isinstance(data.get("text"), str):
+    evidence twice: the combined text and each document's own text (documents[].text, read by the evidence
+    summary). Both are masked here, before the business tool loop or the summary shows them to a model and
+    before they are stored. Other business tools return public registry records and pass through unchanged."""
+    if tool != "structure_evidence" or not isinstance(data, dict):
         return data
-    text, count = mask_personal_data(data["text"])
-    return {**data, "text": text, "maskedPersonalData": count} if count else data
+    masked, total = dict(data), 0
+    if isinstance(data.get("text"), str):
+        masked["text"], count = mask_personal_data(data["text"])
+        total += count
+    if isinstance(data.get("documents"), list):
+        documents = []
+        for document in data["documents"]:
+            if isinstance(document, dict) and isinstance(document.get("text"), str):
+                text, count = mask_personal_data(document["text"])
+                document = {**document, "text": text}
+                total += count
+            documents.append(document)
+        masked["documents"] = documents
+    return {**masked, "maskedPersonalData": total} if total else data

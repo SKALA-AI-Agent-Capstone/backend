@@ -68,26 +68,13 @@ async def main(include_queue: bool = False) -> None:
         info = await client.call_tool("get_environment_info", {})
         assert info.structured_content["status"] == "ok"
     async with Client(required_env("RAG_MCP_URL"), auth=token) as client:
-        result = await client.call_tool("search_rules", {
-            "query": {
-                "claim_id": "smoke-c1",
-                "claim_text": "합성 테스트 문구",
-                "review_date": "2026-10-19",
-            }
-        })
-        assert result.structured_content["status"] == "NOT_IMPLEMENTED"
-        assert result.structured_content["evidence"] == []
-        assert result.structured_content["collection"] == "rules"
-        cases = await client.call_tool("search_cases", {
-            "query": {
-                "claim_id": "smoke-c2",
-                "claim_text": "합성 사례 검색",
-                "review_date": "2026-10-19",
-            }
-        })
-        assert cases.structured_content["collection"] == "cases"
-        assert cases.structured_content["status"] == "NOT_IMPLEMENTED"
-        assert cases.structured_content["evidence"] == []
+        names = {tool.name for tool in await client.list_tools()}
+        assert {"search_regulations", "search_precedents"} <= names
+        assert not names & {"search_rules", "search_cases", "get_evidence"}, "placeholder tools must stay removed"
+        result = await client.call_tool("search_regulations", {"query_text": "합성 테스트 문구", "top_k": 1})
+        assert result.structured_content["status"] in {"FOUND", "NO_RELEVANT_EVIDENCE", "CORPUS_NOT_INDEXED"}
+        corpus = json.loads((await client.read_resource("regulation://corpus"))[0].text)
+        assert isinstance(corpus["documents"], list)
     async with await psycopg.AsyncConnection.connect(
         required_env("RAG_DATABASE_URL"), connect_timeout=3
     ) as connection:

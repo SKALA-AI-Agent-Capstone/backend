@@ -101,7 +101,8 @@ async def test_regulation_search_reports_a_database_failure_instead_of_an_empty_
 async def test_precedent_search_is_a_separate_tool():
     async with Client(create_rag()) as client:
         names = {tool.name for tool in await client.list_tools()}
-        assert {"search_regulations", "search_precedents", "search_rules", "search_cases"} <= names
+        assert {"search_regulations", "search_precedents"} <= names
+        assert not names & {"search_rules", "search_cases", "get_evidence"}
         result = await client.call_tool("search_precedents", {"query_text": "기미 완전 제거"})
         assert result.structured_content["status"] == "SEARCH_ERROR"
 

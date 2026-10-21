@@ -110,7 +110,7 @@ RAG 계약(packages/shared/src/capstone_shared/rag_contracts.py, contracts/searc
 | 화장품법 적재 | 법률 4개 버전, 시행령 1개, 시행규칙 1개, 조문 315개 | 새 clone에서 ingest_rag.py legalize 실행 후 knowledge 행 수 |
 | rag-mcp search_regulations | 등록, 인증된 HTTP 호출로 FOUND 응답 | 아래 6번 확인 코드 |
 | rag-mcp search_precedents | 등록, 사례 미적재라 CORPUS_NOT_INDEXED | 같은 코드 |
-| v0.1 search_rules, search_cases, get_evidence | 그대로 유지, 여전히 NOT_IMPLEMENTED | 기존 consumer 호환용 |
+| v0.1 search_rules, search_cases, get_evidence | 2026-10-21 삭제 | 호출하던 곳 없음, docs/03-contracts.md 참고 |
 | business-mcp API 도구 4개 | verify_functional_approval, verify_patent, verify_gmp_company, lookup_ingredient_regulation | 키가 없으면 API_NOT_CONFIGURED |
 | PDF 출처 8건 | 수집기만 있음, 원문 미적재 | ingest_rag.py pdf가 PDF_NOT_FOUND로 건너뜀 |
 
@@ -263,13 +263,12 @@ excerpt는 저장된 원문 그대로 반환한다. similarity는 법 위반 확
 ## 지금 있는 개발 기반
 
 - services/rag-mcp의 FastMCP 서버, 개발용 인증과 상태 확인.
-- 실행 계약 v0.1의 search_rules, search_cases와 get_evidence. 세 도구 모두 업무 기능은 NOT_IMPLEMENTED다.
+- search_regulations, search_precedents, lookup_claim_rules 등 검색 도구와 원문 Resource 2개.
 - PostgreSQL knowledge 스키마와 rag_reader 및 rag_ingest 권한 분리.
 - 문서 버전과 청크, vector(1024) 빈 저장 공간.
 - Pydantic 계약, JSON Schema와 테스트, 전체 서비스 연결 smoke.
 
-현재 이름과 반환 타입은 노션 목표와 다르다. 도구의 이름만 바꾸거나 서로 같은 API라고 표시하지 않는다.
-get_evidence는 기반의 확장 제안이며 노션의 필수 도구 2개가 아니다.
+v0.1 기반 도구(search_rules, search_cases, get_evidence)는 2026-10-21에 지웠다.
 
 ## 먼저 진행할 계약 PR
 

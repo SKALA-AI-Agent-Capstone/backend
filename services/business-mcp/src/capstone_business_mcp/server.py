@@ -6,7 +6,6 @@ from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
 from fastmcp.server.dependencies import get_http_headers
 from starlette.responses import JSONResponse
 
-from capstone_shared.contracts import ScaffoldResult
 from capstone_shared.settings import internal_token, required_env
 from .review_tools import functional_report, functional_reports_by_name, mfds_list, patents, structure
 
@@ -32,11 +31,6 @@ def create_server() -> FastMCP:
             )
             response.raise_for_status()
             return response.json()
-
-    @mcp.tool(annotations={"readOnlyHint": True})
-    async def get_product_context(product_id: str) -> ScaffoldResult:
-        """Contract placeholder only. Product lookup and tenant authorization are not implemented."""
-        return ScaffoldResult(message="Product lookup is not implemented. No product was queried.")
 
     @mcp.tool(annotations={"readOnlyHint":True})
     async def structure_evidence(tenant_id: str, review_id: str, documents: list[dict]) -> dict:

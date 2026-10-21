@@ -109,7 +109,7 @@ Graph 실행은 270초 한도이며 OpenAI 요청은 50초와 SDK 제한 재시�
 Agent와 Business MCP가 Redis를 직접 읽거나 사용자 URL을 임의로 fetch하지 않는다.
 분석 종료 시 원본을 삭제하고 토큰의 해시와 파일 해시, 추출 텍스트 및 결과는 DB에 남긴다.
 Graph에는 raw bytes, 이미지 base64와 실행 토큰을 저장하지 않는다.
-증빙 원문(structure_evidence 결과)은 business-mcp 호출 경계(mcp_call)에서 주민등록번호, 이메일, 휴대전화, 지역번호 전화번호를 가린다(guardrails.py). 가린 뒤의 원문만 business 도구 선택 루프의 모델 입력, 심각도 판정과 저장 결과에 쓰이고 가린 개수는 evidence.maskedPersonalData에 남는다.
+증빙 원문(structure_evidence 결과의 전체 text와 문서별 documents[].text)은 business-mcp 호출 경계(mcp_call)에서 주민등록번호, 이메일, 휴대전화, 지역번호 전화번호를 가린다(guardrails.py). 가린 뒤의 원문만 business 도구 선택 루프의 모델 입력, 증빙 요약(evidence.py), 심각도 판정과 저장 결과에 쓰이고 가린 개수는 evidence.maskedPersonalData에 남는다.
 특허번호, 보고번호, 날짜, 사업자등록번호와 대표번호는 대조에 쓰므로 그대로 둔다. 광고 문구는 원문 근거 매칭에 필요해 가리지 않는다.
 
 같은 브라우저는 선택한 File을 메모리 미리보기로 보여줄 수 있다. 새로고침이나 다른 검토자에게 원본을 자동 전달하지 않는다.

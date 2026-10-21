@@ -125,8 +125,9 @@ API는 18080, Agent 18001, MCP 18002와 18003, PostgreSQL 55439, Redis 56389를 
 
 ## 선택 환경과 현재 한계
 
-RabbitMQ는 `docker compose --profile queue up -d --wait rabbitmq`로 켤 수 있다.
-업무 큐와 Worker, DLQ, SSE와 과금은 후속이며 기본 단건 흐름에 필요하지 않다.
+RabbitMQ는 2026-10-21부터 선택 프로필이 아니라 기본 Compose 구성에 포함된다(`docker compose up`만으로 같이 뜬다).
+단건 검토는 `REVIEW_QUEUE_ENABLED`(Compose 기본값 true)로 outbox(app.review_jobs)→publisher→consumer 큐와 재시도·DLQ가 연결됐다.
+다건(여러 광고 한 번에) 업로드 API와 Agent 쪽 별도 Worker, 배치 SSE와 과금은 후속이며 기본 단건 흐름에 필요하지 않다.
 현재 실행 중인 API를 재시작하면 메모리 실행 풀의 대기 작업은 자동 복구되지 않는다.
 원본 만료나 분석 실패 시 새 파일을 제출한다. 결과 항목별 재시도 버튼을 가짜 성공으로 연결하지 않는다.
 

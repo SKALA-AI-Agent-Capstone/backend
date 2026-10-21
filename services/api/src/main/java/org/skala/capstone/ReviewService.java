@@ -26,13 +26,14 @@ public class ReviewService implements AutoCloseable {
     final ViolationService violations;
     final ReviewCreditService credits;
     final TransactionTemplate tx;
+    final ReviewEvents events;
     final boolean queueEnabled;
     final ExecutorService jobs=new ThreadPoolExecutor(2,2,0,TimeUnit.SECONDS,new ArrayBlockingQueue<>(8),
         Thread.ofPlatform().name("review-job-",0).factory(),new ThreadPoolExecutor.AbortPolicy());
     public ReviewService(ReviewStore store,StringRedisTemplate cache,ObjectMapper json,AgentClient agent,ViolationService violations,
-        ReviewCreditService credits,TransactionTemplate tx,@Value("${capstone.review.queue-enabled:false}")boolean queueEnabled){
+        ReviewCreditService credits,TransactionTemplate tx,ReviewEvents events,@Value("${capstone.review.queue-enabled:false}")boolean queueEnabled){
         this.store=store;this.cache=cache;this.json=json;this.agent=agent;this.violations=violations;this.credits=credits;
-        this.tx=tx;this.queueEnabled=queueEnabled;
+        this.tx=tx;this.events=events;this.queueEnabled=queueEnabled;
     }
     public static String hash(byte[] raw){try{return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(raw));}catch(Exception e){throw new IllegalStateException(e);}}
     static String assetKey(String id){return "review:asset:"+id;}
@@ -126,12 +127,16 @@ public class ReviewService implements AutoCloseable {
     void runQueued(JsonNode request)throws Exception{
         String tenant=request.path("tenantId").asText(),id=request.path("reviewId").asText();int no=request.path("versionNo").asInt();
         store.mutate(tenant,id,d->ReviewStore.version(d,no).put("status","analyzing"));
+        events.publish(id,no,"started");
         JsonNode response=callAgent("/internal/runs",request);
         boolean auto=Boolean.TRUE.equals(tx.execute(status->{
             boolean approved=violations.saveResult(tenant,id,no,response);
             credits.charge(id,no);
             return approved;
         }));
+        // approval_required goes first because completed closes the stream.
+        if(!auto)events.publish(id,no,"approval_required",json.createObjectNode().put("hitlStatus","pending"));
+        events.publish(id,no,"completed",json.createObjectNode().put("hitlStatus",auto?"approved":"pending"));
         if(auto)try{violations.resumeAgent(tenant,id,no,"approved");}catch(Exception ignored){}
         try{purge(id,no);}catch(Exception ignored){}
     }
@@ -153,10 +158,15 @@ public class ReviewService implements AutoCloseable {
             return "released".equals(status);
         }catch(Exception ignored){return false;}
     }
+    /** The queue will run the job again; the browser keeps its stream and shows the retry. */
+    void retryScheduled(String id,int no,int attempt,int delaySeconds){
+        events.publish(id,no,"retry_scheduled",json.createObjectNode().put("attempt",attempt).put("delaySeconds",delaySeconds));
+    }
     JsonNode callAgent(String path,JsonNode body)throws Exception{return agent.post(path,body);}
     void fail(String tenant,String id,int no,String error){
         try{store.mutate(tenant,id,d->{var v=ReviewStore.version(d,no);v.put("status","failed").put("error",error);});}catch(Exception ignored){}
         try{credits.release(id,no);}catch(Exception ignored){}
+        events.publish(id,no,"failed",json.createObjectNode().put("error",error));
     }
     void failQueued(String tenant,String id,int no){
         // Both operations are idempotent, so a redelivery can finish either one after a crash.
@@ -164,6 +174,7 @@ public class ReviewService implements AutoCloseable {
         store.mutate(tenant,id,d->{var v=ReviewStore.version(d,no);
             v.put("status","failed").put("error","ANALYSIS_FAILED_REUPLOAD_REQUIRED");});
         purge(id,no);
+        events.publish(id,no,"failed",json.createObjectNode().put("error","ANALYSIS_FAILED_REUPLOAD_REQUIRED"));
     }
     /** Redis는 분석 중 빠른 조회용 핫 캐시일 뿐이다. 원본은 app.review_assets.bytes에 영구 보존되므로
      * 이 호출은 캐시 메모리만 비우고 원본을 지우지 않는다. */
