@@ -113,7 +113,7 @@ async def search(dsn: str, *, collection: str, query: str, top_k: int, review_da
 
 
 INVENTORY_SQL = """
-SELECT d.document_key, d.title, d.collection_key, d.source_type, d.version_label,
+SELECT d.document_version_id::text, d.document_key, d.title, d.collection_key, d.source_type, d.version_label,
        d.effective_from, d.effective_until, d.corpus_version, count(c.chunk_id) AS chunks,
        count(c.embedding) AS embedded
 FROM knowledge.document_versions d LEFT JOIN knowledge.chunks c USING (document_version_id)
@@ -127,6 +127,33 @@ async def corpus_inventory(dsn: str) -> list[dict]:
         rows = await (await conn.execute(INVENTORY_SQL)).fetchall()
     return [{**row, "effective_from": row["effective_from"] and row["effective_from"].isoformat(),
              "effective_until": row["effective_until"] and row["effective_until"].isoformat()} for row in rows]
+
+
+DOCUMENT_TEXT_SQL = """
+SELECT d.document_key, d.title, d.version_label, d.source_type, d.source_url,
+       d.effective_from, d.effective_until, d.corpus_version,
+       c.chunk_index, c.section, c.page_from, c.body
+FROM knowledge.document_versions d JOIN knowledge.chunks c USING (document_version_id)
+WHERE d.document_version_id = %(id)s::uuid
+ORDER BY c.chunk_index
+"""
+
+
+async def document_text(dsn: str, document_version_id: str) -> dict | None:
+    """Verbatim text of one stored document version in chunk order. None when the version does not exist."""
+    async with await psycopg.AsyncConnection.connect(dsn, connect_timeout=3, row_factory=dict_row) as conn:
+        rows = await (await conn.execute(DOCUMENT_TEXT_SQL, {"id": document_version_id})).fetchall()
+    if not rows:
+        return None
+    head = rows[0]
+    return {
+        "document_version_id": document_version_id, "document_key": head["document_key"], "title": head["title"],
+        "version": head["version_label"], "source_type": head["source_type"], "source_url": head["source_url"],
+        "effective_from": head["effective_from"] and head["effective_from"].isoformat(),
+        "effective_until": head["effective_until"] and head["effective_until"].isoformat(),
+        "corpus_version": head["corpus_version"],
+        "sections": [{"section": row["section"], "page": row["page_from"], "text": row["body"]} for row in rows],
+    }
 
 
 DOCUMENT_SQL = """

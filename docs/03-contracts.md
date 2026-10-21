@@ -96,6 +96,13 @@ status는 FOUND, NO_RELEVANT_EVIDENCE, CORPUS_NOT_INDEXED, SEARCH_ERROR다. 뒤�
 RegulationHit에는 노션 필드 외에 document_key, section, page, source_url, acquisition, effective_from, effective_until을 더했다.
 search_regulations는 선택 인자 review_date를 받아 그날 시행 중인 법령 버전만 찾는다. 이 봉투와 추가 필드는 Agent 담당의 확인이 필요한 제안이다.
 기존 v0.1 search_rules, search_cases, get_evidence는 호환을 위해 그대로 둔다.
+
+rag-mcp Resource는 모델이 아니라 앱(근거 패널)이 고르는 읽기 전용 원문이다. 검색 도구는 발췌를 돌려주고 Resource는 적재한 원문 전체를 돌려준다.
+
+| Resource | 반환 | 비고 |
+| --- | --- | --- |
+| regulation://corpus | documents: document_version_id, document_key, title, 버전, 시행일, 조각 수 | 원문을 읽을 id 목록. /health/corpus와 같은 목록 |
+| regulation://documents/{document_version_id} | 제목, 버전, source_url, 시행일과 sections(section, page, text) 목록 | 적재 순서 그대로의 원문. 없는 id와 DB 장애는 ResourceError |
 GMP와 규제정보 API는 검색 인자가 없어 최대 20쪽(2,000건)을 훑어 이름으로 거르고, 다 못 훑으면 incomplete를 반환한다.
 
 ### RAG 반환 필드

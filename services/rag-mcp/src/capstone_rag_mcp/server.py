@@ -1,8 +1,10 @@
 from datetime import date
 import os
 from typing import Annotated
+import uuid
 
 from fastmcp import FastMCP
+from fastmcp.exceptions import ResourceError
 from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
 import psycopg
 from pydantic import Field
@@ -27,7 +29,7 @@ from capstone_shared.rag_contracts import (
 from capstone_shared.settings import internal_token, required_env
 from .claims import find_ingredient, related_for_hits, resolve_claim_rules, to_hit
 from .embedding import load_embedder
-from .retrieval import Ranked, corpus_inventory, search
+from .retrieval import Ranked, corpus_inventory, document_text, search
 
 
 def regulation_hit(item: Ranked, related=None) -> RegulationHit:
@@ -64,6 +66,36 @@ def create_server() -> FastMCP:
                              "embeddingModel": embedder.model_name if embedder else None, "documents": documents})
 
     embedder = load_embedder()
+
+    # Resources are read-only originals chosen by the app (the basis panel), not by the model.
+    # Search tools return excerpts; these return the stored source as ingested.
+    @mcp.resource("regulation://corpus", name="regulation_corpus", mime_type="application/json")
+    async def regulation_corpus() -> dict:
+        """Every stored source document version (law, regulation, guideline, association standard, cases)
+        with its document_version_id, version label, effective dates and chunk count.
+        Pass a document_version_id to regulation://documents/{document_version_id} to read that source in full."""
+        try:
+            return {"documents": await corpus_inventory(required_env("RAG_DATABASE_URL"))}
+        except psycopg.Error:
+            raise ResourceError("Knowledge database unavailable. No document list was read.") from None
+
+    @mcp.resource("regulation://documents/{document_version_id}", name="regulation_document",
+                  mime_type="application/json")
+    async def regulation_document(document_version_id: str) -> dict:
+        """Verbatim text of one stored source document version in its original order (조, 항, 별표, page),
+        with source URL and effective dates. Read-only. Text is what was ingested; check source_url for the
+        official original before relying on it."""
+        try:
+            uuid.UUID(document_version_id)
+        except ValueError:
+            raise ResourceError("Unknown document_version_id. Read regulation://corpus for valid ids.") from None
+        try:
+            document = await document_text(required_env("RAG_DATABASE_URL"), document_version_id)
+        except psycopg.Error:
+            raise ResourceError("Knowledge database unavailable. No document was read.") from None
+        if document is None:
+            raise ResourceError("Unknown document_version_id. Read regulation://corpus for valid ids.")
+        return document
 
     @mcp.tool(annotations={"readOnlyHint": True})
     async def search_regulations(
