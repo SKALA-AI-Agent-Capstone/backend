@@ -300,6 +300,7 @@ Agent 및 MCP 밖의 별도 Application 서비스가 책임진다. 중도 실패
 문구 결과 findings와 사진 결과 visualFindings, 두 pipelineStatus를 따로 보존한다.
 result.tiles는 분석에 쓴 내용 구간의 좌표 목록이다(ResultTile, contracts/mvp-result-tile.schema.json). id, index, fileId, fileName, page와 원본 페이지 기준 0~1 region, 구간 이름 title(없으면 null)을 가지며 픽셀은 저장하지 않는다.
 findings와 visualFindings의 각 항목은 대표 구간 하나의 tileId를 가진다. 구간은 겹치지 않지만, 예전 결과처럼 겹치는 타일이 있으면 박스를 온전히 담는 타일 중 중심이 가장 가까운 타일 하나에만 속하고, 대표 구간을 정할 수 없으면 null이다.
+result.evidence는 documents(문서별 id, name, docType, pages, scannedPages, characters, text), failures(documentId, name, code, page), summaries(문서별 시험 요약), claimMatches(findingId, documentId, documentName, verdict, reason, needed)를 가진다. verdict는 supports, different_test, condition_mismatch, not_covered 중 하나이고, 실증 대조 check의 status는 evidence_supports, evidence_mismatch, evidence_conditions, evidence_not_covering, evidence_unread가 된다.
 문구 finding의 rewrites에는 규칙 검사와 모델 검증을 통과한 수정안만 들어간다. 통과한 수정안이 없으면 rewrites는 비고 rewriteNote에 마지막 실패 이유를 남긴다.
 이 필드가 추가되기 전에 저장된 결과에는 tiles와 tileId가 없으므로 소비자는 두 필드가 없는 경우를 기존 표시로 처리한다.
 LangSmith trace가 켜진 실행은 result.traceId(LangSmith run id)를 가진다. 꺼져 있으면 필드가 없다.

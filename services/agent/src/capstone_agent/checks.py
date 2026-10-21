@@ -18,7 +18,11 @@ from .instructions import instruction
 from .tools import McpTools
 
 ATTENTION = {"mismatch", "not_found", "ambiguous", "evidence_missing", "prohibited", "restricted",
-             "gmp_not_listed", "needs_input", "unavailable"}
+             "gmp_not_listed", "needs_input", "unavailable", "evidence_mismatch", "evidence_conditions",
+             "evidence_not_covering", "evidence_unread"}
+# evidence.match verdict -> check status. supports is the only one the reviewer does not need to chase.
+MATCH_STATUS = {"supports": "evidence_supports", "different_test": "evidence_mismatch",
+                "condition_mismatch": "evidence_conditions", "not_covered": "evidence_not_covering"}
 CLAIMED_FUNCTIONS = [(r"주름|탄력 ?개선|링클", "주름개선"), (r"미백|브라이트닝|기미|주근깨|잡티|화이트닝", "미백"),
                      (r"자외선|SPF|PA\+|선 ?차단", "자외선차단"), (r"탈모", "탈모 증상 완화"),
                      (r"여드름", "여드름성 피부 완화"), (r"튼살", "튼살 완화")]
@@ -94,7 +98,7 @@ def functional_check(finding: dict, reports: dict | None, product_name: str) -> 
                  source=source, detail={"claimedFunctions": claimed})
 
 
-def substantiation_check(finding: dict, evidence: dict, evidence_count: int) -> dict:
+def substantiation_check(finding: dict, evidence: dict, evidence_count: int, matched: dict | None = None) -> dict:
     rows = finding.get("evidenceRequirements", [])
     required = "; ".join(f"{r['expression']}: {r['requirement']}" for r in rows) or \
         "사실과 관련한 표시광고는 실증할 수 있어야 합니다 (화장품법 제14조, 실증 규정 제3조)."
@@ -103,6 +107,18 @@ def substantiation_check(finding: dict, evidence: dict, evidence_count: int) -> 
         return check("substantiation", "evidence_missing",
                      f"수치나 시험 결과를 말하는 표현인데 제출된 증빙이 없습니다. 필요한 자료: {required}",
                      source=source, detail={"requirements": rows})
+    if matched:
+        needed = f" 추가로 받을 자료: {matched['needed']}." if matched.get("needed") and matched["verdict"] != "supports" else ""
+        return check("substantiation", MATCH_STATUS[matched["verdict"]],
+                     f"{matched.get('documentName') or '제출 증빙'}: {matched['reason']}{needed}",
+                     source=source, detail={"requirements": rows, "match": matched})
+    if not evidence.get("documents") and evidence.get("failures"):
+        # 증빙을 읽으려 했지만 실패했다. 광고의 문제가 아니라 파일을 다시 확인할 일이다.
+        # (도구 선택 loop가 증빙 도구를 부르지 않았으면 failures도 없으니 아래 evidence_submitted로 간다.)
+        codes = ", ".join(sorted({f.get("code", "") for f in evidence.get("failures", [])})) or evidence.get("error") or "UNKNOWN"
+        return check("substantiation", "evidence_unread",
+                     f"제출한 증빙 {evidence_count}건을 읽지 못해 이 표현과 대조하지 못했습니다 ({codes}).",
+                     source=source, detail={"requirements": rows, "evidenceStatus": evidence.get("status")})
     return check("substantiation", "evidence_submitted",
                  f"증빙 {evidence_count}건이 제출됐습니다. 이 표현을 뒷받침하는지 담당자가 대조해야 합니다. 필요한 자료: {required}",
                  source=source, detail={"requirements": rows, "evidenceStatus": evidence.get("status")})
@@ -150,7 +166,7 @@ async def ingredient_check(call, name: str, day: str) -> dict:
 
 
 async def cross_checks(findings: list[dict], *, product: dict, evidence: dict, evidence_count: int,
-                       ad_text: str, provider, review_date: str, call=None) -> dict:
+                       ad_text: str, provider, review_date: str, call=None, matches: dict | None = None) -> dict:
     needed = {c for f in findings for c in f.get("requiredChecks", [])}
     if not needed:
         return {"findings": findings, "summary": {}, "warnings": []}
@@ -190,7 +206,7 @@ async def cross_checks(findings: list[dict], *, product: dict, evidence: dict, e
                     if claimed_functions(finding["phrase"]) or FUNCTIONAL_CONTEXT.search(finding["phrase"]):
                         results.append(functional_check(finding, reports, product.get("name", "")))
                 elif kind == "substantiation":
-                    results.append(substantiation_check(finding, evidence, evidence_count))
+                    results.append(substantiation_check(finding, evidence, evidence_count, (matches or {}).get(finding["id"])))
                 elif kind == "ingredient":
                     found = names.get(finding["id"], [])
                     if not found:

@@ -15,3 +15,5 @@
 | rewrite_verification.md | 수정 문구 재검증(자동 제안과 사람이 쓴 문구 모두) |
 | ingredient_extraction.md | 공식 기록 대조용 성분 이름 추출 |
 | business_tool_selection.md | business 도구 선택 루프(어떤 대조 도구를 부를지 고르기) |
+| evidence_summary.md | 제출 증빙 문서별 시험 요약(종류, 측정 항목, 기간, 대상, 기관, 결과) |
+| evidence_match.md | 실증이 필요한 광고 주장과 증빙 요약 대조 |
