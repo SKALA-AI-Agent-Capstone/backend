@@ -13,7 +13,7 @@
 | 공개 문서 조각의 임베딩 | knowledge.chunks.embedding | vector(1024), 아직 적재 없음 |
 | 크레딧과 과금 원장 | 목표: 별도 과금 DB | 로컬 테스트 결제용 app.credit_orders, app.credit_topups, app.review_credit_charges, app.credit_packages, app.credit_policy와 회원별 app.users.credit_balance 구현 |
 | 단건 검토 작업 메시지 | RabbitMQ | app.review_jobs outbox→publisher→consumer, 재시도(최대 3회, 5s/30s)와 DLQ 연결됨(2026-10-21, REVIEW_QUEUE_ENABLED). 여러 광고를 한 번에 올리는 다건 업로드와 Agent 쪽 별도 Worker는 미구현 |
-| 증빙서류의 개인정보(주민등록번호, 이메일, 휴대폰/유선 전화번호) | - | structure_evidence 응답을 Agent가 받는 즉시 마스킹, 모델 프롬프트와 저장 결과에 남지 않음. 마스킹 건수만 evidence.maskedPersonalData에 기록. 특허·보고·사업자번호, 날짜, 상담전화는 대조에 쓰여 그대로 둠 |
+| 증빙서류의 개인정보(주민등록번호, 이메일, 휴대폰/유선 전화번호) | - | structure_evidence 응답(전체 text와 문서별 documents[].text)을 Agent가 받는 즉시 마스킹, 모델 프롬프트(증빙 요약 포함)와 저장 결과에 남지 않음. 마스킹 건수만 evidence.maskedPersonalData에 기록. 특허·보고·사업자번호, 날짜, 상담전화는 대조에 쓰여 그대로 둠 |
 
 검토 결과에 자동 TTL을 적용하지 않는다. 개별 및 전체 삭제는 Backend가 제공하며 실행 중 삭제는 막는다.
 원본 파일은 결과와 보존 정책이 다르다. 공개 기준 문서의 수집 원본도 고객 업로드 원본과 구분한다.
