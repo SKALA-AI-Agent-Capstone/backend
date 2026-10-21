@@ -19,6 +19,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
@@ -53,6 +55,8 @@ class ViolationFlowTest {
     @Autowired ReviewCreditService credits;
     @Autowired CreditCatalog catalog;
     @Autowired DataSource dataSource;
+    @Autowired ReviewService reviews;
+    @Autowired org.springframework.transaction.support.TransactionTemplate tx;
     @MockitoBean AgentClient agent;
     @MockitoBean StringRedisTemplate redis;
 
@@ -121,6 +125,92 @@ class ViolationFlowTest {
         credits.charge(second,1);
         credits.release(second,1);
         assertThat(jdbc.queryForObject("SELECT credit_balance FROM app.users WHERE id=CAST(? AS uuid)",Integer.class,AUTHOR.id())).isZero();
+    }
+
+    int balance(){
+        return jdbc.queryForObject("SELECT credit_balance FROM app.users WHERE id=CAST(? AS uuid)",Integer.class,AUTHOR.id());
+    }
+    String reserveReview(){
+        jdbc.update("UPDATE app.users SET credit_balance=500 WHERE id=CAST(? AS uuid)",AUTHOR.id());
+        String id=review();
+        credits.reserve(TENANT,AUTHOR.id(),id,1);
+        return id;
+    }
+    ObjectNode run(String id){return json.createObjectNode().put("reviewId",id).put("tenantId",TENANT).put("versionNo",1);}
+    String chargeStatus(String id){
+        return jdbc.queryForObject("SELECT status FROM app.review_credit_charges WHERE review_id=CAST(? AS uuid) AND version_no=1",String.class,id);
+    }
+
+    @Test
+    void redisUploadFailureRollsBackCreditAndReview()throws Exception{
+        jdbc.update("UPDATE app.users SET credit_balance=500 WHERE id=CAST(? AS uuid)",AUTHOR.id());
+        int beforeReviews=jdbc.queryForObject("SELECT count(*) FROM app.reviews",Integer.class);
+        int beforeCharges=jdbc.queryForObject("SELECT count(*) FROM app.review_credit_charges",Integer.class);
+        int beforeAssets=jdbc.queryForObject("SELECT count(*) FROM app.review_assets",Integer.class);
+        @SuppressWarnings("unchecked") ValueOperations<String,String> values=mock(ValueOperations.class);
+        when(redis.opsForValue()).thenReturn(values);
+        doThrow(new RedisConnectionFailureException("synthetic Redis outage")).when(values).set(anyString(),anyString(),any(java.time.Duration.class));
+        var file=new MockMultipartFile("files","ad.png","image/png",new byte[]{(byte)137,80,78,71,13,10,26,10,0});
+        mvc.perform(multipart("/api/v1/reviews").file(file).param("metadata","{\"product\":{\"name\":\"검사\"}}").with(as(AUTHOR)))
+            .andExpect(status().isBadGateway()).andExpect(jsonPath("$.message").value("UPLOAD_STORAGE_FAILED"));
+        assertThat(balance()).isEqualTo(500);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM app.reviews",Integer.class)).isEqualTo(beforeReviews);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM app.review_credit_charges",Integer.class)).isEqualTo(beforeCharges);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM app.review_assets",Integer.class)).isEqualTo(beforeAssets);
+        verifyNoInteractions(agent);
+    }
+
+    @Test
+    void analysisFailureReturnsReservedCreditOnlyOnce()throws Exception{
+        String id=reserveReview();
+        when(agent.post(eq("/internal/runs"),any())).thenThrow(new java.io.IOException("synthetic Agent outage"));
+        reviews.execute(run(id));
+        assertThat(read(id).path("versions").get(0).path("status").asText()).isEqualTo("failed");
+        assertThat(chargeStatus(id)).isEqualTo("released");
+        assertThat(balance()).isEqualTo(500);
+        reviews.failQueued(TENANT,id,1);
+        assertThat(balance()).isEqualTo(500);
+    }
+
+    @Test
+    void partialOrUnconfiguredAnalysisKeepsResultsWithoutCharging()throws Exception{
+        for(var pipeline:List.of(List.of("partial","complete"),List.of("not_configured","not_configured"),
+            List.of("needs_input","complete"),List.of("complete","partial"),List.of("",""))){
+            String id=reserveReview();
+            when(agent.post(eq("/internal/runs"),any())).thenReturn(result(pipeline.get(0),pipeline.get(1),finding("f","보습 도움","low")));
+            reviews.runQueued(run(id));
+            assertThat(read(id).path("versions").get(0).path("result").path("findings")).hasSize(1);
+            assertThat(chargeStatus(id)).isEqualTo("released");
+            assertThat(balance()).isEqualTo(500);
+            assertThat(reviews.completed(TENANT,id,1)).isTrue();
+            credits.release(id,1);
+            assertThat(balance()).isEqualTo(500);
+        }
+    }
+
+    @Test
+    void fullyCompletedAnalysisChargesItsReservation()throws Exception{
+        String id=reserveReview();
+        when(agent.post(eq("/internal/runs"),any())).thenReturn(result("complete","complete"));
+        reviews.runQueued(run(id));
+        assertThat(chargeStatus(id)).isEqualTo("charged");
+        assertThat(balance()).isEqualTo(400);
+        credits.release(id,1);
+        assertThat(balance()).isEqualTo(400);
+        assertThat(reviews.completed(TENANT,id,1)).isTrue();
+    }
+
+    @Test
+    void partialResultRefundRollsBackWithItsResultTransaction(){
+        String id=reserveReview();
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,()->tx.executeWithoutResult(status->{
+            credits.settle(id,1,false);
+            throw new IllegalStateException("synthetic result storage failure");
+        }));
+        assertThat(chargeStatus(id)).isEqualTo("reserved");
+        assertThat(balance()).isEqualTo(400);
+        credits.release(id,1);
+        assertThat(balance()).isEqualTo(500);
     }
 
     @Autowired ReviewEvents events;

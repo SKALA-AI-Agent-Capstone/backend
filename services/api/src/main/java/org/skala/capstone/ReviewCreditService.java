@@ -35,8 +35,19 @@ public class ReviewCreditService {
         if(updated!=1) throw new IllegalStateException("REVIEW_CREDIT_RESERVATION_MISSING");
     }
 
+    /** Save the result and settle its reservation in the same transaction, including partial results. */
+    @Transactional
+    public void settle(String reviewId,int versionNo,boolean analysisComplete) {
+        if(analysisComplete) charge(reviewId,versionNo);
+        else refundReservation(reviewId,versionNo);
+    }
+
     @Transactional(propagation=Propagation.REQUIRES_NEW)
     public void release(String reviewId,int versionNo) {
+        refundReservation(reviewId,versionNo);
+    }
+
+    private void refundReservation(String reviewId,int versionNo) {
         var rows=jdbc.queryForList("UPDATE app.review_credit_charges SET status='released',settled_at=now() "+
             "WHERE review_id=CAST(? AS uuid) AND version_no=? AND status='reserved' "+
             "RETURNING tenant_id,user_id,credits",reviewId,versionNo);

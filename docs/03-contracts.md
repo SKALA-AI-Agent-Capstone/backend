@@ -304,7 +304,7 @@ GET /api/v1/reviews/{reviewId}/events, `text/event-stream`. 일반 JSON API와 �
 | tool_started, tool_finished | Agent, 법령 검색(legal_basis)과 business-mcp 도구 | tool, ok(끝날 때. 어댑터의 api_error와 미설정은 false) |
 | retry_scheduled | Spring 큐, 일시 실패 후 재시도 예약 | attempt, delaySeconds |
 | approval_required | Spring, 결과 저장 후 사람 승인이 필요할 때 | hitlStatus |
-| completed | Spring, 결과와 차감 저장 후. 스트림을 닫는다 | hitlStatus(pending 또는 자동 승인 approved) |
+| completed | Spring, 결과와 크레딧 정산 저장 후. 스트림을 닫는다 | hitlStatus(pending 또는 자동 승인 approved) |
 | failed | Spring, 최종 실패. 스트림을 닫는다 | error |
 
 15초마다 `:ping` 주석을 보낸다. Agent는 POST /internal/reviews/{id}/events(내부 토큰과 X-Run-Token)로 step_done, tool_started, tool_finished만 보낼 수 있다.
@@ -376,3 +376,10 @@ EFFECT_YN1~3, SPF와 PA 및 취하승인여부를 원본 필드로 반환한다.
 
 /api/v1/reference-sources는 기존 sources와 함께 apis 배열도 반환한다. 문서 9건과 API 4종의 역할을 섞지 않는다.
 GMP와 성분 규제정보는 참고 데이터이며 현재 Agent 업무 도구로 추가 등록하지 않았다.
+
+
+### 접수 모달과 실패 시 크레딧 처리 (2026-10-21)
+
+크레딧 차감 확인을 누르면 네트워크 응답 전에 진행 모달을 연다. 접수 전에는 잔액 확인과 파일 업로드 상태를 표시하고 분석 5단계는 모두 대기로 둔다. POST의 202 응답으로 reviewId를 받으면 기존 SSE를 구독하며, 상세 화면 이동과 SSE 응답을 기다리지 않고 모달을 유지한다. 접수 중 모달을 닫은 선택도 상세 화면으로 이어 간다. 접수 실패 시 입력과 선택 파일을 유지하며 재시도할 수 있다.
+
+접수 실패는 review와 크레딧 예약을 같은 트랜잭션에서 롤백한다. 접수 후 최종 분석 실패는 예약분을 한 번만 반환한다. HTTP 200이어도 result.pipelineStatus.text와 visual이 모두 complete인 경우에만 차감을 확정한다. partial, not_configured, needs_input 또는 상태 누락은 결과를 보존하면서 예약분을 반환한다. 이 결과도 큐에서 처리 완료로 인정하여 다시 과금하거나 재실행하지 않는다. 분석 결과와 정상 완료 시 정산은 같은 트랜잭션에 저장한다. SSE 연결 실패 자체는 분석 실패가 아니며 재접속 또는 폴링으로 실제 결과를 확인한다.
