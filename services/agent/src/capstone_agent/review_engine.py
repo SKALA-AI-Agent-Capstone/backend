@@ -26,7 +26,7 @@ from .instructions import instruction
 from .regulations import legal_basis, search_basis
 from .tools import McpTools
 from .guardrails import mask_tool_result
-from .context_budget import prepare_parse, prepare_tool_messages, TOOL_OUTPUT_BUDGET
+from .context_budget import prepare_parse, prepare_tool_messages, split_parse_text, TOOL_OUTPUT_BUDGET
 from .review_models import (
     RunRequest, OCRLines, TextAssessment, VisualAssessment, ResultTile, RewriteSuggestion, RewriteVerification,
 )
@@ -619,9 +619,11 @@ def merge_nested(findings):
     for finding in findings:
         inner = compact(finding["phrase"])
         if any(other is not finding and other.get("textId") == finding.get("textId")
+               and other["start"] <= finding["start"] and finding["end"] <= other["end"]
                and inner != compact(other["phrase"]) and inner in compact(other["phrase"]) for other in findings):
             continue
-        if any(k.get("textId") == finding.get("textId") and compact(k["phrase"]) == inner for k in kept):
+        if any(k.get("textId") == finding.get("textId") and k["start"] == finding["start"]
+               and k["end"] == finding["end"] and compact(k["phrase"]) == inner for k in kept):
             continue
         kept.append(finding)
     return kept
@@ -639,27 +641,41 @@ def build_graph(native, tiles, provider, checkpointer, request=None):
         if not provider.client:
             status="not_configured"; warnings.append("TEXT_MODEL_NOT_CONFIGURED")
         elif texts:
+            ad = "\n".join(t["text"] for t in texts)
+            spans, offset = [], 0
+            for source in texts:
+                spans.append((offset, offset + len(source["text"]), source))
+                offset += len(source["text"]) + 1
             try:
-                ad = "\n".join(t["text"] for t in texts)
-                prompt = instruction("text_review")
-                _, _, trimmed = prepare_parse(prompt, ad, TextAssessment)
-                if trimmed:
-                    status="partial"; warnings.append("TEXT_REVIEW_INPUT_TRUNCATED")
-                output = await provider.parse(
-                    instruction("text_review"), TextAssessment,text=ad)
-                for i, issue in enumerate(output.findings):
-                    source=next((t for t in texts if issue.phrase and issue.phrase in t["text"]),None)
-                    if source is None:
-                        continue  # Reject ungrounded model spans.
-                    start=source["text"].find(issue.phrase)
-                    findings.append({"id":f"text-{i}","phrase":issue.phrase,"start":start,"end":start+len(issue.phrase),
+                chunks = split_parse_text(instruction("text_review"), ad, TextAssessment)
+            except Exception:
+                chunks = []
+                status="partial"; warnings.append("TEXT_REVIEW_BUDGET_FAILED")
+            for chunk_index, (chunk_start, chunk) in enumerate(chunks):
+                try:
+                    output = await provider.parse(instruction("text_review"), TextAssessment, text=chunk)
+                except Exception:
+                    status="partial"; warnings.append(f"TEXT_REVIEW_CHUNK_FAILED:{chunk_index + 1}")
+                    continue
+                phrase_counts = {}
+                for issue in output.findings:
+                    if not issue.phrase:
+                        continue
+                    positions = [chunk_start + match.start() for match in re.finditer(re.escape(issue.phrase), chunk)]
+                    valid = [(source, position - left) for position in positions
+                             for left, right, source in spans if left <= position and position + len(issue.phrase) <= right]
+                    occurrence = phrase_counts.get(issue.phrase, 0)
+                    phrase_counts[issue.phrase] = occurrence + 1
+                    match = valid[occurrence] if occurrence < len(valid) else None
+                    if match is None:
+                        continue  # Reject ungrounded or cross-block model spans.
+                    source, start = match
+                    findings.append({"id":f"text-{len(findings)}","phrase":issue.phrase,"start":start,"end":start+len(issue.phrase),
                         "location":source["location"],"textId":source["id"],"tileId":assign_tile(source["location"],manifest),
                         "severity":"low","baseSeverity":"low",
                         "claimType":issue.claimType,"reason":issue.reason,"title":"근거 대조 전 확인할 문구",
                         "basis":[],"baseBasis":[],"confidence":None,"rewrites":issue.rewrites,"references":[],"category":"확인할 광고 주장",
                         "legalStatus":"not_evaluated","escalation":None})
-            except Exception:
-                status="partial";warnings.append("TEXT_REVIEW_PROVIDER_FAILED")
         else:
             status="needs_input";warnings.append("NO_READABLE_TEXT")
         findings = merge_nested(findings)

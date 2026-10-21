@@ -32,6 +32,20 @@ def test_fixed_prompt_cannot_be_silently_cut(monkeypatch):
         budget.prepare_parse("필수 지침" * 1000, "광고", SmallResult)
 
 
+def test_split_parse_text_covers_middle_and_boundaries_without_truncation(monkeypatch):
+    monkeypatch.setattr(budget, "_encoding", lambda: None)
+    monkeypatch.setenv("MODEL_INPUT_TOKEN_BUDGET", "1200")
+    source = "처음 문구\n" + "일반 광고 문구\n" * 400 + "중간 문제 문구\n" + "일반 광고 문구\n" * 400 + "마지막 문구"
+    chunks = budget.split_parse_text("분석 지침", source, SmallResult)
+    assert len(chunks) > 2
+    assert chunks[0][0] == 0 and chunks[-1][0] + len(chunks[-1][1]) == len(source)
+    assert any("중간 문제 문구" in chunk for _, chunk in chunks)
+    assert all(source[start:start + len(chunk)] == chunk for start, chunk in chunks)
+    assert all(start <= previous_start + len(previous_chunk) for (previous_start, previous_chunk), (start, _) in zip(chunks, chunks[1:]))
+    fixed = budget.tokens("분석 지침") + budget.encoded_tokens(SmallResult.model_json_schema()) + budget.MESSAGE_OVERHEAD
+    assert all(budget.tokens(chunk) + fixed <= 1200 for _, chunk in chunks)
+
+
 def test_old_tool_turns_are_summarized_as_complete_pairs(monkeypatch):
     monkeypatch.setattr(budget, "_encoding", lambda: None)
     monkeypatch.setenv("MODEL_INPUT_TOKEN_BUDGET", "1200")

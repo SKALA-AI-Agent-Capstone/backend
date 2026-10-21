@@ -121,6 +121,37 @@ def prepare_parse(prompt: str, text: str, schema, *, image: bool = False) -> tup
     return bounded, PARSE_OUTPUT_BUDGETS.get(name, 2000), bounded != text
 
 
+def split_parse_text(prompt: str, text: str, schema, *, overlap_chars: int = 160) -> list[tuple[int, str]]:
+    """Cover all text with bounded, overlapping parse inputs and original offsets."""
+    cap = _input_cap(PARSE_INPUT_BUDGETS.get(schema.__name__, 6000))
+    available = cap - tokens(prompt) - encoded_tokens(schema.model_json_schema()) - MESSAGE_OVERHEAD
+    if available < 64:
+        raise ContextBudgetExceeded(f"MODEL_INPUT_BUDGET_TOO_SMALL:{schema.__name__}")
+    chunks = []
+    start = 0
+    while start < len(text):
+        low, high = start + 1, len(text)
+        while low < high:
+            middle = (low + high + 1) // 2
+            if tokens(text[start:middle]) <= available:
+                low = middle
+            else:
+                high = middle - 1
+        end = low
+        if end < len(text):
+            boundary = text.rfind("\n", start + (end - start) * 3 // 4, end)
+            if boundary > start:
+                end = boundary + 1
+        chunk = text[start:end]
+        if tokens(chunk) > available:
+            raise ContextBudgetExceeded("TEXT_CHUNK_OVER_BUDGET")
+        chunks.append((start, chunk))
+        if end == len(text):
+            break
+        start = max(start + 1, end - min(overlap_chars, (end - start) // 4))
+    return chunks
+
+
 def _tool_status(content: str) -> str:
     try:
         value = json.loads(content)

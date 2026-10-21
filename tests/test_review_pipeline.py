@@ -1,4 +1,6 @@
 from io import BytesIO
+import json
+from pathlib import Path
 from PIL import Image
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
@@ -6,6 +8,78 @@ from langgraph.types import Command
 from capstone_shared.documents import Tile, tile_image, prepare_document
 from capstone_agent.review_engine import (build_graph, Provider, deduplicate, correct_ocr_text, OcrCorrection,
     tile_manifest, assign_tile)
+
+
+async def test_long_text_eval_cases_keep_claims_in_every_position(monkeypatch):
+    import capstone_agent.review_engine as engine
+    from capstone_agent.review_models import TextAssessment, VisualAssessment
+
+    monkeypatch.setenv("MODEL_INPUT_TOKEN_BUDGET", "3000")
+    cases = json.loads((Path(__file__).parent / "data/text_review_eval.json").read_text(encoding="utf-8"))
+    for case in cases:
+        ad = (case.get("prefix", "") + case.get("text", "") * case.get("repeat_before", 0)
+              + case.get("insert", "") + case.get("text", "") * case.get("repeat_after", 0)
+              + case.get("suffix", ""))
+        async def extract(native, tiles, provider):
+            return [{"id":"ad", "text":ad, "location":{"fileId":"synthetic", "page":1}}], []
+        monkeypatch.setattr(engine, "extract_text", extract)
+
+        class FakeProvider:
+            client = True
+            seen = []
+
+            async def parse(self, prompt, schema, **kwargs):
+                if schema is TextAssessment:
+                    chunk = kwargs["text"]
+                    self.seen.append(chunk)
+                    return TextAssessment(findings=[{"phrase":phrase,"reason":"합성 평가", "claimType":"exaggeration","rewrites":[]}
+                        for phrase in set(case["expected"]) for _ in range(chunk.count(phrase))])
+                return VisualAssessment(sectionTitle="",findings=[],unreadable=False)
+
+        provider = FakeProvider()
+        graph = build_graph([], [], provider, InMemorySaver())
+        output = await graph.ainvoke({"reviewId":case["id"],"tenantId":"synthetic","versionNo":1,"product":{}},
+                                    {"configurable":{"thread_id":f"synthetic:{case['id']}:1"}})
+        assert len(provider.seen) > 1
+        assert len(output["result"]["findings"]) == len(case["expected"])
+        assert [finding["phrase"] for finding in output["result"]["findings"]] == case["expected"]
+        assert all(ad[finding["start"]:finding["end"]] == finding["phrase"] for finding in output["result"]["findings"])
+        assert "TEXT_REVIEW_INPUT_TRUNCATED" not in output["result"]["warnings"]
+
+
+async def test_failed_text_chunk_is_reported_while_later_chunks_continue(monkeypatch):
+    import capstone_agent.review_engine as engine
+    from capstone_agent.review_models import TextAssessment, VisualAssessment
+
+    monkeypatch.setenv("MODEL_INPUT_TOKEN_BUDGET", "3000")
+    ad = "일반적인 사용감.\n" * 500 + "마지막 문구는 모든 피부병을 치료합니다."
+    async def extract(native, tiles, provider):
+        return [{"id":"ad", "text":ad, "location":{"fileId":"synthetic", "page":1}}], []
+    monkeypatch.setattr(engine, "extract_text", extract)
+
+    class FakeProvider:
+        client = True
+        calls = 0
+
+        async def parse(self, prompt, schema, **kwargs):
+            if schema is TextAssessment:
+                self.calls += 1
+                if self.calls == 1:
+                    raise RuntimeError("synthetic model failure")
+                phrase = "모든 피부병을 치료합니다"
+                return TextAssessment(findings=[{"phrase":phrase,"reason":"합성 평가","claimType":"drug","rewrites":[]}]
+                                      if phrase in kwargs["text"] else [])
+            return VisualAssessment(sectionTitle="",findings=[],unreadable=False)
+
+    provider = FakeProvider()
+    output = await build_graph([], [], provider, InMemorySaver()).ainvoke(
+        {"reviewId":"failure-case","tenantId":"synthetic","versionNo":1,"product":{}},
+        {"configurable":{"thread_id":"synthetic:failure-case:1"}})
+    result = output["result"]
+    assert provider.calls > 1
+    assert result["pipelineStatus"]["text"] == "partial"
+    assert "TEXT_REVIEW_CHUNK_FAILED:1" in result["warnings"]
+    assert [finding["phrase"] for finding in result["findings"]] == ["모든 피부병을 치료합니다"]
 
 
 async def test_ocr_correction_fixes_broken_spacing_without_changing_line_count():
