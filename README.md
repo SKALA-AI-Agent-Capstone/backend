@@ -87,7 +87,7 @@ PostgreSQL 안에 벡터를 저장하므로 별도 Vector DB 서비스는 없다
 - FastMCP 증빙 추출, 식약처와 KIPRIS 조회 adapter. 실제 승인키와 정상 응답 검증은 별도다.
 - PostgreSQL 결과와 버전, LangGraph HITL checkpoint, 담당자 결정 저장과 재개, 이력 삭제.
 - RAG 출처 9건과 API 4종 목록, knowledge 스키마와 vector(1024). 화장품법은 legalize-kr에서 조문 단위로 적재하고 나머지는 PDF로 적재(scripts/ingest_rag.py). rag-mcp의 search_regulations와 search_precedents는 키워드 검색으로 동작하며 임베딩은 선택. Agent는 아직 RAG를 호출하지 않는다.
-- SSE, 다건 RabbitMQ Worker, 실제 과금, 증빙 의미 대조와 특허 청구항 대조는 후속.
+- SSE, 다건 RabbitMQ Worker, 운영 결제·과금 DB 분리, 증빙 의미 대조와 특허 청구항 대조는 후속.
 
 공개 계약은 /api/v1이다. 이전 /api/reviews 501 경로와 v0.1 검색 stub은 호환 기반이며 새 업무 화면에서 호출하지 않는다.
 실제 모델과 공공 API 설정, 시작 방법 및 검증용 주소는 [개발환경](docs/02-development.md)을 따른다.
@@ -107,10 +107,10 @@ chore/dev-foundation은 초기 실행환경 브랜치다. 후속 기능은 최�
 
 ## 테스트 결제 연결
 
-결제 정보는 토스페이먼츠 결제창에서 입력하며 프론트엔드는 카드번호와 CVC를 받지 않는다. 테스트 결제 승인 후에만 `app.credit_topups`에 1회 기록하고 해당 회원의 `app.users.credit_balance`를 증가시키며 `/api/v1/billing/balance`로 잔액을 조회한다. 이 과금 원장은 로컬 MVP의 `app` 스키마에 둔 테스트 구현이며, 목표인 별도 과금 DB와 검토 사용량 차감은 후속 작업이다.
+결제 정보는 토스페이먼츠 결제창에서 입력하며 프론트엔드는 카드번호와 CVC를 받지 않는다. 테스트 결제 승인 후에만 `app.credit_topups`에 1회 기록하고 해당 회원의 `app.users.credit_balance`를 증가시키며 `/api/v1/billing/balance`로 잔액을 조회한다. 로컬 MVP에서는 검사 1회(재검사 포함)마다 회원 잔액에서 `app.credit_policy.review_cost`만큼 원자적으로 예약하고 결과 저장 시 확정한다. 분석 실패 시 예약분을 반환하며 `app.review_credit_charges`에 상태를 기록한다. 충전 금액권은 `app.credit_packages`가 관리하며, 초기값은 100크레딧에 5,000원과 기존 할인율이다. 프론트엔드는 `/api/v1/billing/config`에서 금액권과 검사 비용을 받아 표시한다. 별도 과금 DB는 후속 작업이다.
 
 1. 토스페이먼츠 개발자센터에서 테스트 키 한 쌍을 발급받는다. 주문서형·결제창형 키(`test_gck`, `test_gsk`)와 API 개별 연동 키(`test_ck`, `test_sk`)를 지원하며, 같은 종류의 한 쌍을 사용한다.
 2. 백엔드의 Git 제외 `.env`에 `TOSS_TEST_CLIENT_KEY`, `TOSS_TEST_SECRET_KEY`를 설정한다. `PAYMENT_RETURN_URL`은 실제 브라우저에서 쓰는 주소의 `/credits` 경로다. 키를 소스나 프론트 환경변수에 넣지 않는다.
 3. `docker compose --profile web up -d --build api web --wait`로 API와 웹을 재시작한다. `/credits`에서 결제하고 복귀 후 서버가 승인하며 잔액을 표시한다.
 
-키가 없으면 결제 버튼은 비활성화된다. 라이브 키는 코드에서 거부한다. 실제 돈이 오가는 운영 결제, 환불 및 검토 사용량 차감은 이 테스트 구현의 범위가 아니다.
+키가 없으면 결제 버튼은 비활성화된다. 라이브 키는 코드에서 거부한다. 실제 돈이 오가는 운영 결제와 PG 환불은 이 테스트 구현의 범위가 아니다.

@@ -18,26 +18,36 @@ import org.springframework.web.server.ResponseStatusException;
 
 @RestController @RequestMapping("/api/v1/billing")
 public class BillingController {
-    private static final Map<Integer,Integer> PRICES=Map.of(100,1000,200,1900,300,2700,400,3520,600,5160,800,6720,1000,8200,2000,16000);
     private final JdbcTemplate jdbc;
+    private final CreditCatalog catalog;
     private final ObjectMapper json;
     private final HttpClient http=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
     private final String returnUrl,tossClientKey,tossSecretKey;
-    public BillingController(JdbcTemplate jdbc,ObjectMapper json,@Value("${payments.return-url}") String returnUrl,
+    public BillingController(JdbcTemplate jdbc,CreditCatalog catalog,ObjectMapper json,@Value("${payments.return-url}") String returnUrl,
         @Value("${payments.toss-client-key:}") String tossClientKey,@Value("${payments.toss-secret-key:}") String tossSecretKey) {
-        this.jdbc=jdbc;this.json=json;this.returnUrl=returnUrl;this.tossClientKey=tossClientKey;
+        this.jdbc=jdbc;this.catalog=catalog;this.json=json;this.returnUrl=returnUrl;this.tossClientKey=tossClientKey;
         this.tossSecretKey=tossSecretKey;
     }
     @GetMapping("/config") public Map<String,Object> config() {
-        return Map.of("tossEnabled",tossReady(),"tossClientKey",tossReady()?tossClientKey:"","tossMode",tossClientKey.startsWith("test_gck_")?"window":"legacy");
+        return Map.of("tossEnabled",tossReady(),"tossClientKey",tossReady()?tossClientKey:"",
+            "tossMode",tossClientKey.startsWith("test_gck_")?"window":"legacy",
+            "packages",catalog.packages(),"reviewCost",catalog.reviewCost());
     }
     @GetMapping("/balance") public Map<String,Integer> balance(@AuthenticationPrincipal Jwt jwt) {
         Integer amount=jdbc.queryForObject("SELECT credit_balance FROM app.users WHERE id=CAST(? AS uuid) AND tenant_id=CAST(? AS uuid)",Integer.class,jwt.getSubject(),jwt.getClaimAsString("tenantId"));
         return Map.of("balance",amount==null?0:amount);
     }
+    @GetMapping("/reviews/{reviewId}/charge") public Map<String,Object> reviewCharge(@AuthenticationPrincipal Jwt jwt,
+        @PathVariable UUID reviewId,@RequestParam int versionNo) {
+        var rows=jdbc.queryForList("SELECT credits,status FROM app.review_credit_charges " +
+            "WHERE review_id=? AND version_no=? AND tenant_id=CAST(? AS uuid) AND user_id=CAST(? AS uuid)",
+            reviewId,versionNo,jwt.getClaimAsString("tenantId"),jwt.getSubject());
+        return rows.isEmpty()?Map.of("charged",false):Map.of("charged",true,"credits",rows.getFirst().get("credits"),"status",rows.getFirst().get("status"));
+    }
     @PostMapping("/orders") public Map<String,Object> order(@AuthenticationPrincipal Jwt jwt,@RequestBody OrderInput input) {
-        Integer amount=PRICES.get(input.credits());
-        if(amount==null || !"toss".equals(input.method())) throw error(HttpStatus.BAD_REQUEST,"INVALID_PACKAGE_OR_METHOD");
+        if(!"toss".equals(input.method())) throw error(HttpStatus.BAD_REQUEST,"INVALID_PACKAGE_OR_METHOD");
+        Integer amount=catalog.price(input.credits());
+        if(amount==null) throw error(HttpStatus.BAD_REQUEST,"INVALID_PACKAGE_OR_METHOD");
         if(!tossReady()) throw error(HttpStatus.SERVICE_UNAVAILABLE,"PAYMENT_TEST_KEYS_NOT_CONFIGURED");
         UUID id=UUID.randomUUID();
         jdbc.update("INSERT INTO app.credit_orders(id,tenant_id,user_id,provider,credits,amount_krw,status) VALUES (?,CAST(? AS uuid),CAST(? AS uuid),?,?,?,'pending')",

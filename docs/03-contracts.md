@@ -37,8 +37,9 @@
 | 개별 이력 삭제 | DELETE /api/v1/reviews/{reviewId} | 기업 범위와 삭제 전파 검증 |
 | 전체 이력 삭제 | DELETE /api/v1/reviews | 사용자 확인 UI |
 | 재검토 | POST /api/v1/reviews/{reviewId}/re-review | 생략된 파일을 부모 건에서 재사용하는 규칙 협의 |
-| 테스트 결제 설정 | GET /api/v1/billing/config | 테스트 키 구성 여부와 토스 공개 클라이언트 키 |
+| 테스트 결제 설정 | GET /api/v1/billing/config | 테스트 키 구성 여부, 토스 공개 클라이언트 키, 활성 금액권 목록(packages)과 검사 비용(reviewCost) |
 | 크레딧 잔액 | GET /api/v1/billing/balance | 로그인 회원의 app.users.credit_balance, JWT 회원·기업 범위 |
+| 검사 크레딧 기록 | GET /api/v1/billing/reviews/{reviewId}/charge?versionNo={no} | 로그인 회원 자신의 버전별 차감 금액과 상태. 기록이 없으면 charged=false |
 | 충전 주문 | POST /api/v1/billing/orders | credits와 method(toss), 가격은 서버에서 확정 |
 | 토스 테스트 승인 | POST /api/v1/billing/orders/{orderId}/confirm-toss | paymentKey 및 금액 대조 후 1회 적립 |
 

@@ -234,11 +234,10 @@ public class ViolationService {
                     if(violationId.equals(f.path("violationId").asText()))return f.path("reason").asText("");
                 return "";
             });
-            boolean passed;
+            JsonNode verification;
             try{
-                passed=agent.post("/internal/rewrites/verify",store.mapper().createObjectNode()
-                    .put("reviewId",id).put("tenantId",tenant).put("text",manualText).put("reason",reason))
-                    .path("passed").asBoolean(false);
+                verification=agent.post("/internal/rewrites/verify",store.mapper().createObjectNode()
+                    .put("reviewId",id).put("tenantId",tenant).put("text",manualText).put("reason",reason));
             }catch(AgentClient.AgentFailure failure){
                 if(failure.status==503 && "TEXT_MODEL_NOT_CONFIGURED".equals(failure.detail))
                     throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"REWRITE_MODEL_NOT_CONFIGURED");
@@ -246,7 +245,11 @@ public class ViolationService {
             }catch(Exception error){
                 throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"AGENT_UNAVAILABLE");
             }
-            if(!passed)throw new ResponseStatusException(HttpStatus.CONFLICT,"MANUAL_TEXT_FAILED_VERIFICATION");
+            if(!verification.path("passed").asBoolean(false)){
+                // reasoning을 그대로 메시지에 실어 프론트가 카드의 사유 칸에 바로 덮어쓸 수 있게 한다.
+                String reasoning=verification.path("reasoning").asText("");
+                throw new ResponseStatusException(HttpStatus.CONFLICT,reasoning.isBlank()?"MANUAL_TEXT_FAILED_VERIFICATION":reasoning);
+            }
             tx.executeWithoutResult(status->{
                 lockOpenReview(jwt,id);
                 lockViolation(id,violationId);
