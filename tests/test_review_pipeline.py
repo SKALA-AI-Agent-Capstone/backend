@@ -4,7 +4,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 from capstone_shared.documents import tile_image, prepare_document
-from capstone_agent.review_engine import build_graph, Provider, deduplicate, correct_ocr_text, OcrCorrection
+from capstone_agent.review_engine import build_graph, Provider, deduplicate, correct_ocr_text, OcrCorrection, visual_focus_region
 
 
 async def test_ocr_correction_fixes_broken_spacing_without_changing_line_count():
@@ -34,6 +34,13 @@ def test_long_image_tiles_cover_original_without_gaps():
     assert all(a.box[3]>b.box[1] for a,b in zip(tiles,tiles[1:]))
     assert tiles[1].location()["region"][1]==1360/19799
     assert all(tile.location()["bbox"] is None for tile in tiles)
+
+
+def test_visual_focus_region_maps_tile_to_original_and_rejects_invalid_box():
+    tiles=tile_image(Image.new("RGB",(100,3000)),"a","long.png")
+    assert visual_focus_region(tiles[1],[0.2,0.25,0.8,0.75]) == [0.2,(1360+400)/3000,0.8,(1360+1200)/3000]
+    assert visual_focus_region(tiles[1],[0.9,0,0.2,1]) is None
+    assert visual_focus_region(tiles[1],None) is None
 
 
 def test_input_is_decoded_from_bytes_not_filename():
@@ -83,13 +90,14 @@ async def test_both_paths_have_independent_results_and_checkpoint_contains_no_pi
                 return RewriteDraft(text="자료 확인 중인 주름 개선 효과")
             if schema is RewriteVerification:
                 return RewriteVerification(passed=True,reasoning="합성 재검증 통과")
-            return VisualAssessment(findings=[{"observation":"합성 비교 구성","concern":"촬영 조건 확인","comparisonLimitations":[],"needsAdjacentContext":False}],unreadable=False)
+            return VisualAssessment(findings=[{"observation":"합성 비교 구성","concern":"촬영 조건 확인","comparisonLimitations":[],"needsAdjacentContext":False,"focusBox":[0.5,0,1,0.5]}],unreadable=False)
     tile=tile_image(Image.new("RGB",(64,64)),"a","synthetic.png")[0]
     graph=build_graph([], [tile],FakeProvider(),InMemorySaver())
     output=await graph.ainvoke({"reviewId":"r","tenantId":"t","versionNo":1,"product":{}},
                               {"configurable":{"thread_id":"t:r:1"}})
     assert len(output["result"]["findings"])==1
     assert len(output["result"]["visualFindings"])==1
+    assert output["result"]["visualFindings"][0]["focusRegion"] == [0.5,0,1,0.5]
     assert "data:image" not in str(output)
     assert output["result"]["findings"][0]["basis"]==[]
     violations=output["result"]["violations"]

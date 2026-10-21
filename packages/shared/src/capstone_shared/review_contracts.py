@@ -41,6 +41,7 @@ class VisualObservation(BaseModel):
     concern: str
     comparisonLimitations: list[str]
     needsAdjacentContext: bool
+    focusBox: list[float] | None
 
 
 class VisualAssessment(BaseModel):

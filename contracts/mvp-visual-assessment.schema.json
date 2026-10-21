@@ -20,13 +20,28 @@
         "needsAdjacentContext": {
           "title": "Needsadjacentcontext",
           "type": "boolean"
+        },
+        "focusBox": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Focusbox"
         }
       },
       "required": [
         "observation",
         "concern",
         "comparisonLimitations",
-        "needsAdjacentContext"
+        "needsAdjacentContext",
+        "focusBox"
       ],
       "title": "VisualObservation",
       "type": "object"
