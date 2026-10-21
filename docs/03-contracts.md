@@ -330,8 +330,10 @@ review가 결정되기 전에는 다시 보내 결정을 바꿀 수 있다.
 - `{"resolution":"kept"}`: finalText=원문.
 - `{"resolution":"rewritten","attemptNo":2}`: 해당 시도의 문안. attemptNo가 없으면 최신 rewriteSuggestion. 제안이 없으면 409 `NO_REWRITE_SUGGESTION`, 없는 시도는 404 `REWRITE_ATTEMPT_NOT_FOUND`.
 - kept와 rewritten에 finalText를 보내면 400 `FINAL_TEXT_NOT_ALLOWED`. 둘 다 finalTextValidated=true로 저장한다.
-- `{"resolution":"rewritten_manual","finalText":"..."}`: 사람이 쓴 문구는 재검증을 통과해야 저장한다. 재검증 경로가 아직 없으므로
-  현재는 항상 501 `MANUAL_REWRITE_VALIDATION_NOT_IMPLEMENTED`이며 아무것도 저장하지 않는다. finalText가 비면 400 `FINAL_TEXT_REQUIRED`.
+- `{"resolution":"rewritten_manual","finalText":"..."}`: 사람이 쓴 문구는 재검증을 통과해야 저장한다. finalText가 비면 400 `FINAL_TEXT_REQUIRED`.
+  Backend가 Agent 내부 `/internal/rewrites/verify`를 호출해 재검증한다. 통과(`passed=true`)하면 finalTextValidated=true로 저장한다.
+  통과하지 못하면 409(agent의 reasoning을 메시지로 쓰며, reasoning이 비어 있으면 `MANUAL_TEXT_FAILED_VERIFICATION`)이고 저장하지 않는다.
+  모델 키가 없으면 503 `REWRITE_MODEL_NOT_CONFIGURED`, Agent 연결 실패는 503 `AGENT_UNAVAILABLE`, 그 외 호출 실패는 502 `REWRITE_VERIFICATION_FAILED`다.
 
 POST /api/v1/reviews/{reviewId}/violations/{violationId}/rewrite-requests `{"retryNote":"..."}`(선택, 1000자 이하): 작성자, reviewer, admin. 같은 상태 조건.
 사람 요청 수가 humanRetryLimit에 도달하면 409 `HUMAN_REWRITE_LIMIT_REACHED`이며 Agent를 호출하지 않는다.
@@ -347,7 +349,10 @@ Agent 내부 POST /internal/rewrites: 입력 contracts/mvp-agent-rewrite.input.s
 출력 mvp-agent-rewrite.output.schema.json(text). 내부 토큰 필수. 모델 키가 없으면 503 `TEXT_MODEL_NOT_CONFIGURED`, 공급자 실패는 502.
 한도 판정과 저장은 Backend가 하고 Agent는 문안만 만든다. 법 적합을 판정하지 않는다.
 
-프론트(RevisionOptions.vue, useReviewDetail.js)는 아직 선택을 메모리에만 두며 위 API 연동은 후속 작업이다.
+Agent 내부 POST /internal/rewrites/verify: 입력(reviewId, tenantId, text, reason), 출력(passed, reasoning). 내부 토큰 필수.
+사람이 직접 쓴 rewritten_manual 문구가 법 적합 재검증을 통과하는지만 확인하며, 위 decision 엔드포인트에서만 호출한다.
+
+프론트(ViolationCard.vue/RevisionOptions.vue, src/shared/stores/reviews.js)는 위 decision/rewrite-requests API에 실제로 연동돼 있다.
 
 ## 공식 API 명세 재확인
 

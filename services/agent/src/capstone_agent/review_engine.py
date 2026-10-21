@@ -1,8 +1,10 @@
 """Two independent analysis paths. Raw assets live in closures, not checkpoints."""
 import asyncio
 from datetime import datetime, timezone
+import json
 import os
 import re
+import time
 from typing import Literal, TypedDict
 
 import httpx
@@ -91,6 +93,17 @@ class Provider:
         if response.output_parsed is None:
             raise RuntimeError("MODEL_REFUSED_OR_INCOMPLETE")
         return response.output_parsed
+
+    async def call_with_tools(self, messages, tools):
+        """business 노드의 도구선택 loop 전용. structured output(parse)과 달리 tool_calls가 필요해 Chat
+        Completions를 쓴다."""
+        if not self.client:
+            raise RuntimeError("OPENAI_NOT_CONFIGURED")
+        async with self.limit:
+            response = await self.client.chat.completions.create(
+                model=os.getenv("TEXT_MODEL", "gpt-5.4-mini"), messages=messages,
+                tools=tools, tool_choice="auto", max_tokens=600)
+        return response.choices[0].message
 
 
 def basis_context(basis):
@@ -445,6 +458,133 @@ async def build_violations(findings, provider, call=None):
     return list(await asyncio.gather(*(one(finding) for finding in findings)))
 
 
+# business 노드의 ②③④ 도구선택 loop guardrail. Agent Graph 상세 설계 문서의 예시값을 그대로 따른다.
+MAX_TOOL_CALLS_TOTAL = 8
+MAX_SAME_TOOL_CALLS = 2
+LOOP_TIMEOUT_SECONDS = 60
+
+BUSINESS_TOOL_SPECS = [
+    {"type": "function", "function": {
+        "name": "structure_evidence",
+        "description": "제출된 증빙서류(인증서·전성분표·시험자료 등)를 구조화해서 읽는다. 광고 주장이 수치나 "
+                        "시험 결과, 성분을 말하고 증빙 파일이 실제로 제출됐을 때만 호출한다.",
+        "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "verify_functional_approval",
+        "description": "식약처 기능성화장품 보고품목정보로 제품의 기능성 심사·보고 여부를 조회한다. 광고가 "
+                        "미백, 주름개선, 자외선차단 등 기능성 효능을 주장할 때 호출한다.",
+        "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "verify_patent",
+        "description": "KIPRIS Plus로 특허번호가 실제 등록된 특허인지 확인한다. 광고나 증빙에 특허번호 또는 "
+                        "'특허' 주장이 있을 때만 호출한다.",
+        "parameters": {"type": "object", "properties": {}, "required": []}}},
+]
+
+
+async def select_business_tools(provider, state, request):
+    """business 노드의 도구선택 loop. LLM은 findings를 보고 structure_evidence/verify_functional_approval/
+    verify_patent 중 관련 있는 것만 고른다 — 매번 조건문으로 다 지나가는 게 아니라 실제로 선택이다.
+    각 tool의 실제 호출 인자(증빙 파일, 심사번호, 특허번호)는 LLM이 지어내지 않고 코드가 추출한 값만
+    쓴다. LLM의 역할은 '이 tool이 지금 필요한가'라는 판단뿐이고, 값 추출은 하지 않는다.
+    Guardrail: 총 호출 MAX_TOOL_CALLS_TOTAL회, 동일 tool 연속 MAX_SAME_TOOL_CALLS회, loop 전체
+    LOOP_TIMEOUT_SECONDS초. 결과가 불충분해도(예: ambiguous) 같은 tool을 한도 내에서 다시 부를 수
+    있다(근거 재검토) — tool 결과를 본 다음 턴에서 LLM이 직접 판단한다.
+    """
+    evidence = {"claimTypes": [], "requirements": [], "flags": [], "status": "not_submitted"}
+    public = {"status": "skipped", "source": "식약처 공공데이터", "checkedAt": None}
+    patents, warnings, trace = [], [], []
+    documents = [a.model_dump() for a in request.assets if a.role == "evidence"] if request else []
+    product = state["product"]
+    report = product.get("functionalReportNo", "")
+    text = "\n".join(t["text"] for t in state["texts"])
+    candidate_numbers = list(dict.fromkeys(re.sub(r"[-– ]", "-", n) for n in re.findall(r"\b10[-– ]\d{7}\b", text)))[:10]
+    available = {
+        "structure_evidence": bool(documents),
+        "verify_functional_approval": bool(product.get("name")),
+        "verify_patent": bool(candidate_numbers) or any(f.get("claimType") == "patent" for f in state["findings"]),
+    }
+    if not any(available.values()):
+        return evidence, public, patents, warnings, trace
+
+    async def invoke(name):
+        nonlocal evidence, public, patents
+        try:
+            if name == "structure_evidence":
+                evidence = await mcp_call("structure_evidence",
+                    {"tenant_id": state["tenantId"], "review_id": state["reviewId"], "documents": documents}, request)
+                return evidence
+            if name == "verify_functional_approval":
+                public = await mcp_call("verify_functional_approval",
+                    {"functional_approval_no": report, "product_name": product.get("name", "")})
+                return public
+            if name == "verify_patent":
+                if not candidate_numbers:
+                    patents = []
+                    return {"status": "no_patent_number_detected"}
+                patents = await mcp_call("verify_patent", {"patent_numbers": candidate_numbers})
+                return patents
+            return {"error": "UNKNOWN_TOOL"}
+        except Exception:
+            warnings.append(f"{name.upper()}_TOOL_UNAVAILABLE")
+            return {"error": f"{name.upper()}_TOOL_UNAVAILABLE"}
+
+    if not provider.client:
+        # 모델 키가 없으면 LLM에게 선택을 물을 수 없다. business-mcp 호출은 OpenAI와 무관한 별개
+        # 경로라, LLM 유무와 상관없이 구조적으로 관련 있는 도구는 그대로 실행한다(NFR-16).
+        for name, usable in available.items():
+            if usable:
+                await invoke(name)
+            trace.append({"tool": name, "called": usable})
+        return evidence, public, patents, warnings, trace
+
+    findings_summary = "\n".join(f"- \"{f['phrase']}\" (claimType={f.get('claimType')}): {f['reason']}"
+                                 for f in state["findings"]) or "(없음)"
+    messages = [
+        {"role": "system", "content":
+            "화장품 광고 사전검토 Agent다. 아래 문구 목록과 입력 상황을 보고, 광고 주장을 외부 공식 자료와 "
+            "대조하는 데 필요한 도구만 선택해서 호출하라. 문구와 무관한 도구는 호출하지 않는다. 한 도구는 "
+            "보통 한 번만 부르면 충분하지만, 결과가 모호하거나 불충분해서 다시 확인해야 한다고 판단되면 "
+            "같은 도구를 다시 부를 수 있다. 더 부를 도구가 없으면 도구 호출 없이 짧게 이유를 답하라."},
+        {"role": "user", "content":
+            f"광고에서 추출한 확인 대상 문구:\n{findings_summary}\n\n"
+            f"제품명: {product.get('name') or '(없음)'}\n"
+            f"기능성 심사·보고번호 입력값: {report or '(없음)'}\n"
+            f"제출된 증빙서류: {len(documents)}건\n"
+            f"광고 문구에서 찾은 특허번호 형식 문자열: {len(candidate_numbers)}건"},
+    ]
+    called = []
+    started = time.monotonic()
+    for _ in range(MAX_TOOL_CALLS_TOTAL + 1):
+        if time.monotonic() - started > LOOP_TIMEOUT_SECONDS:
+            warnings.append("TOOL_LOOP_TIMEOUT")
+            break
+        try:
+            message = await provider.call_with_tools(messages, BUSINESS_TOOL_SPECS)
+        except Exception:
+            warnings.append("TOOL_SELECTION_FAILED")
+            break
+        tool_calls = message.tool_calls or []
+        if not tool_calls:
+            break
+        messages.append({"role": "assistant", "content": message.content or "",
+                         "tool_calls": [tc.model_dump() for tc in tool_calls]})
+        for tool_call in tool_calls:
+            name = tool_call.function.name
+            same = sum(1 for c in called if c == name)
+            if len(called) >= MAX_TOOL_CALLS_TOTAL or same >= MAX_SAME_TOOL_CALLS or not available.get(name):
+                output = {"skipped": "GUARDRAIL_LIMIT_REACHED" if available.get(name) else "TOOL_NOT_APPLICABLE"}
+            else:
+                called.append(name)
+                output = await invoke(name)
+                trace.append({"tool": name, "called": True})
+            messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": json.dumps(output, default=str)[:4000]})
+    for name, usable in available.items():
+        if usable and name not in called:
+            trace.append({"tool": name, "called": False})
+    return evidence, public, patents, warnings, trace
+
+
 def merge_nested(findings):
     """A fragment the model also extracted as part of a longer phrase on the same line is one claim to
     review, not two cards. Keep the longer phrase."""
@@ -555,39 +695,14 @@ def build_graph(native, tiles, provider, checkpointer, request=None):
                 "standardsSnapshot": lookup["snapshot"], "legalWarnings": lookup["warnings"]}
 
     async def business(state):
-        public={"status":"skipped","source":"식약처 공공데이터","checkedAt":None}
-        patents=[];warnings=[]
-        evidence={"claimTypes":[],"requirements":[],"flags":[],"status":"not_submitted"}
-        documents=[a.model_dump() for a in request.assets if a.role=="evidence"] if request else []
-        if documents:
-            try:
-                evidence=await mcp_call("structure_evidence",{"tenant_id":state["tenantId"],"review_id":state["reviewId"],
-                    "documents":documents},request)
-            except Exception:
-                evidence={**evidence,"status":"error","error":"EVIDENCE_TOOL_UNAVAILABLE"}
-                warnings.append("EVIDENCE_TOOL_UNAVAILABLE")
-        report=state["product"].get("functionalReportNo","")
-        if report:
-            try:
-                public=await mcp_call("verify_functional_approval",{"functional_approval_no":report,"product_name":state["product"].get("name","")})
-            except Exception:
-                public={"status":"error","reportNo":report,"source":"식약처 공공데이터","error":"FUNCTIONAL_TOOL_UNAVAILABLE"}
-                warnings.append("FUNCTIONAL_TOOL_UNAVAILABLE")
-        text="\n".join(t["text"] for t in state["texts"])+"\n"+evidence.get("text","")
-        numbers=list(dict.fromkeys(re.sub(r"[-– ]","-",n) for n in re.findall(r"\b10[-– ]\d{7}\b",text)))[:10]
-        if numbers:
-            try:
-                patents=await mcp_call("verify_patent",{"patent_numbers":numbers})
-            except Exception:
-                patents=[{"id":n,"number":n,"status":"error","error":"PATENT_TOOL_UNAVAILABLE","source":"KIPRIS Plus","match":None} for n in numbers]
-                warnings.append("PATENT_TOOL_UNAVAILABLE")
+        evidence,public,patents,warnings,tool_trace=await select_business_tools(provider,state,request)
         await progress(request,3)
         titles=state.get("sectionTitles",{})
         return {"result":{"texts":state["texts"],"tiles":[{**t,"title":titles.get(t["id"])} for t in manifest],
             "findings":state["findings"],"visualFindings":state["visualFindings"],
             "evidence":evidence,"publicData":public,"patents":patents,"usage":{"credits":0,"billingEnabled":False},
             "standardsSnapshot":state.get("standardsSnapshot",[]),"retrievalStatus":state.get("retrievalStatus","not_connected"),
-            "legalStatus":"not_evaluated",
+            "legalStatus":"not_evaluated","businessToolSelection":tool_trace,
             "pipelineStatus":{"text":state["textStatus"],"visual":state["visualStatus"]},
             "warnings":list(dict.fromkeys(state["textWarnings"]+state["visualWarnings"]+warnings+state.get("legalWarnings",[])
                 +[LEGAL_NOTICE.get(state.get("retrievalStatus"),LEGAL_NOTICE["not_connected"])])),

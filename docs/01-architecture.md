@@ -62,7 +62,7 @@ Agent의 DB 직접 접근은 agent checkpointer만 허용한다.
 4. 접수 트랜잭션을 저장한 뒤 202와 review 객체를 반환한다. 제한된 API 실행 풀이 Agent를 호출하며 Vue는 상태를 폴링한다.
 5. Agent가 실행별 토큰으로 해당 버전의 광고만 읽는다. PDF native 문자와 페이지 렌더, 긴 이미지 타일을 준비한다.
 6. 문구는 PDF 파싱과 OCR 후 LLM으로 확인할 주장 후보를 만든다. 사진은 별도 VLM 호출로 비교 표현과 조명 및 각도 등 관찰 한계를 기록한다.
-7. 두 결과가 합류한다. 증빙이 있으면 structure_evidence, 보고번호가 있으면 verify_functional_approval, 광고나 증빙에 특허 후보가 있으면 verify_patent를 호출한다. 도구 오류는 항목별로 분리한다.
+7. 두 결과가 합류한다. business 노드는 findings와 증빙·제품·특허번호 정황만 LLM에 보여주고, structure_evidence/verify_functional_approval/verify_patent 중 필요한 도구만 LLM이 골라 호출한다(2026-10-21부터 입력값 존재 여부의 조건문이 아니라 OpenAI tool-calling 기반 도구선택 loop, Guardrail: 총 8회/동일 tool 연속 2회/60초). 도구 오류는 항목별로 분리한다.
 8. Graph는 초안과 사람 확인 대기를 PostgreSQL checkpoint에 저장하고 실행 요청을 종료한다. Backend가 초안을 app에 보존하고 원본을 Redis에서 삭제한다.
 9. 검토자 또는 관리자가 최신 버전의 의견과 결정을 저장한다. Backend는 먼저 결정을 보존하고 해당 Graph를 재개한다.
 10. 결과와 이력을 다시 조회하고 브라우저 인쇄로 PDF 저장 또는 HTML 내보내기를 한다. 서버가 PDF 바이너리를 생성하는 기능은 아직 없다.
@@ -74,7 +74,7 @@ Agent의 DB 직접 접근은 agent checkpointer만 허용한다.
 | --- | --- | --- |
 | text_path, photo_path | OCR(Tesseract + VLM 보충, 음절 분리 교정)과 주장 추출, 사진 관찰 | OpenAI |
 | regulations (legal_basis) | 규칙 스캔으로 모델이 놓친 고위험 줄을 보충하고, 문구마다 규칙 조항, 보조 검색, 사례를 붙인다 | rag.scan_claim_lines, rag.lookup_claim_rules, rag.search_regulations, rag.search_precedents |
-| business | 증빙 구조화, 보고번호 조회, 특허 번호 조회 | business.structure_evidence, verify_functional_approval, verify_patent |
+| business | LLM이 findings를 보고 세 도구 중 필요한 것만 선택(2026-10-21부터 도구선택 loop) | business.structure_evidence, verify_functional_approval, verify_patent |
 | cross_checks | 규칙이 지정한 대조만 실행: 기능성 보고 vs 주장, 실증자료 제출, 성분 국내 금지와 제한, GMP, 특허 번호 | business.find_functional_reports, verify_gmp_company, lookup_ingredient_regulation, rag.check_ingredient_standard |
 | violations | 조문을 참고한 자가검증 리라이트. 통과한 문안이 finding.rewrites로 저장된다 | OpenAI |
 | approval, report | 사람 승인 대기와 재개 | |
@@ -99,12 +99,12 @@ finding에는 basis(규칙 조항 retrieval=rule, 보조 검색 retrieval=search
 | --- | --- |
 | 단건 즉시 응답과 SSE | 접수 후 202, 인증된 1.5초 상태 폴링 |
 | 다건 Backend → Agent API → RabbitMQ → 내부 Worker | RabbitMQ 선택 프로필만 제공, 업무 발행과 Worker 없음 |
-| 한도 있는 Agent 도구선택 loop | 문구와 사진 분리 및 입력 조건에 따른 3개 Business 도구 호출 |
-| search_regulations, search_precedents | Handoff DB 계획과 출처 목록만 반영, 실제 수집과 검색 없음 |
+| 한도 있는 Agent 도구선택 loop | business 노드는 구현됨(2026-10-21): LLM이 findings를 보고 structure_evidence/verify_functional_approval/verify_patent 중 필요한 것만 선택, Guardrail 총 8회/동일 tool 연속 2회/60초. regulations/cross_checks는 여전히 고정 순서(법령 근거는 매 finding마다 항상 필요하고, cross_checks 대상은 규칙 테이블이 정함) |
+| search_regulations, search_precedents | legalize-kr 화장품법 코퍼스는 적재·임베딩과 pgvector 검색이 연결됨. 나머지 출처(PDF) 적재는 원문 확보 후 진행 중 |
 | 증빙 및 제품 주장 대조와 특허 청구항 대조 | 증빙 문자 추출과 조회 adapter까지만 구현 |
-| 사용량 이벤트와 별도 과금 원장 | 과금 비활성, 크레딧 0은 무료 서비스 보장이 아닌 미구현 표시 |
+| 사용량 이벤트와 별도 과금 원장 | app 스키마 내 Toss 테스트결제·크레딧 구매·리뷰당 크레딧 차감이 실제 동작. ERD v2의 judged_at 기준 reserve/charge/release와 별도 과금 DB 분리는 미구현 |
 | 서버 리포트 PDF | 브라우저 인쇄와 HTML 내보내기 |
-| violation 단위 HITL(위반 줄마다 원문유지/자동리라이트채택/직접수정) + review 전체 승인, 반려, 원본재업로드요청 결정 분리(2026-10-20 HITL 재설계) | review_engine.py의 단일 `interrupt()` 승인 1단계만 구현. `app.violations`/`app.violation_rewrites` 테이블은 V4 마이그레이션으로 이미 생성됐지만 Agent/결정 API/화면은 아직 `reviews.document` 기준 |
+| violation 단위 HITL(위반 줄마다 원문유지/자동리라이트채택/직접수정) + review 전체 승인, 반려, 원본재업로드요청 결정 분리(2026-10-20 HITL 재설계) | 구현됨. `app.violations`/`app.violation_rewrites`가 원본이며, decision/rewrite-requests REST API와 rewritten_manual 재검증(`/internal/rewrites/verify`)까지 Backend·Agent에 연결됐고 프론트(ViolationCard.vue/RevisionOptions.vue)도 해당 API를 호출함 |
 
 현재 실행 풀은 프로세스 재시작 후 대기 작업을 복구하지 않는다. 운영용 durable queue나 자동 장애 복구 구현으로 설명하지 않는다.
 다건의 목표는 접수 기록 저장 후 202, 승인 대기 checkpoint 저장 후 ACK, 승인 결정 저장 후 별도 재개 메시지다.
