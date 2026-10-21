@@ -138,6 +138,36 @@ async def test_both_paths_have_independent_results_and_checkpoint_contains_no_pi
     assert violations[0]["final_resolution"] is None and violations[0]["final_text_validated"] is False
 
 
+async def test_result_findings_keep_tile_and_later_severity_updates(monkeypatch):
+    # The violations node updates the finding dicts in place; the result must carry both that
+    # severity and the tileId set when the finding was created.
+    from capstone_agent.review_models import TextAssessment,VisualAssessment
+    import capstone_agent.review_engine as engine
+    tile=tile_image(Image.new("RGB",(64,64)),"a","synthetic.png")[0]
+    async def ocr(native,tiles,provider):
+        return [{"id":"t1","text":"7일 주름 개선","location":{"kind":"image","fileId":"a","page":1,"bbox":[0,0.1,1,0.2]}}],[]
+    async def severity(provider,finding,evidence_text):
+        return "high","합성 상향"
+    async def no_rewrites(findings,provider):
+        return []
+    monkeypatch.setattr(engine,"extract_text",ocr)
+    monkeypatch.setattr(engine,"assess_severity",severity)
+    monkeypatch.setattr(engine,"build_violations",no_rewrites)
+    class FakeProvider:
+        client=True
+        async def parse(self,prompt,schema,**kwargs):
+            if schema is TextAssessment:
+                return schema(findings=[{"phrase":"주름 개선","reason":"합성","claimType":"wrinkle","rewrites":[]}])
+            return VisualAssessment(findings=[{"observation":"합성","concern":"합성","comparisonLimitations":[],"needsAdjacentContext":False}],unreadable=False)
+    graph=build_graph([], [tile],FakeProvider(),InMemorySaver())
+    output=await graph.ainvoke({"reviewId":"r","tenantId":"t","versionNo":1,"product":{}},
+                              {"configurable":{"thread_id":"t:r:2"}})
+    finding=output["result"]["findings"][0]
+    assert finding["severity"]=="high" and finding["escalation"]["reason"]=="합성 상향"
+    assert finding["tileId"]==tile.id
+    assert output["result"]["visualFindings"][0]["tileId"]==tile.id
+
+
 async def test_rewrite_retry_limit_stops_auto_suggestions_for_manual_input(monkeypatch):
     from capstone_agent.review_models import TextAssessment,VisualAssessment
     import capstone_agent.review_engine as engine
