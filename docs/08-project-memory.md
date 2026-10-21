@@ -77,7 +77,7 @@ MCP 두 문서에서 확인한 7개 도구의 이름, 인자와 반환 필드는
 
 - Redis Queue/Celery 또는 SQS 큐 후보는 이전 가정이다. 큐는 RabbitMQ로 확정됐다.
 - prepare_input은 노션의 필수 도구가 아니다. 광고 파싱을 Business MCP의 신규 필수 도구로 강제하지 않는다.
-- search_rules, search_cases와 get_evidence는 현재 v0.1 기반이다. 최신 목표의 도구 이름과 같은 것으로 취급하지 않는다.
+- v0.1 기반 도구 search_rules, search_cases, get_evidence와 get_product_context는 2026-10-21에 지웠다. 다시 만들지 않는다.
 - 원본 광고를 일반 파일 영역이나 S3에 영구 보관한다는 제안을 현재 보존 정책으로 사용하지 않는다.
 - 특허 검증은 RAG, 이력 삭제는 Business MCP라는 분담은 폐기한다.
 - 모든 기술과 필드가 미정이라 착수할 수 없다는 해석은 잘못이다. 명시된 인터페이스를 기준으로 개발하고 불일치 부분만 계약 PR로 해결한다.

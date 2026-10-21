@@ -95,7 +95,7 @@ EvidenceFile의 필드는 노션에서 타입 이름과 PDF 또는 이미지 참
 status는 FOUND, NO_RELEVANT_EVIDENCE, CORPUS_NOT_INDEXED, SEARCH_ERROR다. 뒤의 둘은 아무것도 확인하지 않았다는 뜻이다.
 RegulationHit에는 노션 필드 외에 document_key, section, page, source_url, acquisition, effective_from, effective_until을 더했다.
 search_regulations는 선택 인자 review_date를 받아 그날 시행 중인 법령 버전만 찾는다. 이 봉투와 추가 필드는 Agent 담당의 확인이 필요한 제안이다.
-기존 v0.1 search_rules, search_cases, get_evidence는 호환을 위해 그대로 둔다.
+v0.1 search_rules, search_cases, get_evidence는 2026-10-21에 지웠다. 아래 "정리한 v0.1 기반 도구"를 본다.
 
 rag-mcp Resource는 모델이 아니라 앱(근거 패널)이 고르는 읽기 전용 원문이다. 검색 도구는 발췌를 돌려주고 Resource는 적재한 원문 전체를 돌려준다.
 
@@ -119,7 +119,7 @@ similarity는 검색 유사도이며 위법 확률이 아니다. high와 low는 
 현재 v0.1의 quote는 목표 excerpt, document_version은 목표 version과 대응할 수 있지만 단순 이름 변경으로 호환되지 않는다.
 기존 source_url, page, section, evidence_id, review_date와 corpus_version의 추적 기능을 어떻게 보존할지 계약 PR에 적는다.
 목표 명세는 목록 반환만 제시하므로 빈 검색과 검색 장애, 미구현을 구분하는 MCP 오류 계약도 함께 필요하다.
-get_evidence는 기존 기반의 확장 제안이며 노션의 필수 RAG 도구 2개에 포함되지 않는다.
+출처 원문 전체는 도구가 아니라 Resource regulation://documents/{document_version_id}로 읽는다.
 
 ### Business 반환 필드
 
@@ -201,57 +201,30 @@ Agent API, Worker와 Graph는 노션 Graph에 따라 하나의 Agent 서비스 �
 내부 API는 Authorization: Bearer <INTERNAL_SERVICE_TOKEN>을 요구한다.
 health 경로는 자격증명을 반환하지 않는다. 현재 로그인과 사용자 API는 /api/v1/users 아래에 있다.
 
-## 현재 실행 코드의 MCP v0.1
+## 정리한 v0.1 기반 도구
 
 HTTP 주소는 business-mcp:8002/mcp와 rag-mcp:8003/mcp다.
 호스트에서는 각각 127.0.0.1을 사용한다. 인증 방식은 개발용 정적 Bearer 토큰이다.
 
-| 도구 | 현재 상태 |
+2026-10-21에 NOT_IMPLEMENTED만 돌려주던 v0.1 기반 도구 4개와 그 계약을 지웠다. 호출하던 곳은 없었다.
+
+| 지운 도구 | 대신 쓰는 것 |
 | --- | --- |
-| business.get_environment_info | Spring Boot 내부 API를 실제 호출 |
-| business.get_product_context | NOT_IMPLEMENTED |
-| rag.search_rules | NOT_IMPLEMENTED, evidence는 빈 목록 |
-| rag.search_cases | NOT_IMPLEMENTED, cases 컬렉션을 구분하고 보조 참고 경고 반환 |
-| rag.get_evidence | NOT_IMPLEMENTED |
+| rag.search_rules | rag.search_regulations, rag.lookup_claim_rules |
+| rag.search_cases | rag.search_precedents |
+| rag.get_evidence | Resource regulation://documents/{document_version_id} |
+| business.get_product_context | 없음. 제품 정보는 Spring이 RunRequest.product로 넘긴다 |
 
-search_rules는 query라는 인자 하나를 받는다. MCP 호출의 arguments 예시는 다음과 같다.
+함께 지운 것은 packages/shared의 contracts.py(SearchRulesInput, SearchRulesResult, ScaffoldResult)와
+contracts/search-rules.input.schema.json, contracts/search-rules.output.schema.json이다.
+Pydantic 계약은 packages/shared의 rag_contracts.py와 review_contracts.py가 원본이다.
+남은 JSON Schema는 scripts/export_contracts.py로 갱신한다.
 
-~~~json
-{
-  "query": {
-    "claim_id": "claim-001",
-    "claim_text": "피부 장벽 개선 및 48시간 보습 지속",
-    "surrounding_text": "광고 주변 문구와 각주",
-    "product_type": "기초화장품",
-    "jurisdiction": "KR",
-    "review_date": "2026-10-19",
-    "top_k": 5
-  }
-}
-~~~
+지운 도구에 있던 규칙 중 지금 도구에도 그대로 적용하는 것:
 
-top_k는 1~10이다. 정의하지 않은 필드는 거부한다.
-tenant_id를 모델 입력에 추가해서 권한을 결정하지 않는다.
-현재는 공개 문서 검색을 위한 계약이며 기업 자료 검색 권한은 구현되지 않았다.
-
-반환 상태:
-
-| 상태 | 의미 |
-| --- | --- |
-| FOUND | 관련 근거 후보 발견, 적법 확정 아님 |
-| NO_RELEVANT_EVIDENCE | 적절한 근거 미발견 |
-| NEEDS_CONTEXT | 문맥이나 제품 정보 부족 |
-| SEARCH_ERROR | 검색 시스템 오류 |
-| NOT_IMPLEMENTED | 기능 구현 전 |
-
-Evidence의 quote는 원문이고 context는 연결된 조건 및 주변 원문이다.
-결과의 collection은 rules 또는 cases이며 source_verified는 출처 검증 여부다.
-search_rules와 search_cases의 입력 모양은 같다. 사례를 1차 법령 근거 목록에 섞지 않는다.
-모델이 생성한 쉬운 설명은 Agent 결과의 별도 필드로 관리한다.
-페이지는 근거 문서의 페이지다. 광고 위치 좌표와 혼용하지 않는다.
-
-Pydantic 계약은 packages/shared/src/capstone_shared/contracts.py가 원본이다.
-contracts의 JSON Schema는 scripts/export_contracts.py로 갱신한다.
+- tenant_id를 모델 입력에 추가해서 권한을 결정하지 않는다.
+- 사례를 1차 법령 근거 목록에 섞지 않는다.
+- 근거의 page는 근거 문서의 페이지다. 광고 위치 좌표와 혼용하지 않는다.
 
 
 ## 입력과 오류 확장 제안
@@ -259,7 +232,7 @@ contracts의 JSON Schema는 scripts/export_contracts.py로 갱신한다.
 광고 SourceBlock과 페이지 및 좌표는 Agent 입력 담당, 증빙 EvidenceStructured는 Business MCP,
 RegulationHit와 PrecedentHit는 RAG 담당의 출력이다. 광고 위치와 근거 문서 위치를 구분한다.
 
-prepare_input, SourceBlock, Claim, Finding과 get_evidence는 이전 기반의 확장 제안이다.
+prepare_input, SourceBlock, Claim과 Finding은 이전 기반의 확장 제안이다.
 노션의 7개 도구와 별개로 표기하고 추가 필요가 있을 때만 별도 계약으로 채택한다.
 기존 문서의 INPUT_REJECTED, INPUT_UNREADABLE, INPUT_EXPIRED, PROVIDER_UNAVAILABLE,
 PROVIDER_CONFIGURATION_ERROR, EVIDENCE_MISSING, LOOKUP_FAILED, NOT_FOUND와 VERSION_CONFLICT도 후속 오류 코드 제안이다.

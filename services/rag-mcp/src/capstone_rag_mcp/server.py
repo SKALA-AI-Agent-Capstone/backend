@@ -10,13 +10,6 @@ import psycopg
 from pydantic import Field
 from starlette.responses import JSONResponse
 
-from capstone_shared.contracts import (
-    ScaffoldResult,
-    SearchCollection,
-    SearchRulesInput,
-    SearchRulesResult,
-    SearchStatus,
-)
 from capstone_shared.probes import database_probe
 from capstone_shared.rag_contracts import (
     ClaimRulesResult,
@@ -200,30 +193,6 @@ def create_server() -> FastMCP:
             status=RetrievalStatus.FOUND if hits else RetrievalStatus.NO_RELEVANT_EVIDENCE,
             retrieval_mode=mode, corpus_versions=corpus, hits=hits,
         )
-
-    @mcp.tool(annotations={"readOnlyHint": True})
-    async def search_rules(query: SearchRulesInput) -> SearchRulesResult:
-        """Placeholder for public rules retrieval. No corpus is indexed or searched yet."""
-        return SearchRulesResult(
-            claim_id=query.claim_id,
-            status=SearchStatus.NOT_IMPLEMENTED,
-            warnings=["Retrieval is not implemented. Empty evidence does not imply compliance."],
-        )
-
-    @mcp.tool(annotations={"readOnlyHint": True})
-    async def search_cases(query: SearchRulesInput) -> SearchRulesResult:
-        """Placeholder for supplementary case retrieval, isolated from primary rules."""
-        return SearchRulesResult(
-            claim_id=query.claim_id,
-            collection=SearchCollection.CASES,
-            status=SearchStatus.NOT_IMPLEMENTED,
-            warnings=["Case retrieval is not implemented. Cases are supplementary and require source verification."],
-        )
-
-    @mcp.tool(annotations={"readOnlyHint": True})
-    async def get_evidence(evidence_id: str) -> ScaffoldResult:
-        """Placeholder for immutable source retrieval. Does not invent a citation."""
-        return ScaffoldResult(message="Source lookup is not implemented. No citation was retrieved.")
 
     return mcp
 
