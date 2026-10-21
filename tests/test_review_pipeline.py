@@ -3,7 +3,7 @@ from PIL import Image
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
-from capstone_shared.documents import tile_image, prepare_document
+from capstone_shared.documents import Tile, tile_image, prepare_document
 from capstone_agent.review_engine import (build_graph, Provider, deduplicate, correct_ocr_text, OcrCorrection,
     tile_manifest, assign_tile)
 
@@ -27,14 +27,42 @@ async def test_ocr_correction_falls_back_to_raw_text_on_line_count_mismatch():
     assert result is blocks
 
 
-def test_long_image_tiles_cover_original_without_gaps():
-    image=Image.new("RGB",(848,19799),"white")
+def fixed_tiles(height=3000, size=1600, overlap=240):
+    """Overlapping tiles like the former fixed tiler, to test ownership in shared rows."""
+    image=Image.new("RGB",(64,height))
+    tops=list(range(0,height,size-overlap))
+    tops=tops[:next(i for i,t in enumerate(tops) if t+size>=height)+1]
+    return [Tile(f"a:p1:t{i}","a","long.png",1,(0,t,64,min(t+size,height)),image.size,None) for i,t in enumerate(tops)]
+
+
+def striped_page(blocks):
+    """A long page of solid colored blocks separated by white gaps, like a product detail page."""
+    from PIL import ImageDraw
+    height=sum(h for h,_ in blocks)+40*(len(blocks)-1)
+    image=Image.new("RGB",(848,height),"white"); draw=ImageDraw.Draw(image); y=0; edges=[]
+    for h,color in blocks:
+        draw.rectangle((0,y,847,y+h-1),fill=color)
+        for line in range(y+60,y+h-60,90):  # text-like stripes inside each block
+            draw.rectangle((120,line,700,line+18),fill="black")
+        y+=h+40; edges.append(y-20)
+    return image, edges[:-1]
+
+
+def test_long_page_is_cut_between_content_blocks():
+    image,gaps=striped_page([(900,"#d9c2a0"),(1300,"#f3e1e1"),(700,"#c0392b"),(1200,"#eeeeee"),(1000,"#2c3e50")])
     tiles=tile_image(image,"synthetic","synthetic.png")
-    assert len(tiles)==15
-    assert tiles[0].box[1]==0 and tiles[-1].box[3]==19799
-    assert all(a.box[3]>b.box[1] for a,b in zip(tiles,tiles[1:]))
-    assert tiles[1].location()["region"][1]==1360/19799
-    assert all(tile.location()["bbox"] is None for tile in tiles)
+    cuts=[t.box[1] for t in tiles[1:]]
+    assert tiles[0].box[1]==0 and tiles[-1].box[3]==image.height
+    assert all(a.box[3]==b.box[1] for a,b in zip(tiles,tiles[1:]))  # sections touch, never overlap
+    # One cut per gap, each in the blank margin around the gap and never inside a block's text.
+    assert len(cuts)==len(gaps) and all(abs(c-g)<=60 for c,g in zip(cuts,gaps))
+    assert all(t.location()["bbox"] is None for t in tiles)
+
+
+def test_short_image_stays_one_section_and_blank_long_image_is_bounded():
+    assert len(tile_image(Image.new("RGB",(1190,1684),"white"),"a","page.png"))==1
+    tiles=tile_image(Image.new("RGB",(848,19799),"white"),"a","blank.png")
+    assert all(320<=t.box[3]-t.box[1]<=1600 for t in tiles) and tiles[-1].box[3]==19799
 
 
 def test_input_is_decoded_from_bytes_not_filename():
@@ -50,17 +78,17 @@ def test_overlap_dedup_does_not_remove_separate_repeated_ad_claims():
 
 
 def test_tile_manifest_keeps_coordinates_only():
-    tiles=tile_image(Image.new("RGB",(64,3000)),"a","long.png")
+    tiles=fixed_tiles()
     manifest=tile_manifest(tiles)
     assert [t["id"] for t in manifest]==[t.id for t in tiles]
     assert [t["index"] for t in manifest]==[0,1,2]
     assert manifest[1]=={"id":"a:p1:t1","index":1,"fileId":"a","fileName":"long.png","page":1,
-                         "region":[0.0,1360/3000,1.0,2960/3000]}
+                         "region":[0.0,1360/3000,1.0,2960/3000],"title":None}
 
 
 def test_overlap_claim_belongs_to_the_tile_whose_center_is_nearest():
     # Tiles: t0 0~1600, t1 1360~2960, t2 2720~3000. 1360~1600 is shared by t0 and t1.
-    manifest=tile_manifest(tile_image(Image.new("RGB",(64,3000)),"a","long.png"))
+    manifest=tile_manifest(fixed_tiles())
     def at(y0,y1,tile_id=None):
         return {"fileId":"a","page":1,"tileId":tile_id,"bbox":[0,y0/3000,1,y1/3000]}
     assert assign_tile(at(100,140),manifest)=="a:p1:t0"
@@ -71,7 +99,7 @@ def test_overlap_claim_belongs_to_the_tile_whose_center_is_nearest():
 
 
 def test_region_only_and_unmatched_locations():
-    manifest=tile_manifest(tile_image(Image.new("RGB",(64,3000)),"a","long.png"))
+    manifest=tile_manifest(fixed_tiles())
     region_only={"fileId":"a","page":1,"tileId":"a:p1:t2","bbox":None,"region":manifest[2]["region"]}
     assert assign_tile(region_only,manifest)=="a:p1:t2"
     # PDF native text has a page box and no tile.
@@ -116,14 +144,14 @@ async def test_both_paths_have_independent_results_and_checkpoint_contains_no_pi
                 return RewriteDraft(text="자료 확인 중인 주름 개선 효과")
             if schema is RewriteVerification:
                 return RewriteVerification(passed=True,reasoning="합성 재검증 통과")
-            return VisualAssessment(findings=[{"observation":"합성 비교 구성","concern":"촬영 조건 확인","comparisonLimitations":[],"needsAdjacentContext":False}],unreadable=False)
+            return VisualAssessment(sectionTitle="사용 전후 비교",findings=[{"observation":"합성 비교 구성","concern":"촬영 조건 확인","comparisonLimitations":[],"needsAdjacentContext":False}],unreadable=False)
     tile=tile_image(Image.new("RGB",(64,64)),"a","synthetic.png")[0]
     graph=build_graph([], [tile],FakeProvider(),InMemorySaver())
     output=await graph.ainvoke({"reviewId":"r","tenantId":"t","versionNo":1,"product":{}},
                               {"configurable":{"thread_id":"t:r:1"}})
     assert len(output["result"]["findings"])==1
     assert len(output["result"]["visualFindings"])==1
-    assert [t["id"] for t in output["result"]["tiles"]]==[tile.id]
+    assert [(t["id"],t["title"]) for t in output["result"]["tiles"]]==[(tile.id,"사용 전후 비교")]
     assert output["result"]["visualFindings"][0]["tileId"]==tile.id
     assert output["result"]["findings"][0]["tileId"] is None  # synthetic OCR block has no box or tile
     assert "data:image" not in str(output)
@@ -134,7 +162,7 @@ async def test_both_paths_have_independent_results_and_checkpoint_contains_no_pi
     assert violations[0]["rewrite_suggestion"]=="자료 확인 중인 주름 개선 효과"
     assert violations[0]["rewrite_attempt_count"]==1
     assert violations[0]["rewrites"]==[{"attempt_no":1,"text":"자료 확인 중인 주름 개선 효과",
-        "requested_by_human":False,"retry_note":None}]
+        "requested_by_human":False,"retry_note":None,"passed":True,"reasoning":"합성 재검증 통과"}]
     assert violations[0]["final_resolution"] is None and violations[0]["final_text_validated"] is False
 
 
@@ -158,7 +186,7 @@ async def test_result_findings_keep_tile_and_later_severity_updates(monkeypatch)
         async def parse(self,prompt,schema,**kwargs):
             if schema is TextAssessment:
                 return schema(findings=[{"phrase":"주름 개선","reason":"합성","claimType":"wrinkle","rewrites":[]}])
-            return VisualAssessment(findings=[{"observation":"합성","concern":"합성","comparisonLimitations":[],"needsAdjacentContext":False}],unreadable=False)
+            return VisualAssessment(sectionTitle="합성 구간",findings=[{"observation":"합성","concern":"합성","comparisonLimitations":[],"needsAdjacentContext":False}],unreadable=False)
     graph=build_graph([], [tile],FakeProvider(),InMemorySaver())
     output=await graph.ainvoke({"reviewId":"r","tenantId":"t","versionNo":1,"product":{}},
                               {"configurable":{"thread_id":"t:r:2"}})
@@ -186,7 +214,7 @@ async def test_rewrite_retry_limit_stops_auto_suggestions_for_manual_input(monke
                 return RewriteDraft(text=f"시도 {len(attempts)}")
             if schema is RewriteVerification:
                 return RewriteVerification(passed=False,reasoning="여전히 절대적 표현")
-            return VisualAssessment(findings=[],unreadable=False)
+            return VisualAssessment(sectionTitle="",findings=[],unreadable=False)
     graph=build_graph([],[],NeverPassingProvider(),InMemorySaver())
     output=await graph.ainvoke({"reviewId":"r","tenantId":"t","versionNo":1,"product":{}},
                               {"configurable":{"thread_id":"t:r:2"}})
@@ -277,15 +305,65 @@ async def test_functional_lookup_does_not_treat_truncated_pages_as_product_absen
 
 async def test_human_rewrite_prompt_carries_previous_suggestions_and_note():
     from capstone_agent.review_engine import rewrite_phrase
-    from capstone_agent.review_models import RewriteRequest, RewriteSuggestion
+    from capstone_agent.review_models import RewriteRequest, RewriteVerification
     seen = {}
     class FakeProvider:
         client = True
         async def parse(self, prompt, schema, **kwargs):
+            if schema is RewriteVerification:
+                return schema(passed=True, reasoning="문제 표현이 사라짐")
             seen["schema"], seen["text"] = schema, kwargs["text"]
-            return schema(text="  주름 개선 기능성 보고 범위 안의 표현  ")
+            return schema(text="  눈가가 한결 매끈해 보이는 사용감  ")
     request = RewriteRequest(reviewId="r", tenantId="t", phrase="7일 주름 개선", reason="기간 자료 확인",
         previousRewrites=["첫 제안"], retryNote="더 짧게")
-    assert await rewrite_phrase(FakeProvider(), request) == "주름 개선 기능성 보고 범위 안의 표현"
-    assert seen["schema"] is RewriteSuggestion
+    assert await rewrite_phrase(FakeProvider(), request, call=no_rules) == "눈가가 한결 매끈해 보이는 사용감"
     assert "첫 제안" in seen["text"] and "더 짧게" in seen["text"] and "7일 주름 개선" in seen["text"]
+
+
+async def no_rules(server, tool, arguments):
+    if tool == "scan_claim_lines":
+        return {"matches": []}
+    return {"status": "CORPUS_NOT_INDEXED", "matches": [], "hits": []}
+
+
+def rule_scan(table):
+    """Fake rag.scan_claim_lines over a {word: (rule id, label)} table."""
+    async def call(server, tool, arguments):
+        matches = []
+        for index, line in enumerate(arguments["lines"]):
+            hits = [(word, *rule) for word, rule in table.items() if word in line]
+            if hits:
+                matches.append({"index": index, "line": line, "rules": [h[1] for h in hits],
+                                "labels": [h[2] for h in hits], "matched": [h[0] for h in hits]})
+        return {"matches": matches}
+    return call
+
+
+async def test_rewrite_guard_rejects_same_fragment_kept_and_added_claims():
+    from capstone_agent.review_engine import rewrite_guard
+    call = rule_scan({"%": ("substantiation", "수치, 시험 표현"), "테스트": ("substantiation", "수치, 시험 표현"),
+                      "저자극": ("official_endorsement", "인증 표현")})
+    assert "같은" in await rewrite_guard("20.48% 개선", "20.48%  개선", call)
+    assert "잘려" in await rewrite_guard("색소 침착 7.23% 개선", "색소", call)
+    assert "남아" in await rewrite_guard("보습 20.48% 개선", "보습 20% 개선 효과", call)
+    assert "새로" in await rewrite_guard("순한 사용감", "저자극 사용감", call)
+    assert await rewrite_guard("보습 20.48% 개선", "촉촉한 보습감", call) is None
+    assert "끊겼" in await rewrite_guard("건강하게 빛나는 윤기를 선사합니다", "건강하게 빛나는 윤기", call)
+    assert await rewrite_guard("건강하게 빛나는 윤기를 선사합니다", "건강해 보이는 윤기를 더합니다", call) is None
+
+
+async def test_unverified_rewrite_is_not_stored_as_suggestion():
+    from capstone_agent.review_engine import build_violations
+    from capstone_agent.review_models import RewriteVerification
+    class FakeProvider:
+        client = True
+        async def parse(self, prompt, schema, **kwargs):
+            if schema is RewriteVerification:
+                return schema(passed=False, reasoning="새 효능을 보장함")
+            return schema(text="피부 재생 완벽 케어")
+    finding = {"id": "f", "phrase": "7일 주름 개선", "reason": "기간 자료", "severity": "low",
+               "rewrites": ["7일 주름 개선"], "basis": []}
+    [violation] = await build_violations([finding], FakeProvider(), no_rules)
+    assert violation["rewrite_suggestion"] is None and not violation["verified"]
+    assert violation["rewrites"][0]["reasoning"] == "원문과 같은 문구입니다."  # first candidate fails the guard
+    assert violation["rewrite_note"] == "새 효능을 보장함"

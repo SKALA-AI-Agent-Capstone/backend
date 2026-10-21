@@ -33,6 +33,10 @@
     }
   },
   "properties": {
+    "sectionTitle": {
+      "title": "Sectiontitle",
+      "type": "string"
+    },
     "findings": {
       "items": {
         "$ref": "#/$defs/VisualObservation"
@@ -46,6 +50,7 @@
     }
   },
   "required": [
+    "sectionTitle",
     "findings",
     "unreadable"
   ],

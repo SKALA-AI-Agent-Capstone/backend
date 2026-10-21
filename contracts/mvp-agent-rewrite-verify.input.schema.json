@@ -21,6 +21,12 @@
       "maxLength": 4000,
       "title": "Reason",
       "type": "string"
+    },
+    "phrase": {
+      "default": "",
+      "maxLength": 2000,
+      "title": "Phrase",
+      "type": "string"
     }
   },
   "required": [

@@ -37,21 +37,117 @@ class Tile:
         return "data:image/jpeg;base64," + base64.b64encode(output.getvalue()).decode()
 
 
-def tile_image(image: Image.Image, asset_id: str, name: str, page=1,
-               height=1600, overlap=240) -> list[Tile]:
-    if height <= overlap or overlap < 0:
-        raise ValueError("INVALID_TILE_CONFIGURATION")
+def row_features(image: Image.Image, bins=8, probe=160):
+    """Per-row color spread, horizontal edge energy and a coarse RGB profile, read from narrow copies."""
+    width, height = image.size
+    gray = image.convert("L").resize((probe, height), Image.BOX).tobytes()
+    color = image.resize((bins, height), Image.BOX).tobytes()
+    spread, edges, profile = [], [], []
+    for y in range(height):
+        row = gray[y*probe:(y+1)*probe]
+        mean = sum(row)/probe
+        spread.append((sum((p-mean)**2 for p in row)/probe)**.5)
+        edges.append(sum(abs(row[i+1]-row[i]) for i in range(probe-1))/(probe-1))
+        profile.append(color[y*bins*3:(y+1)*bins*3])
+    return spread, edges, profile
+
+
+def section_boundaries(spread, edges, profile, flat=3.0, band=12, window=24):
+    """Rows where one section of a detail page ends and the next begins, with a strength score.
+
+    A blank band is a strong boundary when the background differs on its two sides (the band before
+    it and the band after it have different colors) or when it is clearly taller than the usual gap
+    between text lines on this page. Gaps between lines of one paragraph share the background and the
+    usual height, so they score low. A second signal catches a photo meeting a colored block without
+    a blank band: the rows just above and just below differ strongly."""
+    height = len(spread)
+    bands = []
+    y = 0
+    while y < height:
+        if spread[y] < flat:
+            start = y
+            while y < height and spread[y] < flat:
+                y += 1
+            rows = profile[start:y]
+            color = [sum(r[i] for r in rows)/len(rows) for i in range(3)]
+            bands.append((start, y, color))
+        y += 1
+    usual = sorted(e-s for s, e, _ in bands if e-s >= 4)
+    usual = usual[len(usual)//2] if len(usual) >= 3 else 24
+    shift = lambda a, b: sum(abs(a[i]-b[i]) for i in range(3))/3
+    found = {}
+    for i, (start, end, color) in enumerate(bands):
+        if end-start < band or start == 0 or end >= height:
+            continue
+        before = bands[i-1][2] if i > 0 else color
+        after = bands[i+1][2] if i+1 < len(bands) else color
+        tall = min(1.0, max(0.0, (end-start)/usual-1))
+        found[(start+end)//2] = 0.5+1.5*tall+2.0*min(1.0, shift(before, after)/30)
+    size = len(profile[0])
+    totals = [[0]*size]
+    for row in profile:
+        last = totals[-1]
+        totals.append([last[i]+row[i] for i in range(size)])
+    mean = lambda a, b: [(totals[b][i]-totals[a][i])/(b-a) for i in range(size)]
+    differ = lambda a, b: sum(abs(a[i]-b[i]) for i in range(size))/size
+    change = [0.0]*height
+    for y in range(2*window, height-2*window, 2):
+        change[y] = differ(mean(y-window, y), mean(y, y+window))
+    for y in range(2*window, height-2*window, 2):
+        if change[y] < 28 or change[y] != max(change[y-window:y+window]) or edges[y] >= 6 \
+                or any(abs(y-other) < window for other in found):
+            continue
+        # Each side must look the same one window further out; a single text line or bar does not.
+        steady = max(differ(mean(y-2*window, y-window), mean(y-window, y)),
+                     differ(mean(y, y+window), mean(y+window, y+2*window)))
+        if steady < change[y]*0.5:
+            found[y] = min(2.5, change[y]/30)
+    return found
+
+
+def plan_sections(height, width, found, edges, min_height=None, max_height=None, cost=2.4):
+    """Choose cuts that maximize boundary strength minus a cost per cut, inside height limits.
+    Weak boundaries are used only when a section would otherwise grow past max_height. Where no
+    boundary exists at all, the quietest row of each 80px window is the fallback, so a forced cut
+    still avoids text lines."""
+    min_height = min_height or max(320, int(.6*width))
+    max_height = max_height or max(1600, int(1.5*width))
+    if height <= max_height:
+        return [0, height]
+    scores = dict(found)
+    for start in range(80, height-80, 80):
+        quiet = min(range(start, min(height, start+80)), key=lambda r: edges[r])
+        scores.setdefault(quiet, 0.2)
+    points = sorted({0, height, *[y for y in scores if min_height <= y <= height-min_height]})
+    best = {0: (0.0, None)}
+    for j, point in enumerate(points[1:], 1):
+        gain = 0.0 if point == height else scores[point]-cost
+        options = [(best[prev][0]+gain, prev) for prev in points[:j]
+                   if prev in best and min_height <= point-prev <= max_height]
+        if options:
+            best[point] = max(options)
+    if height not in best:
+        return list(range(0, height, max_height))+[height]
+    cuts, point = [height], height
+    while best[point][1] is not None:
+        point = best[point][1]
+        cuts.append(point)
+    return sorted(cuts)
+
+
+def tile_image(image: Image.Image, asset_id: str, name: str, page=1) -> list[Tile]:
+    """Split a page into content sections (no overlap). A short page stays one section."""
     image = ImageOps.exif_transpose(image).convert("RGB")
     width, total = image.size
     if width < 32 or total < 32 or width * total > 40_000_000:
         raise ValueError("IMAGE_DIMENSIONS_UNSUPPORTED")
+    spread, edges, profile = row_features(image)
+    cuts = plan_sections(total, width, section_boundaries(spread, edges, profile), edges)
     result = []
-    for index, top in enumerate(range(0, total, height-overlap)):
-        box = (0, top, width, min(top+height, total))
+    for index, (top, bottom) in enumerate(zip(cuts, cuts[1:])):
+        box = (0, top, width, bottom)
         result.append(Tile(f"{asset_id}:p{page}:t{index}", asset_id, name, page,
                            box, image.size, image.crop(box)))
-        if top+height >= total:
-            break
     if len(result) > 40:
         raise ValueError("TOO_MANY_TILES")
     return result

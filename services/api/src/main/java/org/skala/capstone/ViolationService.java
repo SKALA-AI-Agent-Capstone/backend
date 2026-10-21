@@ -227,17 +227,18 @@ public class ViolationService {
         if("rewritten_manual".equals(resolution)){
             String manualText=body.path("finalText").asText("").trim();
             if(manualText.isBlank())throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"FINAL_TEXT_REQUIRED");
-            String reason=tx.execute(status->{
+            String[] target=tx.execute(status->{
                 Locked review=lockOpenReview(jwt,id);
-                lockViolation(id,violationId);
+                String excerpt=(String)lockViolation(id,violationId).get("text_excerpt");
                 for(JsonNode f:ReviewStore.latest(review.doc()).path("result").path("findings"))
-                    if(violationId.equals(f.path("violationId").asText()))return f.path("reason").asText("");
-                return "";
+                    if(violationId.equals(f.path("violationId").asText()))return new String[]{f.path("reason").asText(""),excerpt};
+                return new String[]{"",excerpt};
             });
             JsonNode verification;
             try{
+                // 원문도 함께 보내 원문의 규칙 표현이 남았는지, 새 주장이 들어갔는지까지 검사받는다.
                 verification=agent.post("/internal/rewrites/verify",store.mapper().createObjectNode()
-                    .put("reviewId",id).put("tenantId",tenant).put("text",manualText).put("reason",reason));
+                    .put("reviewId",id).put("tenantId",tenant).put("text",manualText).put("reason",target[0]).put("phrase",target[1]));
             }catch(AgentClient.AgentFailure failure){
                 if(failure.status==503 && "TEXT_MODEL_NOT_CONFIGURED".equals(failure.detail))
                     throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"REWRITE_MODEL_NOT_CONFIGURED");
@@ -316,6 +317,9 @@ public class ViolationService {
         }catch(AgentClient.AgentFailure failure){
             if(failure.status==503 && "TEXT_MODEL_NOT_CONFIGURED".equals(failure.detail))
                 throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"REWRITE_MODEL_NOT_CONFIGURED");
+            // 검증을 통과한 문안이 없을 때 Agent가 마지막 실패 이유를 준다. 시도 횟수는 쓰지 않는다.
+            if(failure.status==422 && failure.detail!=null && !failure.detail.isBlank())
+                throw new ResponseStatusException(HttpStatus.CONFLICT,failure.detail);
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,"REWRITE_FAILED");
         }catch(Exception error){
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"AGENT_UNAVAILABLE");

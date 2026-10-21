@@ -38,11 +38,11 @@ def main():
             _, tiles = prepare_document(raw, {'id': f'A{index}', 'name': name})
             case['tiles'] = [{'page': t.page, 'box': list(t.box), 'sourceSize': list(t.source_size)} for t in tiles]
             case['tileCount'] = len(tiles)
-            # Each original page is covered without a gap; overlapping tiles keep boundary context.
+            # Each original page is covered by content sections that touch without a gap or overlap.
             for page in {t.page for t in tiles}:
                 group = [t for t in tiles if t.page == page]
                 assert group[0].box[1] == 0 and group[-1].box[3] == group[-1].source_size[1]
-                assert all(a.box[3] > b.box[1] for a, b in zip(group, group[1:]))
+                assert all(a.box[3] == b.box[1] for a, b in zip(group, group[1:]))
             case['tileCoverage'] = 'pass'
             metadata = {'product': {'name': f'검증 A{index} - {name}', 'functionalReportNo': ''}, 'media': [], 'evidence': []}
             response = client.post('/reviews', data={'metadata': json.dumps(metadata)},

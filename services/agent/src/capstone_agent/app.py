@@ -14,7 +14,8 @@ from capstone_shared.settings import (
     valid_internal_authorization,
 )
 from .review_models import RunRequest, ResumeRequest, RewriteRequest, VerifyRewriteRequest
-from .review_engine import Provider, prepare_assets, build_graph, progress, rewrite_phrase, verify_rewrite
+from .review_engine import Provider, prepare_assets, build_graph, progress, rewrite_phrase, verify_rewrite, RewriteRejected
+from .tools import McpTools
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.types import Command
 
@@ -104,8 +105,11 @@ def create_app() -> FastAPI:
         if not provider.client:
             raise HTTPException(status_code=503,detail="TEXT_MODEL_NOT_CONFIGURED")
         try:
-            async with asyncio.timeout(60):
+            async with asyncio.timeout(90):
                 text=await rewrite_phrase(provider,request)
+        except RewriteRejected as rejected:
+            # 검증을 통과한 문안이 없다. 마지막 실패 이유를 그대로 돌려 검토자가 방향을 고쳐 다시 요청하게 한다.
+            raise HTTPException(status_code=422,detail=str(rejected) or "REWRITE_NOT_VERIFIED") from None
         except Exception:
             raise HTTPException(status_code=502,detail="REWRITE_PROVIDER_FAILED") from None
         if not text:
@@ -119,7 +123,8 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=503,detail="TEXT_MODEL_NOT_CONFIGURED")
         try:
             async with asyncio.timeout(60):
-                result=await verify_rewrite(provider,request.text,request.reason)
+                async with McpTools(servers=("rag",)) as call:
+                    result=await verify_rewrite(provider,request.text,request.reason,phrase=request.phrase,call=call)
         except Exception:
             raise HTTPException(status_code=502,detail="REWRITE_VERIFICATION_FAILED") from None
         return {"passed":result.passed,"reasoning":result.reasoning}

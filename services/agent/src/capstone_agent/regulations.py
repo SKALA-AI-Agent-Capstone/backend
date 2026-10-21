@@ -150,7 +150,7 @@ async def sweep_findings(call, texts: list[dict], findings: list[dict]) -> list[
         added.append({"id": f"rule-{match['index']}", "phrase": line, "start": source["text"].find(line),
                       "end": source["text"].find(line) + len(line), "location": source["location"], "textId": source["id"],
                       "severity": "low", "baseSeverity": "low", "claimType": claim_type,
-                      "reason": f"규칙 패턴('{', '.join(match['matched'])}')에 해당하는 표현이라 확인이 필요합니다. 모델이 뽑지 않은 줄이어서 규칙으로 추가했습니다.",
+                      "reason": f"'{', '.join(match['matched'])}' 표현은 {', '.join(match.get('labels') or match['rules'])}에 해당해 근거를 확인해야 하는 문구입니다.",
                       "title": "규칙으로 찾은 확인할 문구", "basis": [], "baseBasis": [], "confidence": None, "rewrites": [],
                       "references": [], "category": "확인할 광고 주장", "legalStatus": "not_evaluated", "escalation": None,
                       "source": "rule_sweep"})
