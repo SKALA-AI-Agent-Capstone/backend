@@ -14,3 +14,4 @@
 | rewrite_draft.md | 수정 문구 작성 |
 | rewrite_verification.md | 수정 문구 재검증(자동 제안과 사람이 쓴 문구 모두) |
 | ingredient_extraction.md | 공식 기록 대조용 성분 이름 추출 |
+| business_tool_selection.md | business 도구 선택 루프(어떤 대조 도구를 부를지 고르기) |

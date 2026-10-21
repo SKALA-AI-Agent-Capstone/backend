@@ -556,11 +556,7 @@ async def select_business_tools(provider, state, request):
     findings_summary = "\n".join(f"- \"{f['phrase']}\" (claimType={f.get('claimType')}): {f['reason']}"
                                  for f in state["findings"]) or "(없음)"
     messages = [
-        {"role": "system", "content":
-            "화장품 광고 사전검토 Agent다. 아래 문구 목록과 입력 상황을 보고, 광고 주장을 외부 공식 자료와 "
-            "대조하는 데 필요한 도구만 선택해서 호출하라. 문구와 무관한 도구는 호출하지 않는다. 한 도구는 "
-            "보통 한 번만 부르면 충분하지만, 결과가 모호하거나 불충분해서 다시 확인해야 한다고 판단되면 "
-            "같은 도구를 다시 부를 수 있다. 더 부를 도구가 없으면 도구 호출 없이 짧게 이유를 답하라."},
+        {"role": "system", "content": instruction("business_tool_selection")},
         {"role": "user", "content":
             f"광고에서 추출한 확인 대상 문구:\n{findings_summary}\n\n"
             f"제품명: {product.get('name') or '(없음)'}\n"
