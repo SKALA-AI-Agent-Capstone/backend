@@ -5,7 +5,7 @@
 1. 사용자의 최신 요청과 README.md, docs/00-project-context.md, docs/08-project-memory.md를 읽는다.
 2. 요구사항 원본인 [노션 기획서](https://app.notion.com/p/Agent-3fe616ab8fec80bfb92df115c66aa83d)를 다시 확인한다.
 3. DB와 인증 변경은 [노션 ERD v2](https://app.notion.com/p/Data-ERD-App-State-Vector-DB-3ff616ab8fec81c7b57ac75358ced570)와 docs/04-data.md를 확인한다.
-4. 입력 처리는 docs/09-input-pipeline.md, 분업과 Git은 docs/10-work-breakdown.md 및 docs/05-collaboration.md를 확인한다.
+4. 입력 처리는 docs/09-input-pipeline.md, 검토 결과 화면 구조는 docs/11-review-workspace.md, 분업과 Git은 docs/10-work-breakdown.md 및 docs/05-collaboration.md를 확인한다.
 5. HTTP와 MCP를 바꾸기 전 docs/03-contracts.md와 해당 노션 상세 문서 및 소비자를 확인한다.
 
 노션 API로 페이지를 읽지 못하면 사용 가능한 브라우저로 원문을 확인한다. 확인 불가한 내용을 최신 확정 사실로 만들지 않는다.

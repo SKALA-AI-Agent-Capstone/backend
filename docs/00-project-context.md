@@ -29,9 +29,9 @@ AI 결과는 내부 검토 초안이며 협회 자문이나 정부 인증을 대
 | --- | --- | --- |
 | FR-1, FR-5, FR-6 | Agent의 OCR, 판단, 리라이트, HITL | 두 분석 경로와 PostgreSQL HITL, 실제 모델 호출은 키 필요 |
 | FR-2, NFR-11 | rag-mcp의 법령과 기준, 사례 검색 | legalize-kr 코퍼스는 적재·임베딩·검색까지 연결됨, 나머지 출처 적재는 후속 |
-| FR-3, FR-4, FR-10 | business-mcp의 증빙 대조와 식약처 조회 | 증빙 문자 추출과 공식 조회 adapter, 의미 대조는 후속 |
+| FR-3, FR-4, FR-10 | business-mcp의 증빙 대조와 식약처 조회 | 증빙 문자 추출과 공식 조회 adapter. 실증(시험자료) 주장은 Agent(evidence.py)가 문서 요약과 광고 각주를 대조해 뒷받침함/다른 시험/조건 다름/증빙에 없음으로 판정(2026-10-21). business-mcp의 match_product_claims(기능성 보고 범위 대조)·match_patent_claims(특허 청구항 대조)는 여전히 미구현 |
 | FR-14, FR-15 | business-mcp의 특허 조회와 원문 대조 | KIPRIS 조회 adapter, 청구항 원문 대조는 후속 |
-| FR-7, NFR-4 | Backend, 큐와 Worker의 다건 처리 | 선택 RabbitMQ 실행환경과 합성 AMQP 연결 검사 |
+| FR-7, NFR-4 | Backend, 큐와 Worker의 다건 처리 | 단건 검토는 RabbitMQ outbox(app.review_jobs)로 큐잉·재시도(최대 3회, 5s/30s)·DLQ까지 연결됨(REVIEW_QUEUE_ENABLED, Compose 기본값 true). 여러 광고를 한 번에 올리는 다건 업로드 API와 Agent 쪽 별도 Worker는 여전히 없음 |
 | FR-8, NFR-1 | 단일 입력과 단건 응답, SSE | 제공 Vue와 단건 202 접수 및 상태 폴링, SSE는 후속 |
 | FR-9, FR-12, FR-13 | Backend의 이력 조회, 삭제와 버전 관리 | 실제 결과와 버전 및 승인 보존, 삭제 |
 | FR-11 | 별도 과금 서비스와 크레딧 DB | app 스키마 내 Toss 테스트결제·크레딧 구매·리뷰당 차감 구현, 별도 과금 DB 분리는 후속 |
@@ -44,7 +44,7 @@ AI 결과는 내부 검토 초안이며 협회 자문이나 정부 인증을 대
 ## 해석과 미확정 사항
 
 - 노션은 단건 즉시 결과와 다건 202 처리를 요구하며, 단건도 내부 큐를 거치는 대안을 언급한다. 단건 큐 통일은 확정하지 않았다.
-- 큐는 RabbitMQ로 확정됐다. 연결된 실행 시퀀스는 다건 Backend → Agent API → RabbitMQ → Agent Worker를 제시한다. Worker 라이브러리와 메시지 세부 계약은 후속이다.
+- 큐는 RabbitMQ로 확정됐다. Backend 쪽 단건 큐(outbox→publisher→consumer, 재시도와 DLQ)는 2026-10-21에 연결됐다. 다건 Backend → Agent API → RabbitMQ → Agent Worker로 이어지는 전체 시퀀스와 Worker 라이브러리는 후속이다.
 - ERD v2는 reserve 후 judged_at에 charge하고 HITL 승인과 차감을 분리한다. 실패 전 release와 차감 후 오류 refund를 구분한다. 과금은 현재 미구현이며 상세 대응은 docs/04-data.md를 따른다.
 - MCP 명세에 외부 API 요청과 응답 매핑 초안은 있다. 실제 호출로 확인할 필드와 번호 대응은 남아 있다. 설계 자체가 없는 상태로 설명하거나 API 컬럼의 추정 설명을 검증된 사실로 사용하지 않는다.
 - FastMCP 버전, 임베딩 모델과 차원, Git 브랜치 규칙은 개발 기반의 선택 또는 제안이다. 노션의 확정 요구사항으로 인용하지 않는다.
