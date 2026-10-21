@@ -168,16 +168,23 @@ async def rewrite_phrase(provider, request, attempts=2, call=None):
     raise RewriteRejected(reasoning)
 
 
-async def progress(request, step):
+async def emit(request, kind, **data):
+    """Send one progress event to Spring, which stores step marks and relays every event over SSE.
+    Kinds: step_done(step), tool_started(tool), tool_finished(tool, ok). Failures are ignored because
+    the persisted result stays the source of truth and the browser falls back to polling."""
     if request is None:
         return
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            await client.post(required_env("BACKEND_BASE_URL")+f"/internal/reviews/{request.reviewId}/progress",
+        async with httpx.AsyncClient(timeout=3) as client:
+            await client.post(required_env("BACKEND_BASE_URL")+f"/internal/reviews/{request.reviewId}/events",
                 headers={"Authorization":f"Bearer {internal_token()}","X-Run-Token":request.runToken},
-                json={"versionNo":request.versionNo,"step":step})
-    except httpx.HTTPError:
-        pass  # Final persisted result remains the source of truth.
+                json={"versionNo":request.versionNo,"type":kind,**data})
+    except Exception:
+        pass
+
+
+async def progress(request, step):
+    await emit(request, "step_done", step=step)
 
 
 async def prepare_assets(request: RunRequest):
@@ -498,6 +505,18 @@ BUSINESS_TOOL_SPECS = [
 ]
 
 
+def tool_succeeded(output):
+    """For the progress event only: an adapter error inside a result (api_error, not configured) is a failure."""
+    items = output if isinstance(output, list) else [output]
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        status = str(item.get("status", "")).lower()
+        if "error" in item or status in ("api_error", "api_not_configured", "error"):
+            return False
+    return True
+
+
 async def select_business_tools(provider, state, request):
     """business 노드의 도구선택 loop. LLM은 findings를 보고 structure_evidence/verify_functional_approval/
     verify_patent 중 관련 있는 것만 고른다 — 매번 조건문으로 다 지나가는 게 아니라 실제로 선택이다.
@@ -524,6 +543,12 @@ async def select_business_tools(provider, state, request):
         return evidence, public, patents, warnings, trace
 
     async def invoke(name):
+        await emit(request, "tool_started", tool=name)
+        output = await run_tool(name)
+        await emit(request, "tool_finished", tool=name, ok=tool_succeeded(output))
+        return output
+
+    async def run_tool(name):
         nonlocal evidence, public, patents
         try:
             if name == "structure_evidence":
@@ -687,7 +712,9 @@ def build_graph(native, tiles, provider, checkpointer, request=None):
                 "sectionTitles":titles}
 
     async def regulations(state):
+        await emit(request, "tool_started", tool="legal_basis")
         lookup = await legal_basis(state["findings"], texts=state["texts"])
+        await emit(request, "tool_finished", tool="legal_basis", ok=lookup["status"] in ("connected", "skipped"))
         # 규칙 sweep이 추가한 문구는 text_path를 거치지 않아 대표 구간이 비어 있다. 여기서 같은 방식으로 정한다.
         for finding in lookup["findings"]:
             if not finding.get("tileId"):

@@ -32,7 +32,7 @@ AI 결과는 내부 검토 초안이며 협회 자문이나 정부 인증을 대
 | FR-3, FR-4, FR-10 | business-mcp의 증빙 대조와 식약처 조회 | 증빙 문자 추출과 공식 조회 adapter. 실증(시험자료) 주장은 Agent(evidence.py)가 문서 요약과 광고 각주를 대조해 뒷받침함/다른 시험/조건 다름/증빙에 없음으로 판정(2026-10-21). business-mcp의 match_product_claims(기능성 보고 범위 대조)·match_patent_claims(특허 청구항 대조)는 여전히 미구현 |
 | FR-14, FR-15 | business-mcp의 특허 조회와 원문 대조 | KIPRIS 조회 adapter, 청구항 원문 대조는 후속 |
 | FR-7, NFR-4 | Backend, 큐와 Worker의 다건 처리 | 단건 검토는 RabbitMQ outbox(app.review_jobs)로 큐잉·재시도(최대 3회, 5s/30s)·DLQ까지 연결됨(REVIEW_QUEUE_ENABLED, Compose 기본값 true). 여러 광고를 한 번에 올리는 다건 업로드 API와 Agent 쪽 별도 Worker는 여전히 없음 |
-| FR-8, NFR-1 | 단일 입력과 단건 응답, SSE | 제공 Vue와 단건 202 접수 및 상태 폴링, SSE는 후속 |
+| FR-8, NFR-1 | 단일 입력과 단건 응답, SSE | 단건 202 접수 후 검토별 SSE 진행 이벤트, 연결 실패 시 상태 폴링. 배치 SSE는 후속 |
 | FR-9, FR-12, FR-13 | Backend의 이력 조회, 삭제와 버전 관리 | 실제 결과와 버전 및 승인 보존, 삭제 |
 | FR-11 | 별도 과금 서비스와 크레딧 DB | app 스키마 내 Toss 테스트결제·크레딧 구매·리뷰당 차감 구현, 별도 과금 DB 분리는 후속 |
 | NFR-3, NFR-5 | 원본 임시 Redis, 결과 영구 PostgreSQL | Redis와 PostgreSQL 실행환경 |

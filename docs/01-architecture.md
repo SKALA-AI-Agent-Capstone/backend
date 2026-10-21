@@ -97,7 +97,7 @@ finding에는 basis(규칙 조항 retrieval=rule, 보조 검색 retrieval=search
 
 | 목표 | 현재 |
 | --- | --- |
-| 단건 즉시 응답과 SSE | 접수 후 202, 인증된 1.5초 상태 폴링 |
+| 단건 즉시 응답과 SSE | 접수 후 202, 인증된 검토별 SSE(GET /api/v1/reviews/{id}/events). 스트림을 열지 못하면 1.5초 상태 폴링 |
 | 다건 Backend → Agent API → RabbitMQ → 내부 Worker | 단건 검사의 Backend → RabbitMQ → Backend 소비자 → Agent HTTP 경로부터 연결. 다건 Agent 내부 Worker는 후속 |
 | 한도 있는 Agent 도구선택 loop | business 노드는 구현됨(2026-10-21): LLM이 findings를 보고 structure_evidence/verify_functional_approval/verify_patent 중 필요한 것만 선택, Guardrail 총 8회/동일 tool 연속 2회/60초. regulations/cross_checks는 여전히 고정 순서(법령 근거는 매 finding마다 항상 필요하고, cross_checks 대상은 규칙 테이블이 정함) |
 | search_regulations, search_precedents | legalize-kr 화장품법 코퍼스는 적재·임베딩과 pgvector 검색이 연결됨. 나머지 출처(PDF) 적재는 원문 확보 후 진행 중 |
