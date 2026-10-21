@@ -1,5 +1,13 @@
 # 서비스 아키텍처
 
+## 현재 코드 소유 경계
+
+frontend는 화면, backend는 Java 업무 API와 통합 인프라, ai_agent는 Python Agent와 Business MCP 및 RAG MCP를 소유한다.
+저장소만 분리하며 실행 서비스, HTTP와 MCP 계약, DB 권한과 Docker 네트워크는 유지한다.
+Python 공통 모델과 생성 JSON Schema는 ai_agent/packages/shared와 ai_agent/contracts가 원본이다.
+통합 Compose는 backend에서 ai_agent의 빌드 컨텍스트를 참조한다. 모델과 프롬프트, 토큰 예산과 검색 설정은 변경하지 않는다.
+
+
 기준은 [노션 기획서](https://app.notion.com/p/Agent-3fe616ab8fec80bfb92df115c66aa83d)와 연결된 MCP, REST, Graph 및 RabbitMQ 문서다.
 이번 구현은 제공된 Vue 화면을 연결한 단건 MVP다. RAG DB 계획은 `Cosmetic_RAG_AI_Handoff`를 반영한다.
 이 문서는 현재 동작과 최종 목표를 구분한다. 팀원의 통합 기준은 두 저장소의 main이며 기능별 feat 브랜치와 PR로 작업한다.

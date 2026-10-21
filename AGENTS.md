@@ -14,10 +14,10 @@
 ## 현재 범위와 협업
 
 - 현재는 제공 Vue를 연결한 단건 MVP다. 광고 입력은 PDF와 이미지 두 종류이며 직접 카피 입력 UI는 없다.
-- 통합 기준은 두 저장소의 main이다. 후속 기능은 main에서 짧은 feat 브랜치로 개발하고 PR 및 소비자 검증 후 병합한다.
+- 통합 기준은 frontend, backend, ai_agent 세 저장소의 main이다. 후속 기능은 main에서 짧은 feat 브랜치로 개발하고 PR 및 소비자 검증 후 병합한다.
 - main을 변경하거나 병합하는 권한은 현재 사용자 요청 범위를 따른다. 이번 main 반영 요청을 향후 모든 변경의 자동 병합 허가로 사용하지 않는다.
 - 기능 목적과 FR 또는 NFR, 실제 구현 및 검증과 남은 범위를 PR과 docs에 구분한다.
-- 인터페이스 원본은 packages/shared와 contracts다. 모델 변경 시 scripts/export_contracts.py와 소비자 테스트를 함께 갱신한다.
+- Python 인터페이스 원본은 형제 ai_agent/packages/shared와 ai_agent/contracts다. 모델 변경 시 scripts/export_contracts.py와 소비자 테스트를 함께 갱신한다.
 - 기존 파일은 원래 파일에 수정한다. 별도 제출용 코드 사본을 임의로 만들지 않는다. 모든 직접 작성 자료에서 중앙점을 사용하지 않는다.
 
 ## 서비스와 DB 경계
@@ -42,5 +42,9 @@
 - data/demo-access.md의 검증 비밀번호, 입력 파일, 원문과 청킹 보고서, 모델 가중치 및 DB dump는 Git에 넣지 않는다.
 - 공개하는 .env.example에는 변수명과 생성 placeholder만 둔다. 팀원마다 자기 계정과 로컬 비밀번호를 생성한다.
 - DB를 바꾸면 새 migration을 추가한다. 기존 사용자 DB와 실행 서비스를 임의로 초기화하지 않는다.
-- Python pytest와 계약 export 검사, Java Maven verify, Frontend npm run build 및 변경에 맞는 HTTP/MCP 검증을 실행한다.
+- AI 저장소에서 Python pytest와 계약 export 검사를, Backend에서 Java Maven verify를, Frontend에서 npm run build를 실행한다. 전체 HTTP/MCP 검사는 Backend 통합 CI에서 AI 고정 커밋과 함께 수행한다.
 - 실제 수행한 검증만 보고하고 키 부족 및 미검증 항목은 docs/07-validation.md에 남긴다.
+
+## 저장소 분리 작업
+
+Python Agent와 두 MCP 및 평가 코드는 ai_agent에 있다. Backend는 services/api와 infra, 통합 Compose를 소유한다. 공통 문서는 backend/docs에 유지한다. 공개 목록 JSON은 ai_agent/resources 원본과 동일한 배포용 스냅샷이다. 통합 테스트가 사용하는 AI 버전은 ai-agent.ref에 고정한다. 저장소 이동 중 모델과 프롬프트, DB 및 로컬 비밀 설정은 바꾸지 않는다.

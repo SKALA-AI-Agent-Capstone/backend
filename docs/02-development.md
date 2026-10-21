@@ -1,5 +1,12 @@
 # 로컬 개발과 실행
 
+## 저장소 분리 이후의 실행
+
+최신 실행 절차는 backend/README.md와 ai_agent/README.md를 사용한다. Python uv 명령은 ai_agent에서,
+Java Maven 명령은 backend에서 실행한다. 전체 Compose는 backend에서 실행하며 기본 AI 빌드 경로는 ../ai_agent다.
+아래 날짜별 기존 단일 저장소 명령은 이식 전 기록이다. `.env`와 DB 볼륨은 기존 backend 것을 유지한다.
+
+
 현재 범위는 OpenAI 기준 단건 MVP와 로컬 PostgreSQL + pgvector다. 클라우드 가입이나 별도 Vector DB 서버는 필요 없다.
 Frontend와 Backend는 같은 상위 폴더의 별도 Git 저장소다.
 

@@ -1,5 +1,13 @@
 # 서비스 인터페이스와 현재 실행 계약
 
+## 저장소 분리 이후 계약 위치
+
+HTTP와 MCP의 필드와 상태는 이번 이식에서 변경하지 않는다. Python 모델 원본은 ai_agent/packages/shared,
+생성 스키마와 외부 API 명세는 ai_agent/contracts로 이동했다. Backend와 Frontend는 이 계약의 소비자다.
+기존 문서의 packages/shared와 contracts 경로는 AI 저장소 기준으로 읽는다.
+공개 출처 목록은 ai_agent/resources가 원본이며 backend classpath 스냅샷과 바이트 일치를 검사한다.
+
+
 문서 확인일: 2026-10-20. 노션의 명세를 개발 목표로 사용하고, 현재 코드의 v0.1 기반과 구분한다.
 이번 보완은 설계 문서 변경이다. 새 업무 HTTP와 MCP 도구를 구현하거나 계약 버전을 올린 작업이 아니다.
 

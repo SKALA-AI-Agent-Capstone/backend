@@ -1,25 +1,11 @@
-name: Local MVP checks
+name: Backend and pinned AI integration
 on:
   pull_request:
   push:
-    branches: [main]
-
+    branches: [main, refactor/service-repository-boundaries]
 permissions:
   contents: read
-
 jobs:
-  python:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-        with:
-          version: "0.12.17"
-          python-version: "3.12"
-      - run: uv sync --all-packages --frozen
-      - run: uv run --all-packages --frozen pytest
-      - run: uv run --all-packages --frozen python scripts/export_contracts.py --check
-
   java:
     runs-on: ubuntu-latest
     steps:
@@ -30,26 +16,39 @@ jobs:
           java-version: "21"
           cache: maven
       - run: mvn -B -f services/api/pom.xml verify
-
   integration:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: backend
+      - id: ai
+        run: echo "ref=$(cat ai-agent.ref)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: SKALA-AI-Agent-Capstone/ai_agent
+          ref: ${{ steps.ai.outputs.ref }}
+          path: ai_agent
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.12.17"
           python-version: "3.12"
       - run: python3 scripts/bootstrap.py
+      - run: uv sync --project ../ai_agent --all-packages --frozen
+      - run: uv run --project ../ai_agent --all-packages --frozen pytest tests/test_bootstrap.py
+      - run: python3 ../ai_agent/scripts/check_backend_registry.py --backend .
       - run: docker compose config --quiet
       - run: docker compose up --build --wait --wait-timeout 240 postgres redis-cache rabbitmq api business-mcp rag-mcp agent
-      - run: uv sync --all-packages --frozen
-      - run: uv run --all-packages --frozen --env-file .env python scripts/smoke.py --include-queue
-      - run: uv run --all-packages --frozen python scripts/mvp_smoke.py --require-queue
+      - run: uv run --project ../ai_agent --all-packages --frozen --env-file .env python ../ai_agent/scripts/smoke.py --include-queue
+      - run: uv run --project ../ai_agent --all-packages --frozen python ../ai_agent/scripts/mvp_smoke.py --require-queue
         env:
           MVP_API_URL: http://127.0.0.1:8080
       - run: docker compose exec -T redis-cache redis-cli ping
-      - run: docker compose --profile queue exec -T rabbitmq rabbitmq-diagnostics -q check_running
+      - run: docker compose exec -T rabbitmq rabbitmq-diagnostics -q check_running
       - if: always()
-        run: docker compose --profile queue logs --tail=100
+        run: docker compose logs --tail=100
       - if: always()
-        run: docker compose --profile queue down
+        run: docker compose down
