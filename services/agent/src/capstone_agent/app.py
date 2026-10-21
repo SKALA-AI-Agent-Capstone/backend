@@ -16,6 +16,7 @@ from capstone_shared.settings import (
 from .observability import run_config, trace_headers, trace_id
 from .review_models import RunRequest, ResumeRequest, RewriteRequest, VerifyRewriteRequest
 from .review_engine import Provider, prepare_assets, build_graph, progress, rewrite_phrase, verify_rewrite, RewriteRejected
+from .regulations import source_document
 from .tools import McpTools
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.types import Command
@@ -141,6 +142,18 @@ def create_app() -> FastAPI:
         except Exception:
             raise HTTPException(status_code=502,detail="REWRITE_VERIFICATION_FAILED") from None
         return {"passed":result.passed,"reasoning":result.reasoning}
+
+    @app.get("/internal/regulations/document", dependencies=[Depends(require_internal)])
+    async def regulation_document(key: str, version: str) -> dict:
+        tools = McpTools(servers=("rag",))
+        try:
+            async with tools:
+                document = await source_document(tools.read, key, version)
+        except Exception:
+            raise HTTPException(status_code=502,detail="REGULATION_SOURCE_UNAVAILABLE") from None
+        if document is None:
+            raise HTTPException(status_code=404,detail="REGULATION_DOCUMENT_NOT_FOUND")
+        return document
 
     @app.post("/internal/runs/delete", dependencies=[Depends(require_internal)])
     async def delete_runs(request: ResumeRequest) -> dict:

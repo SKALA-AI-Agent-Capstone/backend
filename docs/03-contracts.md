@@ -103,6 +103,11 @@ rag-mcp Resource는 모델이 아니라 앱(근거 패널)이 고르는 읽기 �
 | --- | --- | --- |
 | regulation://corpus | documents: document_version_id, document_key, title, 버전, 시행일, 조각 수 | 원문을 읽을 id 목록. /health/corpus와 같은 목록 |
 | regulation://documents/{document_version_id} | 제목, 버전, source_url, 시행일과 sections(section, page, text) 목록 | 적재 순서 그대로의 원문. 없는 id와 DB 장애는 ResourceError |
+
+화면의 근거 항목에서 "전체 원문 보기"를 누르면 GET /api/v1/reference-documents?key={document_key}&version={버전}을 부른다.
+Spring은 Agent의 GET /internal/regulations/document로 넘기고, Agent는 regulation://corpus에서 같은 document_key와 버전의 id를 찾아
+regulation://documents/{id}를 읽는다. 같은 법령의 다른 버전으로 바꿔 보여 주지 않는다.
+없는 문서나 버전은 404 REGULATION_DOCUMENT_NOT_FOUND, rag-mcp 장애는 502 REGULATION_SOURCE_UNAVAILABLE이다.
 GMP와 규제정보 API는 검색 인자가 없어 최대 20쪽(2,000건)을 훑어 이름으로 거르고, 다 못 훑으면 incomplete를 반환한다.
 
 ### RAG 반환 필드

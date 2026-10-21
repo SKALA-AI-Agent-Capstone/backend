@@ -1,5 +1,6 @@
 """One MCP session per server for a graph node, so a node can call many tools without reconnecting."""
 import asyncio
+import json
 from contextlib import AsyncExitStack
 
 from fastmcp import Client
@@ -43,3 +44,9 @@ class McpTools:
         if isinstance(content, dict) and set(content) == {"result"}:
             return content["result"]
         return content if content is not None else response.data
+
+    async def read(self, server: str, uri: str) -> dict:
+        """Read a JSON resource. The server's ResourceError (unknown id, database down) propagates."""
+        async with asyncio.timeout(30):
+            contents = await self.clients[server].read_resource(uri)
+        return json.loads(contents[0].text)

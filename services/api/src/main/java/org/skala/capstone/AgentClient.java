@@ -25,9 +25,14 @@ public class AgentClient {
         this.json=json;this.agentUrl=agentUrl;this.internalToken=internalToken;
     }
     public JsonNode post(String path,JsonNode body)throws Exception{
-        var request=HttpRequest.newBuilder(URI.create(agentUrl+path)).timeout(Duration.ofSeconds(300)).header("Authorization","Bearer "+internalToken)
-            .header("Content-Type","application/json").POST(HttpRequest.BodyPublishers.ofString(body.toString())).build();
-        var response=http.send(request,HttpResponse.BodyHandlers.ofString());
+        return send(HttpRequest.newBuilder(URI.create(agentUrl+path)).timeout(Duration.ofSeconds(300))
+            .header("Content-Type","application/json").POST(HttpRequest.BodyPublishers.ofString(body.toString())));
+    }
+    public JsonNode get(String path)throws Exception{
+        return send(HttpRequest.newBuilder(URI.create(agentUrl+path)).timeout(Duration.ofSeconds(30)).GET());
+    }
+    private JsonNode send(HttpRequest.Builder builder)throws Exception{
+        var response=http.send(builder.header("Authorization","Bearer "+internalToken).build(),HttpResponse.BodyHandlers.ofString());
         if(response.statusCode()!=200){
             String detail="";
             try{detail=json.readTree(response.body()).path("detail").asText("");}catch(Exception ignored){}
