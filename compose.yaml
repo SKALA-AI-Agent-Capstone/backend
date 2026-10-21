@@ -3,7 +3,7 @@ name: beauty-capstone-dev
 x-python: &python
   image: ${CAPSTONE_IMAGE_PREFIX:-beauty-capstone}-python:dev
   build:
-    context: .
+    context: ${AI_AGENT_DIR:-../ai_agent}
     dockerfile: infra/Dockerfile.python
   environment: &python-env
     SERVICE_HOST: 0.0.0.0

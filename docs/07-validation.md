@@ -372,3 +372,17 @@ GET /api/v1/reviews/{id}/events로 중계한다. 프론트는 1.5초 폴링 대�
   - 정상: 위반 3건을 원문 유지로 결정하고 승인했다. 승인 API는 0.07초에 `agentResume=pending`으로 응답했고, 재개 작업은 1.4초 뒤 1회 시도로 done, `agentResume=completed`가 됐다.
   - 장애: Agent 컨테이너를 멈춘 뒤 승인했다. 승인 API는 0.13초에 응답했다. 재개는 연결 실패로 2회 재시도 상태가 됐다. Agent를 다시 켠 뒤 3번째 시도(30초 대기 후)에 done, `agentResume=completed`가 됐다. hitl_status는 approved, 크레딧은 charged로 그대로였다.
 - 화면의 재개 대기와 실패 표시는 프론트 `feat/resume-job-queue`의 `npm run build`까지만 확인했다.
+
+
+## 2026-10-21 서비스 저장소 분리 검증
+
+- 기준 Backend main: 0933ae1. Frontend는 변경하지 않았다. 두 저장소의 refactor/service-repository-boundaries 브랜치에만 반영하며 PR과 main 병합은 하지 않는다.
+- 추적된 AI 파일 99개를 ai_agent로 이동했다. 94개는 SHA-256이 기준과 동일하고 5개는 Docker 및 공개 목록 경로, 테스트 경로와 로컬 설정 로딩만 조정했다. Java services/api에는 diff가 없다.
+- provenance와 원본 해시는 ai_agent/migration-baseline.json에 있다. 프롬프트, 모델 설정, 호출 동시성, 검색 임계값과 생성 계약은 변경하지 않았다.
+- docker compose config를 해석한 결과는 빌드 컨텍스트를 제외하고 이식 전후 동일했다. 기존 backend/.env, data 및 운영 중인 Docker 볼륨은 이동하거나 재생성하지 않았다.
+- Python: AI 테스트와 Backend bootstrap 회귀를 합쳐 104 passed, 1 skipped. skip은 별도 DB URL이 필요한 PostgreSQL 재개 잠금 테스트다.
+- 생성 계약 --check와 Spring 출처 목록 스냅샷 바이트 일치 검사 통과.
+- Java 21 Maven verify: 55 tests, 0 failures, 0 errors, 0 skipped.
+- 별도 beauty-split-verification Compose 프로젝트와 독립 포트 및 볼륨, 생성된 무과금 환경으로 전체 서비스를 빌드하고 healthy를 확인했다.
+- 합성 통합 검사: HTTP와 MCP 인증, Spring 내부 연동, pgvector 읽기 권한, RabbitMQ AMQP, PNG 및 PDF와 증빙 입력, 기업 격리, HITL, 재검토, 분석과 승인 재개 작업의 done, 삭제까지 통과했다. 유료 호출 0회, 고객 파일 0개다.
+- 실제 LLM/VLM 출력과 검색 품질 및 지연 시간의 벤치마크는 재실행하지 않았다. 이번 검증은 핵심 소스와 런타임 설정 동일성 및 합성 연동 동작 보존을 확인한 것이다.

@@ -1,122 +1,70 @@
-# 화장품 광고 사전검토 로컬 MVP
+# 화장품 광고 검토 Backend
 
-제공된 Vue 화면을 Spring Boot, FastAPI Agent와 Business MCP에 연결한 단건 MVP다.
-PDF와 이미지 업로드, 독립적인 문구와 사진 분석 경로, 결과와 버전 저장, 담당자 승인 및 Graph 재개를 제공한다.
-OpenAI와 공공 API adapter는 서버 설정으로 연결한다. 키가 없으면 미연결 상태를 표시한다.
-RAG는 Handoff 기반의 로컬 PostgreSQL + pgvector 설계, 출처 목록과 원문 수집 및 기본 청킹 점검까지 반영했다. 실제 검색과 적법 판정은 아직 하지 않는다.
+Java 21과 Spring Boot 업무 API다. 인증과 기업 권한, 업로드, 결과와 이력, 크레딧, 승인과 RabbitMQ 작업을 관리한다.
+Python Agent와 Business MCP, RAG MCP는 형제 `ai_agent` 저장소에 있다. 이번 분리는 기존 동작을 유지한다.
 
-제품 요구사항 원본은 [노션 기획서](https://app.notion.com/p/Agent-3fe616ab8fec80bfb92df115c66aa83d)다.
-2026-10-20에 기획서 본문과 연결된 REST, MCP, Graph 및 실행 시퀀스 초안을 확인했으며, 노션 미확정 항목과 구현 선택은 문서에서 구분한다.
+## 저장소와 통합 실행
 
-## main에서 시작
-
-처음 받는 팀원은 두 저장소를 같은 상위 폴더에 clone한다. 아래 경로는 예시이며 기존 개인 폴더가 없어도 실행할 수 있다.
+세 저장소를 같은 상위 폴더에 둔다. backend와 ai_agent의 main을 사용한다.
+Frontend는 기존 main을 그대로 사용한다. backend의 `ai-agent.ref`에는 검증한 AI 커밋이 기록된다.
 
 ```sh
 mkdir beauty-capstone
 cd beauty-capstone
 git clone --branch main https://github.com/SKALA-AI-Agent-Capstone/backend.git
-git clone --branch main https://github.com/SKALA-AI-Agent-Capstone/frontend.git
-cd backend
+git clone --branch main https://github.com/SKALA-AI-Agent-Capstone/ai_agent.git
+git clone https://github.com/SKALA-AI-Agent-Capstone/frontend.git
+cd ai_agent
+git checkout $(cat ../backend/ai-agent.ref)
+cd ../backend
 python3 scripts/bootstrap.py
-docker compose --profile web up --build -d --wait --wait-timeout 240
+docker compose --profile web up --build -d
 ```
 
-Docker Engine과 Compose를 실행한 상태에서 사용한다. 화면은 http://localhost:5173 이다.
-처음에는 기업 작업공간을 만들면 된다. 선택적으로 uv 환경에서 검증 관리자 계정도 생성할 수 있다.
+Docker가 실행 중이어야 한다. 기본 화면은 http://localhost:5173 이다.
+기존 개발자는 `.env`와 data, Docker 볼륨을 그대로 사용한다. DB 초기화, 비밀번호 재생성과 원본 파일 복사는 하지 않는다.
+AI 코드 위치가 다르면 `.env`의 `AI_AGENT_DIR`를 지정한다. 기본은 ../ai_agent다.
+모델과 공식 API 키는 Git에 넣지 않고 backend/.env에서 Compose가 필요한 서비스에만 전달한다.
+
+`rag-ingest`는 일회성 작업이므로 전체 Compose에 --wait를 쓰는 대신 장기 실행 서비스만 지정한다.
 
 ```sh
-uv sync --all-packages --frozen
-uv run --all-packages --frozen python scripts/setup_demo.py
+docker compose up --build -d --wait --wait-timeout 240 postgres redis-cache rabbitmq api business-mcp rag-mcp agent
 ```
 
-검증 이메일은 master@beauty-review.local이며 실행자별 비밀번호는 Git에서 제외된 data/demo-access.md에 저장된다.
-공용 마스터 비밀번호를 소스에 넣지 않는다. 현재 Docker DB나 계정이 clone으로 복사되는 구조가 아니다.
-원본 파일, DB 내용, 실제 API 키와 모델 가중치도 Git에 포함하지 않는다.
+위 실행은 실제 키가 설정되면 기존과 같이 공개 근거 수집과 임베딩 API를 사용할 수 있다.
 
-## 작업 전에 읽기
+## 개발과 검사
 
-1. [최신 노션 기획서](https://app.notion.com/p/Agent-3fe616ab8fec80bfb92df115c66aa83d)와 담당 영역의 연결 문서를 읽는다.
-2. DB를 바꾸면 [노션 ERD v2](https://app.notion.com/p/Data-ERD-App-State-Vector-DB-3ff616ab8fec81c7b57ac75358ced570)를 확인한다.
-3. 이 저장소의 [프로젝트 메모리](docs/08-project-memory.md), [현재 아키텍처](docs/01-architecture.md), [현재와 목표 ERD의 대응](docs/04-data.md)을 읽는다.
-4. [계약](docs/03-contracts.md)과 [담당별 다음 작업](docs/10-work-breakdown.md)을 확인하고 main에서 feat 브랜치를 만든다.
+```sh
+# backend: 업무 API만 개발
+JAVA_HOME=$(/usr/libexec/java_home -v 21) mvn -f services/api/pom.xml verify
+python3 scripts/run_api.py
 
-노션의 목표, 현재 코드와 미구현 기능을 구분한다. API 명세 확인을 정상 실응답 검증으로 표시하지 않는다.
-RAG는 Handoff 기준의 빈 knowledge DB와 출처 목록이며, 로컬 수집 및 기본 청킹 점검 코드까지만 추가됐다.
+# AI: 별도 터미널의 ai_agent에서
+uv sync --all-packages --frozen
+uv run --all-packages --frozen pytest
+uv run --all-packages --frozen python scripts/export_contracts.py --check
 
-## 공통 문서
+# 전체 합성 검사: 모델 키를 비운 격리 환경에서만 실행
+# ai_agent에서 실행, 실제 키를 사용하는 개발 서비스와 구분
+uv run --all-packages --frozen --env-file ../backend/.env python scripts/smoke.py --include-queue
+uv run --all-packages --frozen python scripts/mvp_smoke.py --require-queue
+```
 
-| 문서 | 내용 |
-| --- | --- |
-| [프로젝트 맥락](docs/00-project-context.md) | B2B 목표, 구현 범위와 미구현 기능 |
-| [아키텍처](docs/01-architecture.md) | 서비스 경계와 실제 연결 구조 |
-| [개발환경](docs/02-development.md) | Docker, 담당별 로컬 실행, 검증, 오류 해결 |
-| [공통 계약](docs/03-contracts.md) | HTTP, MCP, 오류, 예정된 작업과 SSE 규칙 |
-| [데이터](docs/04-data.md) | PostgreSQL과 벡터, 파일 저장, DB 권한 |
-| [협업](docs/05-collaboration.md) | 담당 경계, 브랜치, PR와 변경 규칙 |
-| [RAG 시작점](docs/06-rag-start.md) | 수집, 색인, 검색, 출처와 평가 준비 |
-| [검증 기록](docs/07-validation.md) | 확인한 내용과 실행 환경의 제한 |
-| [프로젝트 메모리](docs/08-project-memory.md) | 최신 결정, 폐기한 가정, 다음 작업 |
-| [입력 처리](docs/09-input-pipeline.md) | PDF와 이미지 분기, OCR와 Vision, 키, 원본 수명과 예외 |
-| [담당별 개발 계획](docs/10-work-breakdown.md) | 작업 카드, 입출력, 코드 배치와 통합 순서 |
-| [하네스 평가셋](docs/13-harness-evaluation.md) | 합성 광고 정답셋, 지표, 실행 방법과 전후 결과 기록 |
+통합 검사는 테스트 계정을 만들고 합성 광고를 처리한다. 실제 개발 환경에서 무심코 실행하지 않는다.
+검증 계정이 필요하면 ai_agent/scripts/setup_demo.py를 사용한다. 생성 비밀번호는 Git에서 제외된다.
+Backend의 Python 파일은 환경 생성과 Java 실행, 개발환경 회귀 검사에 사용하는 도구이며 AI 런타임 코드는 없다.
 
-제품 요구사항은 노션, 실행 코드의 계약은 packages/shared와 contracts가 원본이다.
-docs는 두 저장소의 공통 구현 안내다. 프론트엔드에 문서 내용을 복사하지 않는다.
+## 협업 기준
 
-## 서비스
+- 요구사항: [노션 기획서](https://app.notion.com/p/Agent-3fe616ab8fec80bfb92df115c66aa83d)
+- 데이터: [노션 ERD](https://app.notion.com/p/Data-ERD-App-State-Vector-DB-3ff616ab8fec81c7b57ac75358ced570)
+- [아키텍처](docs/01-architecture.md), [개발 환경](docs/02-development.md), [계약](docs/03-contracts.md)
+- [프로젝트 메모리](docs/08-project-memory.md), [분업](docs/10-work-breakdown.md), [검증 기록](docs/07-validation.md)
 
-| 경로 | 기술 | 개발 포트 |
-| --- | --- | --- |
-| services/api | Java 21, Spring Boot 3.5.16, Maven | 8080 |
-| services/agent | Python 3.12, FastAPI | 8001 |
-| services/business-mcp | FastMCP 4.1.1 | 8002 |
-| services/rag-mcp | FastMCP 4.1.1 | 8003 |
-| infra/postgres | PostgreSQL 17, pgvector 0.8.7 | 55432 |
-| redis-cache | Redis 7.4, 원본 캐시 준비 | 56379 |
-| rabbitmq | RabbitMQ 4.3.6, 검사 작업 알림과 실패 큐 | 5672, 관리 화면 15672 |
-| packages/shared | Pydantic 공통 계약과 연결 도우미 | 실행 서비스 아님 |
-
-Compose에서는 RabbitMQ 검사 대기열을 사용한다. 단독 API 실행에서는 기본값
-`REVIEW_QUEUE_ENABLED=false`로 기존 프로세스 내부 작업자를 사용한다.
-단독 실행에서 대기열을 검증하려면 RabbitMQ를 실행하고 `REVIEW_QUEUE_ENABLED=true` 및
-`RABBITMQ_*` 환경 변수를 설정한다. 대기 작업과 재시도 상태는 `app.review_jobs`에 저장된다.
-
-PostgreSQL 안에 벡터를 저장하므로 별도 Vector DB 서비스는 없다.
-각 팀원의 DB는 로컬에 따로 생성되며 GitHub에 데이터가 자동 공유되는 구조는 아니다.
-
-## 현재 범위
-
-- 기업 작업공간과 JWT 로그인, 세션 로그아웃, 서버의 기업 및 역할 권한 검사.
-- 실제 PDF와 이미지 multipart 업로드, Redis 임시 보관과 처리 후 폐기.
-- pdfplumber, pypdfium2, Pillow와 Tesseract 한국어 OCR. OpenAI 문구 예비검토와 사진 독립 검토.
-- FastMCP 증빙 추출, 식약처와 KIPRIS 조회 adapter. 실제 승인키와 정상 응답 검증은 별도다.
-- PostgreSQL 결과와 버전, LangGraph HITL checkpoint, 담당자 결정 저장과 재개, 이력 삭제.
-- RAG 출처 9건과 API 4종 목록, knowledge 스키마와 vector(1024). 화장품법은 legalize-kr에서 조문 단위로 적재하고 나머지는 PDF로 적재(scripts/ingest_rag.py). rag-mcp의 search_regulations와 search_precedents는 키워드 검색으로 동작하며 임베딩은 선택. Agent는 아직 RAG를 호출하지 않는다.
-- 배치 SSE, 다건 RabbitMQ Worker, 운영 결제·과금 DB 분리, 증빙 의미 대조와 특허 청구항 대조는 후속.
-
-공개 계약은 /api/v1이다. 이전 /api/reviews 501 경로와 v0.1 검색 stub은 호환 기반이며 새 업무 화면에서 호출하지 않는다.
-실제 모델과 공공 API 설정, 시작 방법 및 검증용 주소는 [개발환경](docs/02-development.md)을 따른다.
-배포 및 인수 기준은 main이다. PR의 원격 Checks와 병합 커밋으로 반영 상태를 확인한다.
-실제 문서, 모델 가중치, 원본 광고와 자격증명은 Git에 올리지 않는다.
-
-## 팀원이 처음 읽을 순서
-
-1. [프로젝트 맥락](docs/00-project-context.md)에서 노션 요구와 현재 구현 범위를 확인한다.
-2. [아키텍처](docs/01-architecture.md)와 [입력 처리](docs/09-input-pipeline.md)에서 파일 입력부터 승인까지 경로를 확인한다.
-3. [담당별 개발 계획](docs/10-work-breakdown.md)에서 작업과 선행 계약을 선택한다.
-4. [공통 계약](docs/03-contracts.md)의 현재 계약과 제안 계약을 구분한다.
-5. [Git 협업 가이드](docs/05-collaboration.md)를 따라 기능별 브랜치와 PR을 만든다.
-
-chore/dev-foundation은 초기 실행환경 브랜치다. 후속 기능은 최신 main에서 별도 feat 브랜치를 만들어 진행한다.
-서비스별 다음 작업과 인터페이스 담당은 docs/10-work-breakdown.md를 따른다.
-
-## 테스트 결제 연결
-
-결제 정보는 토스페이먼츠 결제창에서 입력하며 프론트엔드는 카드번호와 CVC를 받지 않는다. 테스트 결제 승인 후에만 `app.credit_topups`에 1회 기록하고 해당 회원의 `app.users.credit_balance`를 증가시키며 `/api/v1/billing/balance`로 잔액을 조회한다. 로컬 MVP에서는 검사 1회(재검사 포함)마다 회원 잔액에서 `app.credit_policy.review_cost`만큼 원자적으로 예약하고 결과 저장 시 확정한다. 분석 실패 시 예약분을 반환하며 `app.review_credit_charges`에 상태를 기록한다. 충전 금액권은 `app.credit_packages`가 관리하며, V11부터 100크레딧 5,000원, 500크레딧 23,000원, 1,000크레딧 42,000원, 2,000크레딧 70,000원의 4종만 활성이다. 프론트엔드는 `/api/v1/billing/config`에서 금액권과 검사 비용을 받아 표시한다. 별도 과금 DB는 후속 작업이다.
-
-1. 토스페이먼츠 개발자센터에서 테스트 키 한 쌍을 발급받는다. 주문서형·결제창형 키(`test_gck`, `test_gsk`)와 API 개별 연동 키(`test_ck`, `test_sk`)를 지원하며, 같은 종류의 한 쌍을 사용한다.
-2. 백엔드의 Git 제외 `.env`에 `TOSS_TEST_CLIENT_KEY`, `TOSS_TEST_SECRET_KEY`를 설정한다. `PAYMENT_RETURN_URL`은 실제 브라우저에서 쓰는 주소의 `/credits` 경로다. 키를 소스나 프론트 환경변수에 넣지 않는다.
-3. `docker compose --profile web up -d --build api web --wait`로 API와 웹을 재시작한다. `/credits`에서 결제하고 복귀 후 서버가 승인하며 잔액을 표시한다.
-
-키가 없으면 결제 버튼은 비활성화된다. 라이브 키는 코드에서 거부한다. 실제 돈이 오가는 운영 결제와 PG 환불은 이 테스트 구현의 범위가 아니다.
+공통 문서는 backend/docs에, Python 계약 원본과 생성 JSON Schema는 ai_agent에 둔다.
+공개 출처 목록은 ai_agent/resources가 원본이며 Spring의 resources는 배포용 스냅샷이다.
+AI의 `scripts/check_backend_registry.py --backend ../backend`로 일치를 검사한다.
+한쪽 저장소의 PR만으로 호환 버전이 달라지지 않도록 연결 변경과 AI 고정 커밋을 함께 검토한다.
+후속 작업은 각 저장소의 main에서 기능 브랜치를 만들고 PR로 검토한다.

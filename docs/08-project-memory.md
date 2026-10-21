@@ -6,6 +6,21 @@
 Notion 연동 API가 해당 페이지를 반환하지 않아 브라우저에서 본문과 상세 문서, 시퀀스 원본 이미지를 읽었다.
 노션 원문과 API 등록부 자체는 수정하지 않았다.
 
+## 2026-10-21 분리 코드 main 반영
+
+- 사용자가 분리 결과의 main 반영을 명시적으로 요청했다. ai_agent에 최초 main을 게시하고 Backend는 PR로 병합한다.
+- 전체 clone 절차는 README의 main 기준 명령을 사용한다. AI 기본 브랜치 설정은 변경하지 않는다.
+
+## 2026-10-21 저장소 경계 분리
+
+- 사용자는 기능과 성능을 유지한 채 frontend, backend, ai_agent로 분리를 요청했다. PR과 main 병합은 하지 않는다.
+- backend 기준 커밋은 0933ae1이다. Java API와 Flyway, 통합 Compose 및 인프라는 backend에 유지한다.
+- Python Agent와 두 MCP, packages/shared, 계약과 외부 API 명세, 평가셋과 Python 테스트는 ai_agent로 이동했다.
+- 공개 출처 JSON 원본은 ai_agent/resources다. Spring classpath의 두 JSON은 동일한 배포용 스냅샷이며 CI가 바이트 일치를 검사한다.
+- 통합 환경은 backend/.env, backend/data와 기존 Docker 프로젝트 및 볼륨을 유지한다. 실제 키와 DB를 이동하지 않는다.
+- 이식 브랜치는 두 저장소 모두 refactor/service-repository-boundaries다. backend/ai-agent.ref가 호환 AI 커밋을 고정한다.
+- 전체 실행과 최신 경로는 README 및 docs/02-development.md를 우선한다. 아래 날짜별 기록의 옛 단일 저장소 실행 명령은 당시 이력이다.
+
 ## 유지할 사용자 의도
 
 - B2B 화장품 광고 사전검토이며 사용자는 RAG MCP 담당이다.

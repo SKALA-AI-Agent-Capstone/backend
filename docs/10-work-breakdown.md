@@ -1,5 +1,20 @@
 # 담당별 개발 계획과 통합 순서
 
+## 저장소별 개발 시작점
+
+| 역할 | 저장소와 경로 | 최소 검사 |
+| --- | --- | --- |
+| Frontend | frontend/src | npm run build |
+| Backend | backend/services/api | Java 21 mvn -f services/api/pom.xml verify |
+| Agent, OCR와 VLM | ai_agent/services/agent 및 packages/shared | uv run --all-packages --frozen pytest |
+| RAG | ai_agent/services/rag-mcp, resources, evals | Python 테스트, 계약 검사와 평가 |
+| Business MCP | ai_agent/services/business-mcp | Python 테스트와 소비 Agent 검사 |
+| 통합 | backend/compose.yaml, infra와 .github/workflows | 고정 AI 커밋으로 전체 합성 검증 |
+
+분리 브랜치는 refactor/service-repository-boundaries다. 기능 개선은 이식 검증 후 각 저장소의 짧은 기능 브랜치에서 한다.
+한 저장소의 계약을 변경하면 다른 저장소의 연결 변경과 적용 순서를 함께 기록한다.
+
+
 > 기준: [노션 기획서](https://app.notion.com/p/Agent-3fe616ab8fec80bfb92df115c66aa83d).
 > 아래 작업 ID와 디렉터리는 개발 제안이다. 담당자 이름, 일정과 GitHub Issue를 생성하거나 확정한 문서가 아니다.
 
@@ -40,19 +55,19 @@ backend/services/api/src/main/java/org/skala/capstone/
   reviews/                   작업, 광고 버전, 결과와 이력
   events/                    진행 이벤트와 SSE
 
-backend/services/agent/src/capstone_agent/
+ai_agent/services/agent/src/capstone_agent/
   nodes/                     입력, 주장, 검색, 대조, 초안, 승인과 리포트
   providers/                 Vision과 텍스트 모델 adapter
   ingestion/                 광고 PDF와 이미지 입력 파싱
   messaging/                 같은 Agent 서비스의 발행과 소비 역할
   state/                     Graph State와 체크포인트
 
-backend/services/business-mcp/src/capstone_business_mcp/
+ai_agent/services/business-mcp/src/capstone_business_mcp/
   ingestion/                 PDF 파서, 렌더, 이미지와 선택 OCR
   tools/                     structure_evidence, 제품과 증빙, 식약처와 특허
   clients/                   Backend 내부 API와 외부 API adapter
 
-backend/services/rag-mcp/src/capstone_rag_mcp/
+ai_agent/services/rag-mcp/src/capstone_rag_mcp/
   ingest/                    공개 출처 수집과 파싱, 청킹, 색인 배치
   retrieval/                 필터, 키워드와 벡터 검색, 순위 조정
   evaluation/                검색과 인용 평가
