@@ -352,6 +352,38 @@ async def test_rewrite_guard_rejects_same_fragment_kept_and_added_claims():
     assert await rewrite_guard("건강하게 빛나는 윤기를 선사합니다", "건강해 보이는 윤기를 더합니다", call) is None
 
 
+async def test_business_tools_run_without_a_model_key_instead_of_being_skipped(monkeypatch):
+    """Without OPENAI_API_KEY there is no LLM to ask, but structure_evidence/verify_functional_approval/
+    verify_patent are business-mcp calls, independent of the model — they must still run (NFR-16),
+    not silently no-op just because the unrelated tool-selection step has no provider."""
+    import capstone_agent.review_engine as engine
+    from capstone_agent.review_engine import select_business_tools
+
+    class NoKeyProvider:
+        client = None  # no call_with_tools method either, so this path must never touch it
+
+    class FakeAsset:
+        role = "evidence"
+        def model_dump(self): return {"id": "e1", "role": "evidence"}
+
+    class FakeRequest:
+        assets = [FakeAsset()]
+
+    mcp_calls = []
+    async def fake_mcp_call(name, arguments, request=None):
+        mcp_calls.append(name)
+        return {"status": "found", "text": "증빙 원문"}
+    monkeypatch.setattr(engine, "mcp_call", fake_mcp_call)
+
+    state = {"tenantId": "t", "reviewId": "r", "product": {"name": "수분크림"}, "texts": [{"text": "특허 10-1234567"}],
+             "findings": [{"claimType": "patent"}]}
+    evidence, public, patents, warnings, trace = await select_business_tools(NoKeyProvider(), state, FakeRequest())
+
+    assert set(mcp_calls) == {"structure_evidence", "verify_functional_approval", "verify_patent"}
+    assert evidence["text"] == "증빙 원문"
+    assert public == {"status": "found", "text": "증빙 원문"}
+
+
 async def test_business_tool_loop_follows_llm_choice_and_guardrail_caps_repeats(monkeypatch):
     """select_business_tools: the LLM picks which available tool to call (never the one it never asks
     for, even though it is available), and a tool it keeps re-requesting stops executing once
