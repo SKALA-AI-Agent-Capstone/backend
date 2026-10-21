@@ -503,7 +503,38 @@ async def select_business_tools(provider, state, request):
         "verify_functional_approval": bool(product.get("name")),
         "verify_patent": bool(candidate_numbers) or any(f.get("claimType") == "patent" for f in state["findings"]),
     }
-    if not provider.client or not any(available.values()):
+    if not any(available.values()):
+        return evidence, public, patents, warnings, trace
+
+    async def invoke(name):
+        nonlocal evidence, public, patents
+        try:
+            if name == "structure_evidence":
+                evidence = await mcp_call("structure_evidence",
+                    {"tenant_id": state["tenantId"], "review_id": state["reviewId"], "documents": documents}, request)
+                return evidence
+            if name == "verify_functional_approval":
+                public = await mcp_call("verify_functional_approval",
+                    {"functional_approval_no": report, "product_name": product.get("name", "")})
+                return public
+            if name == "verify_patent":
+                if not candidate_numbers:
+                    patents = []
+                    return {"status": "no_patent_number_detected"}
+                patents = await mcp_call("verify_patent", {"patent_numbers": candidate_numbers})
+                return patents
+            return {"error": "UNKNOWN_TOOL"}
+        except Exception:
+            warnings.append(f"{name.upper()}_TOOL_UNAVAILABLE")
+            return {"error": f"{name.upper()}_TOOL_UNAVAILABLE"}
+
+    if not provider.client:
+        # 모델 키가 없으면 LLM에게 선택을 물을 수 없다. business-mcp 호출은 OpenAI와 무관한 별개
+        # 경로라, LLM 유무와 상관없이 구조적으로 관련 있는 도구는 그대로 실행한다(NFR-16).
+        for name, usable in available.items():
+            if usable:
+                await invoke(name)
+            trace.append({"tool": name, "called": usable})
         return evidence, public, patents, warnings, trace
 
     findings_summary = "\n".join(f"- \"{f['phrase']}\" (claimType={f.get('claimType')}): {f['reason']}"
@@ -544,26 +575,7 @@ async def select_business_tools(provider, state, request):
                 output = {"skipped": "GUARDRAIL_LIMIT_REACHED" if available.get(name) else "TOOL_NOT_APPLICABLE"}
             else:
                 called.append(name)
-                try:
-                    if name == "structure_evidence":
-                        evidence = await mcp_call("structure_evidence",
-                            {"tenant_id": state["tenantId"], "review_id": state["reviewId"], "documents": documents}, request)
-                        output = evidence
-                    elif name == "verify_functional_approval":
-                        public = await mcp_call("verify_functional_approval",
-                            {"functional_approval_no": report, "product_name": product.get("name", "")})
-                        output = public
-                    elif name == "verify_patent":
-                        if not candidate_numbers:
-                            patents, output = [], {"status": "no_patent_number_detected"}
-                        else:
-                            patents = await mcp_call("verify_patent", {"patent_numbers": candidate_numbers})
-                            output = patents
-                    else:
-                        output = {"error": "UNKNOWN_TOOL"}
-                except Exception:
-                    output = {"error": f"{name.upper()}_TOOL_UNAVAILABLE"}
-                    warnings.append(f"{name.upper()}_TOOL_UNAVAILABLE")
+                output = await invoke(name)
                 trace.append({"tool": name, "called": True})
             messages.append({"role": "tool", "tool_call_id": tool_call.id, "content": json.dumps(output, default=str)[:4000]})
     for name, usable in available.items():
