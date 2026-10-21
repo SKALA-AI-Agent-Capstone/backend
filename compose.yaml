@@ -88,6 +88,25 @@ services:
       timeout: 3s
       retries: 20
 
+  rag-ingest:
+    <<: *python
+    # One-shot corpus batch. Loads laws, notices, annexes and PDFs only when knowledge.chunks is empty,
+    # so a fresh clone gets legal basis without running scripts by hand. Re-run: docker compose run --rm rag-ingest
+    command: ["uv", "run", "--no-sync", "python", "-m", "capstone_rag_mcp.batch", "all", "--if-empty"]
+    environment:
+      <<: *python-env
+      RAG_INGEST_DATABASE_URL: postgresql://rag_ingest:${RAG_INGEST_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:-beauty_capstone}
+      RAG_REGISTRY: /app/registry/reference-sources.json
+      RAG_DATA_DIR: /app/data
+      LAW_OC: ${LAW_OC:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    volumes:
+      - ./data:/app/data
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   rag-mcp:
     <<: *python
     command: ["uv", "run", "--no-sync", "rag-mcp"]
@@ -117,6 +136,7 @@ services:
       RAG_MCP_URL: http://rag-mcp:8003/mcp
       BACKEND_BASE_URL: http://api:8080
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      MODEL_CONCURRENCY: ${MODEL_CONCURRENCY:-4}
       VISION_MODEL: ${VISION_MODEL:-gpt-5.4-mini}
       TEXT_MODEL: ${TEXT_MODEL:-gpt-5.4-mini}
     ports:

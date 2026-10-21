@@ -68,10 +68,19 @@ Agent의 DB 직접 접근은 agent checkpointer만 허용한다.
 10. 결과와 이력을 다시 조회하고 브라우저 인쇄로 PDF 저장 또는 HTML 내보내기를 한다. 서버가 PDF 바이너리를 생성하는 기능은 아직 없다.
 
 처리 완료는 AI 추론이나 법령 적합성 확인 완료와 다르다. 모델 키가 없으면 native PDF와 로컬 OCR은 수행해도 문구 모델과 사진 모델은 `not_configured`다.
-문구 경로와 사진 경로가 끝나면 regulations 노드가 문구마다 rag-mcp search_regulations를 호출해 조문 후보를 basis에 붙인다.
-질의는 문구에 claimType별 법령 용어를 붙여 만들고, 수치가 있는 주장은 실증 조문 질의를 따로 한 번 더 한다(capstone_agent/regulations.py).
-결과의 retrievalStatus는 connected, not_indexed, error, skipped 중 하나다. 근거는 조문 후보일 뿐이라 `legalStatus=not_evaluated`를 유지하고 적합 점수를 만들지 않는다.
-자가검증 리라이트는 조문 후보를 참고해 만들고, 재검증을 통과한 문안이 finding.rewrites로 저장돼 화면 수정안이 된다.
+검토 그래프는 목적별 단계로 나뉜다 (2026-10-21, feat/review-evidence-pipeline).
+
+| 노드 | 목적 | 부르는 도구 |
+| --- | --- | --- |
+| text_path, photo_path | OCR(Tesseract + VLM 보충, 음절 분리 교정)과 주장 추출, 사진 관찰 | OpenAI |
+| regulations (legal_basis) | 규칙 스캔으로 모델이 놓친 고위험 줄을 보충하고, 문구마다 규칙 조항, 보조 검색, 사례를 붙인다 | rag.scan_claim_lines, rag.lookup_claim_rules, rag.search_regulations, rag.search_precedents |
+| business | 증빙 구조화, 보고번호 조회, 특허 번호 조회 | business.structure_evidence, verify_functional_approval, verify_patent |
+| cross_checks | 규칙이 지정한 대조만 실행: 기능성 보고 vs 주장, 실증자료 제출, 성분 국내 금지와 제한, GMP, 특허 번호 | business.find_functional_reports, verify_gmp_company, lookup_ingredient_regulation, rag.check_ingredient_standard |
+| violations | 조문을 참고한 자가검증 리라이트. 통과한 문안이 finding.rewrites로 저장된다 | OpenAI |
+| approval, report | 사람 승인 대기와 재개 | |
+
+결과의 retrievalStatus는 connected, not_indexed, error, skipped 중 하나다. 근거와 대조 결과는 확인할 후보일 뿐이라 `legalStatus=not_evaluated`를 유지하고 적합 점수를 만들지 않는다.
+finding에는 basis(규칙 조항 retrieval=rule, 보조 검색 retrieval=search, 연결 조항 related), rules, evidenceRequirements, checks가 붙는다.
 사진은 실제 효능, 보정 여부와 동일 인물을 확정하지 않는다. 사진 결과를 억지로 텍스트 RAG 결과로 바꾸지 않는다.
 
 ## 수명과 실패 처리
@@ -95,7 +104,7 @@ Agent의 DB 직접 접근은 agent checkpointer만 허용한다.
 | 증빙 및 제품 주장 대조와 특허 청구항 대조 | 증빙 문자 추출과 조회 adapter까지만 구현 |
 | 사용량 이벤트와 별도 과금 원장 | 과금 비활성, 크레딧 0은 무료 서비스 보장이 아닌 미구현 표시 |
 | 서버 리포트 PDF | 브라우저 인쇄와 HTML 내보내기 |
-| violation 단위 HITL(위반 줄마다 원문유지/자동리라이트채택/직접수정) + review 전체 승인·반려·원본재업로드요청 결정 분리(2026-10-20 HITL 재설계) | review_engine.py의 단일 `interrupt()` 승인 1단계만 구현. `app.violations`/`app.violation_rewrites` 테이블은 V4 마이그레이션으로 이미 생성됐지만 Agent/결정 API/화면은 아직 `reviews.document` 기준 |
+| violation 단위 HITL(위반 줄마다 원문유지/자동리라이트채택/직접수정) + review 전체 승인, 반려, 원본재업로드요청 결정 분리(2026-10-20 HITL 재설계) | review_engine.py의 단일 `interrupt()` 승인 1단계만 구현. `app.violations`/`app.violation_rewrites` 테이블은 V4 마이그레이션으로 이미 생성됐지만 Agent/결정 API/화면은 아직 `reviews.document` 기준 |
 
 현재 실행 풀은 프로세스 재시작 후 대기 작업을 복구하지 않는다. 운영용 durable queue나 자동 장애 복구 구현으로 설명하지 않는다.
 다건의 목표는 접수 기록 저장 후 202, 승인 대기 checkpoint 저장 후 ACK, 승인 결정 저장 후 별도 재개 메시지다.

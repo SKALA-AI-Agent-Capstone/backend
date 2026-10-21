@@ -1,6 +1,7 @@
 """Read-only external facts. No invented approval, patent status or legal sources."""
 from datetime import datetime, timezone
 import asyncio
+import time
 import os
 import re
 from urllib.parse import unquote, urlsplit
@@ -164,29 +165,110 @@ def compact(value):
     return re.sub(r"[\s()\[\]\u318d\u00b7,.-]","",str(value or "")).lower()
 
 
-async def mfds_list(kind,query,max_pages=20):
-    """The API has no search parameter, so pages are scanned and filtered here."""
+LIST_CACHE={}
+LIST_TTL_SECONDS=24*3600
+LIST_MAX_PAGES=120
+
+
+async def full_list(kind,client,key,url):
+    """These lists have no search parameter. Fetch every page once and keep it for a day."""
+    cached=LIST_CACHE.get(kind)
+    if cached and time.monotonic()-cached[0]<LIST_TTL_SECONDS:
+        return cached[1],cached[2]
+    async def page(n):
+        response=await client.get(url,params={"serviceKey":unquote(key),"type":"json","pageNo":n,"numOfRows":100})
+        response.raise_for_status();data=response.json();envelope=data.get("response",data)
+        if str(envelope.get("header",{}).get("resultCode")) not in {"00","0"}:
+            raise PermissionError("PROVIDER_REJECTED_REQUEST")
+        body=envelope.get("body",{})
+        return int(body.get("totalCount",0)),normalize_items(body)
+    total,rows=await page(1)
+    pages=min(LIST_MAX_PAGES,-(-total//100))
+    limit=asyncio.Semaphore(5)
+    async def guarded(n):
+        async with limit:return (await page(n))[1]
+    for chunk in await asyncio.gather(*(guarded(n) for n in range(2,pages+1))):
+        rows+=chunk
+    LIST_CACHE[kind]=(time.monotonic(),rows,total)
+    return rows,total
+
+
+async def mfds_list(kind,query):
     spec=MFDS_LISTS[kind]
     result={"status":"error","source":spec["source"],"checkedAt":now(),"query":query,
             "error":"API_NOT_CONFIGURED","items":[],"note":spec["note"]}
     key=os.getenv("MFDS_SERVICE_KEY","")
     url=endpoint(spec["env"],"apis.data.go.kr",spec["url"])
     if not key or not url:return result
-    target=compact(query);matches=[];seen=0;total=0
+    target=compact(query)
+    if not target:return {**result,"error":"QUERY_REQUIRED"}
     try:
-        async with httpx.AsyncClient(timeout=12,follow_redirects=False) as client:
-            for page in range(1,max_pages+1):
-                response=await client.get(url,params={"serviceKey":unquote(key),"type":"json","pageNo":page,"numOfRows":100})
-                response.raise_for_status();data=response.json()
-                envelope=data.get("response",data)
-                if str(envelope.get("header",{}).get("resultCode")) not in {"00","0"}:
-                    return {**result,"error":"PROVIDER_REJECTED_REQUEST"}
-                body=envelope.get("body",{});items=normalize_items(body)
-                total=int(body.get("totalCount",0));seen+=len(items)
-                matches.extend(row for row in items if target and target in compact(row.get(spec["match"])))
-                if seen>=total or not items:break
+        async with httpx.AsyncClient(timeout=15,follow_redirects=False) as client:
+            rows,total=await full_list(kind,client,key,url)
+    except PermissionError:
+        return {**result,"error":"PROVIDER_REJECTED_REQUEST"}
     except Exception:
         return {**result,"error":"PROVIDER_REQUEST_FAILED"}
-    if seen<total:
-        return {**result,"status":"incomplete","error":"SCAN_LIMIT_REACHED","items":matches[:20],"scanned":seen,"total":total}
-    return {**result,"status":"found" if matches else "not_found","error":None,"items":matches[:20],"scanned":seen,"total":total}
+    names=[compact(row.get(spec["match"])) for row in rows]
+    exact=[row for row,name in zip(rows,names) if name==target]
+    matches=exact or [row for row,name in zip(rows,names) if target in name]
+    if len(rows)<total:
+        return {**result,"status":"incomplete","error":"SCAN_LIMIT_REACHED","items":matches[:20],"scanned":len(rows),"total":total}
+    return {**result,"status":"found" if matches else "not_found","error":None,"exact":bool(exact),
+            "items":matches[:20],"scanned":len(rows),"total":total}
+
+
+FUNCTION_FLAGS=[("EFFECT_YN1","미백"),("EFFECT_YN2","주름개선"),("EFFECT_YN3","자외선차단")]
+
+
+EFFICACY_WORDS=[("미백","미백"),("주름","주름개선"),("자외선","자외선차단"),("탈모","탈모 증상 완화"),
+                ("여드름","여드름성 피부 완화"),("튼살","튼살 완화"),("아토피","가려움 등 건조함 완화"),("염모","염모"),("제모","제모")]
+
+
+def report_candidate(row):
+    flagged=[label for field,label in FUNCTION_FLAGS if str(row.get(field,"")).strip().upper()=="Y"]
+    efficacy=f"{row.get('EE_NAME') or ''} {row.get('EE_DOC_DATA') or ''}"
+    flagged+=[label for word,label in EFFICACY_WORDS if word in efficacy and label not in flagged]
+    return {"productName":row.get("ITEM_NAME"),"reportSequence":row.get("COSMETIC_REPORT_SEQ"),
+            "receiptNo":row.get("DEPT_RECEIPT_NO"),"company":row.get("ENTP_NAME"),"manufacturer":row.get("MANUF_NAME"),
+            "reportedAt":row.get("REPORT_DATE"),"cancelled":str(row.get("CANCEL_APPROVAL_YN","")).upper()=="Y",
+            "functions":flagged,"efficacyName":row.get("EE_NAME"),
+            "efficacyText":re.sub(r"<[^>]+>"," ",str(row.get("EE_DOC_DATA") or ""))[:600].strip(),
+            "spf":row.get("SPF"),"pa":row.get("PA")}
+
+
+async def functional_reports_by_name(product_name, report_no=None, max_pages=3):
+    """보고품목을 제품명으로 찾는다. 이름이 정확히 같은 품목만 exact로 보고, 나머지는 후보로만 돌려준다."""
+    source="식약처 기능성화장품 보고품목정보"
+    result={"status":"error","source":source,"checkedAt":now(),"query":product_name,"reportNo":report_no or None,
+            "error":"API_NOT_CONFIGURED","exact":[],"candidates":[],
+            "note":"보고품목 조회 결과는 보조 정보이며 광고 적법성 판정이 아닙니다. 조회되지 않음은 미보고 확정이 아닙니다."}
+    key=os.getenv("MFDS_SERVICE_KEY","")
+    url=endpoint("MFDS_REPORT_URL","apis.data.go.kr",
+        "https://apis.data.go.kr/1471000/FtnltCosmRptPrdlstInfoService01/getRptPrdlstInq01")
+    if not key or not url:return result
+    target=compact(product_name)
+    if not target:return {**result,"error":"PRODUCT_NAME_REQUIRED"}
+    rows=[];seen=0;total=0
+    try:
+        async with httpx.AsyncClient(timeout=12,follow_redirects=False) as client:
+            for query in dict.fromkeys([product_name.replace(" ",""),product_name]):
+                for page in range(1,max_pages+1):
+                    params={"serviceKey":unquote(key),"type":"json","pageNo":page,"numOfRows":100,"item_name":query}
+                    if report_no and re.fullmatch(r"[0-9]+",report_no):params["cosmetic_report_seq"]=report_no
+                    response=await client.get(url,params=params)
+                    response.raise_for_status();data=response.json()
+                    envelope=data.get("response",data)
+                    if str(envelope.get("header",{}).get("resultCode")) not in {"00","0"}:
+                        return {**result,"error":"PROVIDER_REJECTED_REQUEST"}
+                    body=envelope.get("body",{});items=normalize_items(body)
+                    total=int(body.get("totalCount",0));seen+=len(items);rows+=items
+                    if seen>=total or not items:break
+                if rows:break
+    except Exception:
+        return {**result,"error":"PROVIDER_REQUEST_FAILED"}
+    unique={str(r.get("ITEM_SEQ") or r.get("COSMETIC_REPORT_SEQ")):r for r in rows}.values()
+    exact=[report_candidate(r) for r in unique if compact(r.get("ITEM_NAME"))==target]
+    partial=[report_candidate(r) for r in unique if compact(r.get("ITEM_NAME"))!=target and target in compact(r.get("ITEM_NAME"))]
+    status="found" if exact else "candidates" if partial else "not_found"
+    return {**result,"status":status,"error":None,"exact":exact[:5],"candidates":partial[:10],"scanned":seen,"total":total}

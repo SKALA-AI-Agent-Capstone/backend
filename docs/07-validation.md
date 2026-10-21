@@ -238,4 +238,18 @@ main 인수는 원격 PR Checks와 main 병합 기록으로 확인한다. README
 - 미검증: 프론트 화면 연동, 사람 직접 수정 문구의 재검증(미구현), 다시쓰기 동시 요청의 부하 상황.
 ## 2026-10-20 테스트 결제 준비
 
-토스페이먼츠 테스트용 주문·승인 경로와 결제 성공 시 1회 적립을 구현했다. 프론트 빌드, Java Maven 테스트, Docker API/웹 health 및 로컬 결제 마이그레이션 적용을 확인했다. 외부 PG의 최종 승인 성공 경로는 아직 검증하지 못했다. 검토 사용량 reserve/charge/release, 환불, 별도 과금 DB는 미구현이다.
+토스페이먼츠 테스트용 주문, 승인 경로와 결제 성공 시 1회 적립을 구현했다. 프론트 빌드, Java Maven 테스트, Docker API/웹 health 및 로컬 결제 마이그레이션 적용을 확인했다. 외부 PG의 최종 승인 성공 경로는 아직 검증하지 못했다. 검토 사용량 reserve/charge/release, 환불, 별도 과금 DB는 미구현이다.
+
+
+## 2026-10-21 근거 수집과 검토 흐름 e2e (feat/review-evidence-pipeline)
+
+| 확인 | 방법 | 결과 |
+| --- | --- | --- |
+| 단위 테스트 | uv run --all-packages --frozen pytest | 61 passed |
+| Java | mvn -f services/api/pom.xml verify | 21 tests, 0 failures |
+| Frontend | npm run build (vue-tsc 포함) | 성공 |
+| 적재 | scripts/ingest_rag.py all | 17개 문서 버전, 1,099개 조각, 조문 링크 309개 |
+| 컨테이너 적재 | docker compose run --rm rag-ingest ... --dry-run | 법제처 API 5건, PDF 5건. GitHub 한도 시 화장품법 3건을 법제처 API로 대체 |
+| 대조 경로 | 합성 광고(실제 보고품목 편강율블랙티타임리버스아이크림) | 의약품 규칙 제13조 제1항제1호, 자외선차단 mismatch, 히드로퀴논 prohibited, CGMP 줄 규칙 스캔 후 gmp_not_listed, 특허 needs_input |
+| 실제 상세페이지 | 848x19799 광고 이미지, OpenAI 키 | 157초, 문구 57건(규칙 스캔 17건) 모두 근거, 실증 미제출 30건, 기능성 보고 미조회 9건 |
+| 화면 | 로컬 테스트 계정 | 문구 카드에 규칙, 조문 연결, 대조 결과 표시. 끝난 검토를 다시 열 때 문구 0건으로 보이던 문제 수정 |

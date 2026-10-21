@@ -24,6 +24,17 @@ class RetrievalMode(StrEnum):
     HYBRID = "hybrid"
 
 
+class RelatedProvision(BaseModel):
+    """A provision reached by following a citation, delegation or annex link from a hit."""
+    source: str
+    section: str | None = None
+    excerpt: str
+    version: str
+    relation: Literal["cites", "cited_by", "implements", "implemented_by", "annex", "annex_of"]
+    document_key: str
+    source_url: str
+
+
 class RegulationHit(BaseModel):
     # Notion RegulationHit fields
     source: str
@@ -41,6 +52,40 @@ class RegulationHit(BaseModel):
     acquisition: str
     effective_from: date | None = None
     effective_until: date | None = None
+    # How the provision was found: keyword/vector search, a claim rule, or a link from another provision
+    retrieval: Literal["search", "rule", "link"] = "search"
+    item: str | None = Field(default=None, description="Numbered item inside the article, e.g. 제1항제1호")
+    related: list[RelatedProvision] = Field(default_factory=list)
+
+
+class EvidenceRequirement(BaseModel):
+    """A row of the 화장품 표시광고 실증 규정 annex: advertised expression -> required substantiation."""
+    expression: str
+    requirement: str
+    source: str
+    section: str
+    version: str
+    source_url: str
+
+
+class RuleMatch(BaseModel):
+    rule_id: str
+    label: str
+    matched_by: Literal["claim_type", "pattern"]
+    matched_text: str
+    checks: list[str] = Field(default_factory=list, description="Cross-checks the agent should run")
+    provisions: list[RegulationHit] = Field(default_factory=list)
+    evidence_requirements: list[EvidenceRequirement] = Field(default_factory=list)
+    missing: list[str] = Field(default_factory=list, description="Rule provisions not present in the loaded corpus")
+
+
+class ClaimRulesResult(BaseModel):
+    contract_version: str = CONTRACT_VERSION
+    status: RetrievalStatus
+    review_date: date
+    rules_version: str
+    matches: list[RuleMatch] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class PrecedentHit(BaseModel):
