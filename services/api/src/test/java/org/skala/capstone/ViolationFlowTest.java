@@ -25,6 +25,7 @@ import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -49,6 +50,7 @@ class ViolationFlowTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired ObjectMapper json;
     @Autowired ViolationService violations;
+    @Autowired ReviewCreditService credits;
     @Autowired DataSource dataSource;
     @MockitoBean AgentClient agent;
     @MockitoBean StringRedisTemplate redis;
@@ -75,6 +77,34 @@ class ViolationFlowTest {
     }
     JsonNode read(org.springframework.test.web.servlet.ResultActions r)throws Exception{
         return json.readTree(r.andReturn().getResponse().getContentAsString());
+    }
+
+    @Test
+    void zeroBalanceCannotStartReviewAndConcurrentReservationsCannotOverspend() throws Exception {
+        jdbc.update("UPDATE app.users SET credit_balance=0 WHERE id=CAST(? AS uuid)",AUTHOR.id());
+        int before=jdbc.queryForObject("SELECT count(*) FROM app.reviews WHERE author_id=CAST(? AS uuid)",Integer.class,AUTHOR.id());
+        var file=new MockMultipartFile("files","ad.png","image/png",new byte[]{1});
+        mvc.perform(multipart("/api/v1/reviews").file(file)
+                .param("metadata","{\"product\":{\"name\":\"검사\"}}")
+                .with(as(AUTHOR)))
+            .andExpect(status().isPaymentRequired());
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM app.reviews WHERE author_id=CAST(? AS uuid)",Integer.class,AUTHOR.id()))
+            .isEqualTo(before);
+
+        jdbc.update("UPDATE app.users SET credit_balance=100 WHERE id=CAST(? AS uuid)",AUTHOR.id());
+        String first=UUID.randomUUID().toString();
+        credits.reserve(TENANT,AUTHOR.id(),first,1);
+        assertThat(jdbc.queryForObject("SELECT credit_balance FROM app.users WHERE id=CAST(? AS uuid)",Integer.class,AUTHOR.id())).isZero();
+        org.junit.jupiter.api.Assertions.assertThrows(org.springframework.web.server.ResponseStatusException.class,
+            () -> credits.reserve(TENANT,AUTHOR.id(),UUID.randomUUID().toString(),1));
+        credits.release(first,1);
+        credits.release(first,1);
+        assertThat(jdbc.queryForObject("SELECT credit_balance FROM app.users WHERE id=CAST(? AS uuid)",Integer.class,AUTHOR.id())).isEqualTo(100);
+        String second=UUID.randomUUID().toString();
+        credits.reserve(TENANT,AUTHOR.id(),second,1);
+        credits.charge(second,1);
+        credits.release(second,1);
+        assertThat(jdbc.queryForObject("SELECT credit_balance FROM app.users WHERE id=CAST(? AS uuid)",Integer.class,AUTHOR.id())).isZero();
     }
 
     /** 분석 중인 1버전 review를 만든다. */

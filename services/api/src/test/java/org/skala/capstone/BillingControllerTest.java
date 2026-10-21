@@ -33,9 +33,11 @@ class BillingControllerTest {
         var billing=new BillingController(jdbc,new ObjectMapper(),"http://127.0.0.1:5173/credits",
             "test_ck_example","test_sk_example");
         var result=billing.order(jwt,new BillingController.OrderInput(2000,"toss"));
-        assertEquals(16000,result.get("amount"));
+        assertEquals(80000,result.get("amount"));
         assertEquals(2000,result.get("credits"));
-        verify(jdbc).update(startsWith("INSERT INTO app.credit_orders"),any(Object[].class));
+        assertEquals(5000,billing.order(jwt,new BillingController.OrderInput(100,"toss")).get("amount"));
+        assertEquals(9500,billing.order(jwt,new BillingController.OrderInput(200,"toss")).get("amount"));
+        verify(jdbc,times(3)).update(startsWith("INSERT INTO app.credit_orders"),any(Object[].class));
     }
 
     @Test void widgetKeysUsePaymentWindowAndMixedKeysAreRejected() {

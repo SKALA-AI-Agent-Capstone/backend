@@ -134,7 +134,7 @@ async def test_cross_checks_run_only_what_the_rules_ask_for():
 async def test_graph_runs_legal_basis_then_cross_checks_and_rewrites_with_the_basis(monkeypatch):
     import capstone_agent.review_engine as engine
     from capstone_agent.review_models import TextAssessment, VisualAssessment
-    from capstone_agent.review_engine import RewriteDraft, RewriteVerification
+    from capstone_agent.review_engine import RewriteDraft, RewriteVerification, SeverityAssessment
 
     async def ocr(native, tiles, provider):
         return [{"id": "t1", "text": "아토피 치료 크림", "location": {"kind": "image", "fileId": "a", "page": 1, "bbox": None}}], []
@@ -143,7 +143,7 @@ async def test_graph_runs_legal_basis_then_cross_checks_and_rewrites_with_the_ba
         return await legal_basis(findings, call=fake_rag(rules=[DRUG_RULE]))
 
     async def fake_checks(findings, **kwargs):
-        return {"findings": [{**f, "checks": []} for f in findings], "summary": {}, "warnings": []}
+        return {"findings": [{**f, "checks": [{"type": "substantiation", "status": "evidence_missing"}]} for f in findings], "summary": {}, "warnings": []}
 
     monkeypatch.setattr(engine, "extract_text", ocr)
     monkeypatch.setattr(engine, "legal_basis", fake_basis)
@@ -157,6 +157,8 @@ async def test_graph_runs_legal_basis_then_cross_checks_and_rewrites_with_the_ba
             prompts.append(kwargs.get("text", ""))
             if schema is TextAssessment:
                 return schema(findings=[{"phrase": "아토피 치료", "reason": "의약품 오인", "claimType": "drug", "rewrites": []}])
+            if schema is SeverityAssessment:
+                return SeverityAssessment(severity="high", reason="합성 근거와 증빙 검토")
             if schema is RewriteDraft:
                 return RewriteDraft(text="민감한 피부를 위한 크림")
             if schema is RewriteVerification:
@@ -169,7 +171,9 @@ async def test_graph_runs_legal_basis_then_cross_checks_and_rewrites_with_the_ba
     result = output["result"]
     assert result["retrievalStatus"] == "connected"
     assert result["findings"][0]["basis"][0]["article"].endswith("제1항제1호")
-    assert result["findings"][0]["checks"] == []
+    assert result["findings"][0]["checks"] == [{"type": "substantiation", "status": "evidence_missing"}]
+    assert result["findings"][0]["severity"] == "high"
+    assert result["violations"][0]["severity"] == "high"
     assert any("제13조" in text for text in prompts), "rewrite prompt should carry the retrieved article"
     assert result["findings"][0]["rewrites"] == ["민감한 피부를 위한 크림"]
 
