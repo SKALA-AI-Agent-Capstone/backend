@@ -22,10 +22,11 @@ public class ReviewService implements AutoCloseable {
     final ObjectMapper json;
     final AgentClient agent;
     final ViolationService violations;
+    final ReviewCreditService credits;
     final ExecutorService jobs=new ThreadPoolExecutor(2,2,0,TimeUnit.SECONDS,new ArrayBlockingQueue<>(8),
         Thread.ofPlatform().name("review-job-",0).factory(),new ThreadPoolExecutor.AbortPolicy());
-    public ReviewService(ReviewStore store,StringRedisTemplate cache,ObjectMapper json,AgentClient agent,ViolationService violations){
-        this.store=store;this.cache=cache;this.json=json;this.agent=agent;this.violations=violations;
+    public ReviewService(ReviewStore store,StringRedisTemplate cache,ObjectMapper json,AgentClient agent,ViolationService violations,ReviewCreditService credits){
+        this.store=store;this.cache=cache;this.json=json;this.agent=agent;this.violations=violations;this.credits=credits;
     }
     public static String hash(byte[] raw){try{return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(raw));}catch(Exception e){throw new IllegalStateException(e);}}
     static String assetKey(String id){return "review:asset:"+id;}
@@ -64,6 +65,8 @@ public class ReviewService implements AutoCloseable {
         List<MultipartFile> all=new ArrayList<>(files);all.addAll(evidence);
         if(all.stream().mapToLong(MultipartFile::getSize).sum()>75L*1024*1024)
             throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE,"TOTAL_LIMIT_75_MIB");
+        // This transaction also owns the review/version insert. Invalid uploads roll back the reservation.
+        credits.reserve(tenant,jwt.getSubject(),id,no);
         ArrayNode ads=json.createArrayNode(),docs=json.createArrayNode(),assets=json.createArrayNode();
         List<String> cached=new ArrayList<>();
         try{
@@ -95,7 +98,7 @@ public class ReviewService implements AutoCloseable {
             // Start only after the transaction is visible to Agent asset reads.
             org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
                 new org.springframework.transaction.support.TransactionSynchronization(){@Override public void afterCommit(){
-                    try{jobs.submit(()->execute(request));}catch(RejectedExecutionException e){fail(tenant,id,versionNo,"BUSY_REUPLOAD_REQUIRED");purge(id,versionNo);}
+                    try{jobs.submit(()->execute(request));}catch(RejectedExecutionException e){Thread.ofVirtual().start(()->{fail(tenant,id,versionNo,"BUSY_REUPLOAD_REQUIRED");purge(id,versionNo);});}
                 }});
             return store.get(tenant,id);
         }catch(Exception e){for(String asset:cached)cache.delete(assetKey(asset));if(e instanceof ResponseStatusException status)throw status;
@@ -106,12 +109,17 @@ public class ReviewService implements AutoCloseable {
         try{
             store.mutate(tenant,id,d->ReviewStore.version(d,no).put("status","analyzing"));
             JsonNode response=callAgent("/internal/runs",request);
-            if(violations.saveResult(tenant,id,no,response))violations.resumeAgent(tenant,id,no,"approved");
+            boolean auto=violations.saveResult(tenant,id,no,response);
+            credits.charge(id,no);
+            if(auto)try{violations.resumeAgent(tenant,id,no,"approved");}catch(Exception ignored){}
         }catch(Exception e){fail(tenant,id,no,"ANALYSIS_FAILED_REUPLOAD_REQUIRED");}
         finally{purge(id,no);}
     }
     JsonNode callAgent(String path,JsonNode body)throws Exception{return agent.post(path,body);}
-    void fail(String tenant,String id,int no,String error){try{store.mutate(tenant,id,d->{var v=ReviewStore.version(d,no);v.put("status","failed").put("error",error);});}catch(Exception ignored){}}
+    void fail(String tenant,String id,int no,String error){
+        try{store.mutate(tenant,id,d->{var v=ReviewStore.version(d,no);v.put("status","failed").put("error",error);});}catch(Exception ignored){}
+        try{credits.release(id,no);}catch(Exception ignored){}
+    }
     /** Redis는 분석 중 빠른 조회용 핫 캐시일 뿐이다. 원본은 app.review_assets.bytes에 영구 보존되므로
      * 이 호출은 캐시 메모리만 비우고 원본을 지우지 않는다. */
     void purge(String id,int no){for(var row:store.jdbc().queryForList("SELECT id FROM app.review_assets WHERE review_id=CAST(? AS uuid) AND version_no=?",id,no))cache.delete(assetKey(row.get("id").toString()));}
