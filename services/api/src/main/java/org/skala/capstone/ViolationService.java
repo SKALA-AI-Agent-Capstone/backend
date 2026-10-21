@@ -9,6 +9,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -26,9 +28,14 @@ public class ViolationService {
     final AgentClient agent;
     final TransactionTemplate tx;
     final int humanRewriteLimit;
-    public ViolationService(ReviewStore store,AgentClient agent,TransactionTemplate tx,
-        @Value("${capstone.review.human-rewrite-limit:3}")int humanRewriteLimit){
+    final ReviewEvents events;
+    final boolean queueEnabled;
+    static final Duration RESUME_TIMEOUT=Duration.ofSeconds(60);
+    public ViolationService(ReviewStore store,AgentClient agent,TransactionTemplate tx,ReviewEvents events,
+        @Value("${capstone.review.human-rewrite-limit:3}")int humanRewriteLimit,
+        @Value("${capstone.review.queue-enabled:false}")boolean queueEnabled){
         this.store=store;this.jdbc=store.jdbc();this.json=store.mapper();this.agent=agent;this.tx=tx;this.humanRewriteLimit=humanRewriteLimit;
+        this.events=events;this.queueEnabled=queueEnabled;
     }
 
     // ---------- Agent 결과 저장 ----------
@@ -36,7 +43,7 @@ public class ViolationService {
     /**
      * Agent 결과를 버전에 저장하고, 최신 버전이면 findings를 violations로 교체한다.
      * 각 finding에는 violationId를 넣어 프론트가 JSONB finding과 행을 연결할 수 있게 한다.
-     * @return 위반 후보 0건 자동 승인이 일어났으면 true (호출자가 Agent resume을 보낸다)
+     * @return 위반 후보 0건 자동 승인이 일어났으면 true. 그때 Agent 재개 작업도 같은 트랜잭션에 기록한다.
      */
     public boolean saveResult(String tenant,String id,int no,JsonNode response){
         ObjectNode result=response.path("result") instanceof ObjectNode o?o.deepCopy():json.createObjectNode();
@@ -75,7 +82,10 @@ public class ViolationService {
                     jdbc.update("INSERT INTO app.violation_rewrites(id,violation_id,attempt_no,text,requested_by_human) VALUES (CAST(? AS uuid),CAST(? AS uuid),?,?,false)",
                         UUID.randomUUID().toString(),row.id(),i+1,row.rewrites().get(i));
             }
-            if(auto)jdbc.update("UPDATE app.reviews SET hitl_status='approved',hitl_comment=NULL,decided_by=NULL,decided_at=now() WHERE id=CAST(? AS uuid)",id);
+            if(auto){
+                jdbc.update("UPDATE app.reviews SET hitl_status='approved',hitl_comment=NULL,decided_by=NULL,decided_at=now() WHERE id=CAST(? AS uuid)",id);
+                enqueueResume(tenant,id,no,"approved");
+            }
             else resetDecision(id);
             return auto;
         }));
@@ -381,17 +391,65 @@ public class ViolationService {
             });
             jdbc.update("UPDATE app.reviews SET hitl_status=?,hitl_comment=?,decided_by=CAST(? AS uuid),decided_at=now() WHERE id=CAST(? AS uuid)",
                 state,comment,jwt.getSubject(),id);
+            // 재개는 결정과 같은 트랜잭션에 작업으로 남긴다. 승인 응답은 Agent를 기다리지 않는다.
+            enqueueResume(tenant,id,no,legacy);
         });
-        // 결정은 이미 저장했다. Agent resume이 실패해도 agentResume=pending으로 남는다.
-        resumeAgent(tenant,id,no,legacy);
         return view(tenant,id);
     }
 
-    void resumeAgent(String tenant,String id,int no,String legacy){
+    // ---------- 결정 후 Agent 재개 (agentResume: pending → completed | failed) ----------
+
+    /**
+     * 현재 트랜잭션 안에서 재개를 예약한다. 큐가 켜져 있으면 app.review_jobs(kind=resume)에 기록하고
+     * 발행, 재시도, 실패 처리는 ReviewJobQueue가 맡는다. 큐가 꺼진 개발 모드는 커밋 뒤 한 번 직접 호출한다.
+     */
+    void enqueueResume(String tenant,String id,int no,String state){
+        if(queueEnabled){
+            ObjectNode request=json.createObjectNode().put("reviewId",id).put("tenantId",tenant).put("versionNo",no).put("state",state);
+            jdbc.update("INSERT INTO app.review_jobs(review_id,version_no,kind,request) VALUES (CAST(? AS uuid),?,'resume',CAST(? AS jsonb)) "+
+                "ON CONFLICT (review_id,version_no,kind) DO NOTHING",id,no,request.toString());
+            return;
+        }
+        Runnable direct=()->Thread.ofVirtual().start(()->{
+            try{resumeQueued(tenant,id,no,state);}
+            catch(AgentClient.AgentFailure failure){
+                if(failure.status>=400 && failure.status<500 && failure.status!=429)
+                    resumeFailed(tenant,id,no,failure.detail.isBlank()?"AGENT_REJECTED":failure.detail);
+            }catch(Exception ignored){ /* 개발 모드에는 재시도가 없어 pending으로 남는다. */ }
+        });
+        if(TransactionSynchronizationManager.isSynchronizationActive())
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization(){
+                @Override public void afterCommit(){direct.run();}
+            });
+        else direct.run();
+    }
+
+    /** 재개 한 번. 실패는 예외로 돌려 호출자(큐)가 재시도나 실패를 정한다. 이미 재개된 checkpoint는 Agent가 성공으로 답한다. */
+    void resumeQueued(String tenant,String id,int no,String state)throws Exception{
+        agent.post("/internal/runs/resume",json.createObjectNode().put("reviewId",id).put("tenantId",tenant).put("versionNo",no).put("state",state),
+            RESUME_TIMEOUT);
+        markResume(tenant,id,no,"completed",null);
+        events.publish(id,no,"resume_completed");
+    }
+
+    /** 재개를 포기했다. 저장된 결정과 크레딧 정산은 그대로 두고 화면에 실패만 알린다. */
+    void resumeFailed(String tenant,String id,int no,String error){
+        markResume(tenant,id,no,"failed",error);
+        events.publish(id,no,"resume_failed",json.createObjectNode().put("error",error));
+    }
+
+    boolean resumeCompleted(String tenant,String id,int no){
         try{
-            agent.post("/internal/runs/resume",json.createObjectNode().put("reviewId",id).put("tenantId",tenant).put("versionNo",no).put("state",legacy));
-            store.mutate(tenant,id,d->((ObjectNode)ReviewStore.version(d,no).path("approval")).put("agentResume","completed"));
-        }catch(Exception ignored){ }
+            return "completed".equals(ReviewStore.version(store.get(tenant,id),no).path("approval").path("agentResume").asText());
+        }catch(Exception ignored){return false;}
+    }
+
+    private void markResume(String tenant,String id,int no,String status,String error){
+        store.mutate(tenant,id,d->{
+            ObjectNode approval=(ObjectNode)ReviewStore.version(d,no).path("approval");
+            approval.put("agentResume",status);
+            if(error==null)approval.remove("agentResumeError");else approval.put("agentResumeError",error);
+        });
     }
 
     static void uuid(String value){UUID.fromString(value);}

@@ -104,13 +104,17 @@ public class ReviewController {
     /**
      * Progress stream for one review (text/event-stream). The first event is a snapshot of the stored review;
      * then started, step_done, tool_started, tool_finished, retry_scheduled, approval_required and finally
-     * completed or failed. A review that is not running gets only the snapshot.
+     * completed or failed. After a decision it relays resume_completed or resume_failed.
+     * A review that is neither running nor waiting for a resume gets only the snapshot.
      */
     @GetMapping(value="/api/v1/reviews/{id}/events",produces=MediaType.TEXT_EVENT_STREAM_VALUE)
     public ResponseEntity<SseEmitter> events(@AuthenticationPrincipal Jwt jwt,@PathVariable String id,
         @RequestHeader(value="Last-Event-ID",required=false)String lastEventId){
         ObjectNode snapshot=violations.view(jwt.getClaimAsString("tenantId"),id);
-        boolean running=Set.of("queued","analyzing").contains(ReviewStore.latest(snapshot).path("status").asText());
+        JsonNode latest=ReviewStore.latest(snapshot);
+        // 분석 중이거나 결정 후 Agent 재개를 기다리는 동안 스트림을 연다.
+        boolean running=Set.of("queued","analyzing").contains(latest.path("status").asText())
+            || "pending".equals(latest.path("approval").path("agentResume").asText());
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).header("X-Accel-Buffering","no")
             .body(events.subscribe(id,snapshot,running,lastEventId));
     }

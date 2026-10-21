@@ -140,7 +140,6 @@ public class ReviewService implements AutoCloseable {
         // approval_required goes first because completed closes the stream.
         if(!auto)events.publish(id,no,"approval_required",json.createObjectNode().put("hitlStatus","pending"));
         events.publish(id,no,"completed",json.createObjectNode().put("hitlStatus",auto?"approved":"pending"));
-        if(auto)try{violations.resumeAgent(tenant,id,no,"approved");}catch(Exception ignored){}
         try{purge(id,no);}catch(Exception ignored){}
     }
     boolean completed(String tenant,String id,int no){
