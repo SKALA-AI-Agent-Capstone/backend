@@ -51,12 +51,20 @@ services:
       REDIS_HOST: redis-cache
       REDIS_PORT: "6379"
       REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REVIEW_QUEUE_ENABLED: "true"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "5672"
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:-capstone}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Run python3 scripts/bootstrap.py}
+      RABBITMQ_VHOST: ${RABBITMQ_VHOST:-capstone}
     ports:
       - "127.0.0.1:${API_PORT:-8080}:8080"
     depends_on:
       postgres:
         condition: service_healthy
       redis-cache:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/actuator/health/readiness"]
@@ -190,7 +198,6 @@ services:
       retries: 20
 
   rabbitmq:
-    profiles: ["queue"]
     image: rabbitmq:4.3.6-management-alpine
     hostname: rabbitmq
     environment:

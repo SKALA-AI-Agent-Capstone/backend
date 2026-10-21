@@ -8,10 +8,12 @@ import java.time.*;
 import java.util.*;
 import java.util.concurrent.*;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -23,10 +25,14 @@ public class ReviewService implements AutoCloseable {
     final AgentClient agent;
     final ViolationService violations;
     final ReviewCreditService credits;
+    final TransactionTemplate tx;
+    final boolean queueEnabled;
     final ExecutorService jobs=new ThreadPoolExecutor(2,2,0,TimeUnit.SECONDS,new ArrayBlockingQueue<>(8),
         Thread.ofPlatform().name("review-job-",0).factory(),new ThreadPoolExecutor.AbortPolicy());
-    public ReviewService(ReviewStore store,StringRedisTemplate cache,ObjectMapper json,AgentClient agent,ViolationService violations,ReviewCreditService credits){
+    public ReviewService(ReviewStore store,StringRedisTemplate cache,ObjectMapper json,AgentClient agent,ViolationService violations,
+        ReviewCreditService credits,TransactionTemplate tx,@Value("${capstone.review.queue-enabled:false}")boolean queueEnabled){
         this.store=store;this.cache=cache;this.json=json;this.agent=agent;this.violations=violations;this.credits=credits;
+        this.tx=tx;this.queueEnabled=queueEnabled;
     }
     public static String hash(byte[] raw){try{return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(raw));}catch(Exception e){throw new IllegalStateException(e);}}
     static String assetKey(String id){return "review:asset:"+id;}
@@ -95,11 +101,17 @@ public class ReviewService implements AutoCloseable {
             store.mutate(tenant,id,d->{d.withArray("versions").add(version);d.put("productName",input.path("product").path("name").asText());});
             ObjectNode request=json.createObjectNode().put("reviewId",id).put("tenantId",tenant).put("versionNo",no).put("runToken",runToken);
             request.set("assets",assets);request.set("product",input.path("product"));
-            // Start only after the transaction is visible to Agent asset reads.
-            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
-                new org.springframework.transaction.support.TransactionSynchronization(){@Override public void afterCommit(){
-                    try{jobs.submit(()->execute(request));}catch(RejectedExecutionException e){Thread.ofVirtual().start(()->{fail(tenant,id,versionNo,"BUSY_REUPLOAD_REQUIRED");purge(id,versionNo);});}
-                }});
+            if(queueEnabled){
+                // The job and credit reservation commit together. The dispatcher publishes it later.
+                store.jdbc().update("INSERT INTO app.review_jobs(review_id,version_no,request) VALUES (CAST(? AS uuid),?,CAST(? AS jsonb))",
+                    id,no,request.toString());
+            }else{
+                // Local tests and standalone development retain the bounded in-process executor.
+                org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization(){@Override public void afterCommit(){
+                        try{jobs.submit(()->execute(request));}catch(RejectedExecutionException e){Thread.ofVirtual().start(()->{fail(tenant,id,versionNo,"BUSY_REUPLOAD_REQUIRED");purge(id,versionNo);});}
+                    }});
+            }
             return store.get(tenant,id);
         }catch(Exception e){for(String asset:cached)cache.delete(assetKey(asset));if(e instanceof ResponseStatusException status)throw status;
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,"UPLOAD_STORAGE_FAILED");}
@@ -107,18 +119,51 @@ public class ReviewService implements AutoCloseable {
     void execute(ObjectNode request){
         String tenant=request.path("tenantId").asText(),id=request.path("reviewId").asText();int no=request.path("versionNo").asInt();
         try{
-            store.mutate(tenant,id,d->ReviewStore.version(d,no).put("status","analyzing"));
-            JsonNode response=callAgent("/internal/runs",request);
-            boolean auto=violations.saveResult(tenant,id,no,response);
-            credits.charge(id,no);
-            if(auto)try{violations.resumeAgent(tenant,id,no,"approved");}catch(Exception ignored){}
+            runQueued(request);
         }catch(Exception e){fail(tenant,id,no,"ANALYSIS_FAILED_REUPLOAD_REQUIRED");}
         finally{purge(id,no);}
+    }
+    void runQueued(JsonNode request)throws Exception{
+        String tenant=request.path("tenantId").asText(),id=request.path("reviewId").asText();int no=request.path("versionNo").asInt();
+        store.mutate(tenant,id,d->ReviewStore.version(d,no).put("status","analyzing"));
+        JsonNode response=callAgent("/internal/runs",request);
+        boolean auto=Boolean.TRUE.equals(tx.execute(status->{
+            boolean approved=violations.saveResult(tenant,id,no,response);
+            credits.charge(id,no);
+            return approved;
+        }));
+        if(auto)try{violations.resumeAgent(tenant,id,no,"approved");}catch(Exception ignored){}
+        try{purge(id,no);}catch(Exception ignored){}
+    }
+    boolean completed(String tenant,String id,int no){
+        try{
+            if(!"done".equals(ReviewStore.version(store.get(tenant,id),no).path("status").asText()))return false;
+            String status=store.jdbc().queryForObject(
+                "SELECT status FROM app.review_credit_charges WHERE review_id=CAST(? AS uuid) AND version_no=?",
+                String.class,id,no);
+            return "charged".equals(status);
+        }catch(Exception ignored){return false;}
+    }
+    boolean terminalFailure(String tenant,String id,int no){
+        try{
+            if(!"failed".equals(ReviewStore.version(store.get(tenant,id),no).path("status").asText()))return false;
+            String status=store.jdbc().queryForObject(
+                "SELECT status FROM app.review_credit_charges WHERE review_id=CAST(? AS uuid) AND version_no=?",
+                String.class,id,no);
+            return "released".equals(status);
+        }catch(Exception ignored){return false;}
     }
     JsonNode callAgent(String path,JsonNode body)throws Exception{return agent.post(path,body);}
     void fail(String tenant,String id,int no,String error){
         try{store.mutate(tenant,id,d->{var v=ReviewStore.version(d,no);v.put("status","failed").put("error",error);});}catch(Exception ignored){}
         try{credits.release(id,no);}catch(Exception ignored){}
+    }
+    void failQueued(String tenant,String id,int no){
+        // Both operations are idempotent, so a redelivery can finish either one after a crash.
+        credits.release(id,no);
+        store.mutate(tenant,id,d->{var v=ReviewStore.version(d,no);
+            v.put("status","failed").put("error","ANALYSIS_FAILED_REUPLOAD_REQUIRED");});
+        purge(id,no);
     }
     /** Redis는 분석 중 빠른 조회용 핫 캐시일 뿐이다. 원본은 app.review_assets.bytes에 영구 보존되므로
      * 이 호출은 캐시 메모리만 비우고 원본을 지우지 않는다. */

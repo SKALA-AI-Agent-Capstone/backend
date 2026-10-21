@@ -11,6 +11,17 @@ spring:
       port: ${REDIS_PORT:56379}
       password: ${REDIS_PASSWORD}
       timeout: 3s
+  rabbitmq:
+    host: ${RABBITMQ_HOST:127.0.0.1}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:capstone}
+    password: ${RABBITMQ_PASSWORD:}
+    virtual-host: ${RABBITMQ_VHOST:capstone}
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    listener:
+      simple:
+        prefetch: 1
   application:
     name: beauty-api
   datasource:
@@ -51,6 +62,7 @@ capstone:
   # 참조 기준 화면의 적재 현황. rag-mcp가 문서 버전 목록만 돌려준다.
   rag-corpus-url: ${RAG_CORPUS_URL:http://127.0.0.1:8003/health/corpus}
   review:
+    queue-enabled: ${REVIEW_QUEUE_ENABLED:false}
     # 문구 하나에 사람이 요청할 수 있는 다시쓰기 횟수(M). violation_rewrites.requested_by_human 행 수로 센다.
     human-rewrite-limit: ${HUMAN_REWRITE_LIMIT:3}
 
