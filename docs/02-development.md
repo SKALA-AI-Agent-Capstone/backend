@@ -33,6 +33,7 @@ bootstrap은 .env의 누락된 설정만 보충하고 기존 비밀번호를 바
 | OPENAI_API_KEY | Agent | 실제 문구 모델과 사진 VLM 호출 |
 | TEXT_MODEL, VISION_MODEL | Agent | 기본 gpt-5.4-mini, 사용 계정의 모델 권한 확인 필요 |
 | MODEL_MAX_RETRIES, FALLBACK_TEXT_MODEL, FALLBACK_VISION_MODEL | Agent | 선택. 429, 5xx, 연결 오류는 기본 2회 재시도하고, 대체 모델을 적으면 그 뒤 한 번 더 시도한다. 비우면 해당 경로가 partial로 남는다 |
+| MODEL_INPUT_TOKEN_BUDGET | Agent | 기본 12000. 모델 입력의 전역 상한이며 호출 종류별 상한이 더 낮으면 그 값을 사용한다. 토크나이저 어휘를 못 받는 환경에서는 UTF-8 바이트 수로 보수적으로 제한한다 |
 | MFDS_SERVICE_KEY, MFDS_REPORT_URL | Business MCP | 공식 getRptPrdlstInq01 기본 주소 제공, 키와 정상 실응답 검증 필요 |
 | KIPRIS_SERVICE_KEY | Business MCP | KIPRIS Plus 해당 오퍼레이션 이용 권한 |
 | KIPRIS_WORD_SEARCH_URL | Business MCP | 공식 getWordSearch 경로 기본값, 청구항 원문 경로가 아님 |
@@ -44,6 +45,17 @@ bootstrap은 .env의 누락된 설정만 보충하고 기존 비밀번호를 바
 | LAW_OC | 향후 RAG 수집 배치 | 법제처 XML 수집을 선택하는 경우 |
 | LANGSMITH_TRACING, LANGSMITH_API_KEY, LANGSMITH_PROJECT, LANGSMITH_ENDPOINT | Agent | 선택. 둘 다 있을 때만 LangSmith로 노드, 도구, 모델 호출 trace를 보낸다. 실행마다 review_id 메타데이터와 result.traceId가 남는다. trace는 LANGSMITH_PROJECT(기본 beauty-capstone) 프로젝트에 쌓인다. LangSmith agent 주소(LANGSMITH_AGENT_ID, LANGSMITH_AGENT_ENVIRONMENT)는 프로젝트와 함께 쓸 수 없어 컨테이너에 넘기지 않는다 |
 | LANGSMITH_HIDE_INPUTS, LANGSMITH_HIDE_OUTPUTS | Agent | 기본 true. trace는 외부로 나가므로 광고 문구, 증빙과 이미지를 숨기고 경로, 지연, 토큰과 오류만 남긴다. 합성 자료로 로컬 디버깅할 때만 false |
+
+Agent의 모든 구조화 응답 호출은 출력 상한 1000~4500토큰과 입력 상한을 함께 적용한다.
+광고 문구는 12000, 증빙 문서 요약과 도구 선택은 6000, 사진·OCR 호출은 이미지
+예약분 6000을 포함해 10000토큰이다. 나머지 호출은 5000~8000토큰이다.
+고정 지침과 응답 스키마는 자르지 않는다. 긴 광고 문구는 겹치는 구간으로 나눠 원문 전체를 검사한다.
+다른 입력이 예산을 넘으면 앞과 최근 끝을 남기고 중간을 줄인다. 도구 선택 대화에서는
+오래된 호출과 응답을 쌍으로 상태 요약으로 바꾸고 최신 도구 결과를 우선 보존한다.
+고정 부분조차 예산에 안 들어가면 모델에 보내지 않고 오류로 처리한다.
+사진 토큰은 로컬에서 정확히 계수할 수 없어 예약분으로 계산한다.
+
+긴 광고는 구간 수만큼 모델 호출과 비용이 증가할 수 있다. 실제 모델을 사용하는 합성 회귀 평가는 `uv run --all-packages --frozen python scripts/evaluate_text_review.py`로 실행한다. 스크립트는 로컬 `.env`의 `OPENAI_API_KEY`를 읽고 TP/FP/FN과 precision/recall을 출력한다. 이 점수는 전문가가 라벨링한 실제 광고 정확도를 뜻하지 않는다.
 
 PDF 문자 추출, Tesseract 한국어 OCR와 Pillow 타일 분할에는 외부 API 키가 없다.
 키가 없어도 로그인, 업로드, 로컬 추출, 저장과 승인 연결을 확인할 수 있다. AI 분석 성공을 흉내 내지는 않는다.
