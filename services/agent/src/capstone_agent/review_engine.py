@@ -23,6 +23,7 @@ from .checks import cross_checks
 from .instructions import instruction
 from .regulations import legal_basis, search_basis
 from .tools import McpTools
+from .guardrails import mask_tool_result
 from .review_models import (
     RunRequest, OCRLines, TextAssessment, VisualAssessment, ResultTile, RewriteSuggestion, RewriteVerification,
 )
@@ -325,7 +326,7 @@ async def mcp_call(name, arguments, request=None):
             response = await client.call_tool(name,arguments)
             if response.is_error:
                 raise RuntimeError("BUSINESS_TOOL_FAILED")
-            return response.data
+            return mask_tool_result(name, response.data)
 
 
 def compact_len(text):
