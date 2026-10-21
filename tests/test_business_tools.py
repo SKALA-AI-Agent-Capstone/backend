@@ -36,3 +36,22 @@ async def test_failed_tool_selection_still_runs_relevant_tools(monkeypatch):
     assert public == {"status": "found"}
     assert {"tool": "verify_functional_approval", "called": True, "fallback": True} in trace
     assert not any(t["tool"] == "verify_patent" and t.get("called") for t in trace)  # not relevant, not run
+
+
+async def test_tool_selection_call_falls_back_like_structured_calls(monkeypatch):
+    import httpx
+    import openai
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-real")
+    monkeypatch.setenv("TEXT_MODEL", "primary-model")
+    monkeypatch.setenv("FALLBACK_TEXT_MODEL", "fallback-model")
+    provider = Provider()
+    models = []
+    async def create(*, model, **kwargs):
+        models.append(model)
+        if model == "primary-model":
+            response = httpx.Response(429, request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions"))
+            raise openai.RateLimitError("synthetic", response=response, body=None)
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="ok", tool_calls=[]))])
+    provider.client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    message = await provider.call_with_tools([{"role": "user", "content": "합성"}], engine.BUSINESS_TOOL_SPECS)
+    assert message.content == "ok" and models == ["primary-model", "fallback-model"]

@@ -87,7 +87,8 @@ RETRYABLE_MODEL_ERRORS = (openai.RateLimitError, openai.InternalServerError, ope
 class Provider:
     """Model calls for every node. The SDK retries 429, 5xx and connection errors with backoff
     (MODEL_MAX_RETRIES, default 2). If the call still fails and FALLBACK_TEXT_MODEL or FALLBACK_VISION_MODEL
-    is set, it is tried once; otherwise the error reaches the node, which records partial or failed."""
+    is set, it is tried once; otherwise the error reaches the node, which records partial or failed.
+    Both structured output (parse) and the business tool loop (call_with_tools) go through _with_fallback."""
 
     def __init__(self):
         key = os.getenv("OPENAI_API_KEY", "").strip()
@@ -103,20 +104,11 @@ class Provider:
         content = [{"type":"input_text", "text":text or "제공한 광고 영역을 분석하세요."}]
         if image:
             content.append({"type":"input_image", "image_url":image, "detail":"high"})
-        kind = "VISION" if image else "TEXT"
-        primary = os.getenv(f"{kind}_MODEL", "gpt-5.4-mini")
-        fallback = os.getenv(f"FALLBACK_{kind}_MODEL", "").strip()
         request = {"input":[{"role":"system", "content":prompt}, {"role":"user", "content":content}],
                    "text_format":schema, "store":False, "max_output_tokens":4500}
         async with self.limit:
-            try:
-                response = await self.client.responses.parse(model=primary, **request)
-            except RETRYABLE_MODEL_ERRORS as error:
-                if not fallback or fallback == primary:
-                    raise
-                logger.warning("model %s failed after retries (%s); trying fallback %s",
-                               primary, type(error).__name__, fallback)
-                response = await self.client.responses.parse(model=fallback, **request)
+            response = await self._with_fallback("VISION" if image else "TEXT",
+                                                 lambda model: self.client.responses.parse(model=model, **request))
         if response.output_parsed is None:
             raise RuntimeError("MODEL_REFUSED_OR_INCOMPLETE")
         return response.output_parsed
@@ -127,10 +119,22 @@ class Provider:
         if not self.client:
             raise RuntimeError("OPENAI_NOT_CONFIGURED")
         async with self.limit:
-            response = await self.client.chat.completions.create(
-                model=os.getenv("TEXT_MODEL", "gpt-5.4-mini"), messages=messages,
-                tools=tools, tool_choice="auto", max_completion_tokens=600)
+            response = await self._with_fallback("TEXT", lambda model: self.client.chat.completions.create(
+                model=model, messages=messages, tools=tools, tool_choice="auto", max_completion_tokens=600))
         return response.choices[0].message
+
+    async def _with_fallback(self, kind, call):
+        """Call with the {kind}_MODEL; after SDK retries, try FALLBACK_{kind}_MODEL once for retryable errors."""
+        primary = os.getenv(f"{kind}_MODEL", "gpt-5.4-mini")
+        fallback = os.getenv(f"FALLBACK_{kind}_MODEL", "").strip()
+        try:
+            return await call(primary)
+        except RETRYABLE_MODEL_ERRORS as error:
+            if not fallback or fallback == primary:
+                raise
+            logger.warning("model %s failed after retries (%s); trying fallback %s",
+                           primary, type(error).__name__, fallback)
+            return await call(fallback)
 
 
 def basis_context(basis):
