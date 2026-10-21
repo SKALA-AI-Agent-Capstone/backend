@@ -121,7 +121,7 @@ def main(require_queue=False):
     try:
         review=wait(1);version=review["versions"][-1];result=version["result"]
         verify_queue(1)
-        assert balance()==review_cost,"First review did not charge the configured credit cost"
+        assert balance()==2*review_cost,"Unconfigured analysis did not return the reserved credits"
         assert result["texts"] and any("SYNTHETIC" in text["text"] for text in result["texts"])
         # Without a model key no claim is extracted, so the legal search step has nothing to search.
         expected={"skipped"} if not result["findings"] else {"connected","not_indexed"}
@@ -141,7 +141,7 @@ def main(require_queue=False):
         checks.append("tenant isolation, role check, persisted HITL and PostgreSQL resume")
         upload(f"/reviews/{rid}/re-review");review=wait(2)
         verify_queue(2)
-        assert balance()==0,"Re-review did not charge the configured credit cost"
+        assert balance()==2*review_cost,"Unconfigured re-review did not return the reserved credits"
         assert review["versions"][0]["approval"]["state"]=="approved"
         assert review["versions"][1]["approval"]["state"]=="pending"
         assert call("POST",f"/reviews/{rid}/decision",reviewer,json={"versionNo":1,"state":"approved","comment":"old version"}).status_code==409

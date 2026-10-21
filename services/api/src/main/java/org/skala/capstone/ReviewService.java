@@ -131,7 +131,10 @@ public class ReviewService implements AutoCloseable {
         JsonNode response=callAgent("/internal/runs",request);
         boolean auto=Boolean.TRUE.equals(tx.execute(status->{
             boolean approved=violations.saveResult(tenant,id,no,response);
-            credits.charge(id,no);
+            JsonNode pipeline=response.path("result").path("pipelineStatus");
+            // HTTP 200 alone is not a completed analysis: missing models and partial results are free.
+            credits.settle(id,no,"complete".equals(pipeline.path("text").asText())
+                && "complete".equals(pipeline.path("visual").asText()));
             return approved;
         }));
         // approval_required goes first because completed closes the stream.
@@ -146,7 +149,8 @@ public class ReviewService implements AutoCloseable {
             String status=store.jdbc().queryForObject(
                 "SELECT status FROM app.review_credit_charges WHERE review_id=CAST(? AS uuid) AND version_no=?",
                 String.class,id,no);
-            return "charged".equals(status);
+            // A retained partial result is also terminal, with its reservation returned to the user.
+            return "charged".equals(status) || "released".equals(status);
         }catch(Exception ignored){return false;}
     }
     boolean terminalFailure(String tenant,String id,int no){
