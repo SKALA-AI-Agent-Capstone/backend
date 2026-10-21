@@ -92,7 +92,7 @@ PostgreSQL 안에 벡터를 저장하므로 별도 Vector DB 서비스는 없다
 - FastMCP 증빙 추출, 식약처와 KIPRIS 조회 adapter. 실제 승인키와 정상 응답 검증은 별도다.
 - PostgreSQL 결과와 버전, LangGraph HITL checkpoint, 담당자 결정 저장과 재개, 이력 삭제.
 - RAG 출처 9건과 API 4종 목록, knowledge 스키마와 vector(1024). 화장품법은 legalize-kr에서 조문 단위로 적재하고 나머지는 PDF로 적재(scripts/ingest_rag.py). rag-mcp의 search_regulations와 search_precedents는 키워드 검색으로 동작하며 임베딩은 선택. Agent는 아직 RAG를 호출하지 않는다.
-- SSE, 다건 RabbitMQ Worker, 운영 결제·과금 DB 분리, 증빙 의미 대조와 특허 청구항 대조는 후속.
+- 배치 SSE, 다건 RabbitMQ Worker, 운영 결제·과금 DB 분리, 증빙 의미 대조와 특허 청구항 대조는 후속.
 
 공개 계약은 /api/v1이다. 이전 /api/reviews 501 경로와 v0.1 검색 stub은 호환 기반이며 새 업무 화면에서 호출하지 않는다.
 실제 모델과 공공 API 설정, 시작 방법 및 검증용 주소는 [개발환경](docs/02-development.md)을 따른다.

@@ -97,7 +97,7 @@ finding에는 basis(규칙 조항 retrieval=rule, 보조 검색 retrieval=search
 
 | 목표 | 현재 |
 | --- | --- |
-| 단건 즉시 응답과 SSE | 접수 후 202, 인증된 1.5초 상태 폴링 |
+| 단건 즉시 응답과 SSE | 접수 후 202, 인증된 검토별 SSE(GET /api/v1/reviews/{id}/events). 스트림을 열지 못하면 1.5초 상태 폴링 |
 | 다건 Backend → Agent API → RabbitMQ → 내부 Worker | 단건 검사의 Backend → RabbitMQ → Backend 소비자 → Agent HTTP 경로부터 연결. 다건 Agent 내부 Worker는 후속 |
 | 한도 있는 Agent 도구선택 loop | business 노드는 구현됨(2026-10-21): LLM이 findings를 보고 structure_evidence/verify_functional_approval/verify_patent 중 필요한 것만 선택, Guardrail 총 8회/동일 tool 연속 2회/60초. regulations/cross_checks는 여전히 고정 순서(법령 근거는 매 finding마다 항상 필요하고, cross_checks 대상은 규칙 테이블이 정함) |
 | search_regulations, search_precedents | legalize-kr 화장품법 코퍼스는 적재·임베딩과 pgvector 검색이 연결됨. 나머지 출처(PDF) 적재는 원문 확보 후 진행 중 |
@@ -108,7 +108,8 @@ finding에는 basis(규칙 조항 retrieval=rule, 보조 검색 retrieval=search
 
 Compose의 단건 검사는 `app.review_jobs`와 RabbitMQ quorum 큐를 사용한다. DB 작업 기록을 먼저
 커밋하고 발행 확인 후 상태를 바꾼다. 소비자는 수동 ACK를 사용하며 일시적 실패는
-5초, 30초 간격으로 최대 3회 시도한 뒤 실패 큐에 넣는다. Agent 호출은 현재
+5초, 30초 간격으로 최대 3회 시도한 뒤 실패 큐에 넣는다. 재시도와 실패에는 마지막 오류와
+실패한 실행의 LangSmith run id(`last_trace_id`, 추적이 켜진 경우)를 남긴다. Agent 호출은 현재
 Backend 소비자가 맡는다. 단독 API 실행에서 `REVIEW_QUEUE_ENABLED=false`면
 기존 프로세스 내부 실행 풀을 사용하므로 재시작 복구가 되지 않는다.
 다건의 목표는 접수 기록 저장 후 202, 승인 대기 checkpoint 저장 후 ACK, 승인 결정 저장 후 별도 재개 메시지다.

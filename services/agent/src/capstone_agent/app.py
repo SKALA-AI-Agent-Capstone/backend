@@ -13,9 +13,10 @@ from capstone_shared.settings import (
     required_env,
     valid_internal_authorization,
 )
-from .observability import run_config, trace_id
+from .observability import run_config, trace_headers, trace_id
 from .review_models import RunRequest, ResumeRequest, RewriteRequest, VerifyRewriteRequest
 from .review_engine import Provider, prepare_assets, build_graph, progress, rewrite_phrase, verify_rewrite, RewriteRejected
+from .regulations import source_document
 from .tools import McpTools
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.types import Command
@@ -73,14 +74,17 @@ def create_app() -> FastAPI:
 
     @app.post("/internal/runs", dependencies=[Depends(require_internal)])
     async def create_run(request: RunRequest) -> dict:
+        config = run_config(f"{request.tenantId}:{request.reviewId}:v{request.versionNo}", run_name="review",
+                            review_id=request.reviewId, tenant_id=request.tenantId, version_no=request.versionNo)
+        # Only a started graph has a LangSmith run. A failure while reading the files has no trace to point at.
+        started = False
         try:
             async with asyncio.timeout(270):
                 native, tiles = await prepare_assets(request)
                 async with AsyncPostgresSaver.from_conn_string(required_env("AGENT_DATABASE_URL")) as saver:
                     await saver.setup()
                     graph = build_graph(native, tiles, Provider(), saver, request)
-                    config = run_config(f"{request.tenantId}:{request.reviewId}:v{request.versionNo}", run_name="review",
-                                        review_id=request.reviewId, tenant_id=request.tenantId, version_no=request.versionNo)
+                    started = True
                     output = await graph.ainvoke({"reviewId":request.reviewId,"tenantId":request.tenantId,
                         "versionNo":request.versionNo,"product":request.product}, config)
                     await progress(request,4)
@@ -89,7 +93,11 @@ def create_app() -> FastAPI:
                         result = {**result, "traceId": trace_id(config)}
                     return {"result":result,"hitlStatus":"pending","contract_version":"0.2.0-mvp"}
         except (ValueError, httpx.HTTPStatusError) as error:
-            raise HTTPException(status_code=422,detail="INPUT_UNREADABLE_OR_EXPIRED") from None
+            raise HTTPException(status_code=422,detail="INPUT_UNREADABLE_OR_EXPIRED",
+                                headers=trace_headers(config) if started else None) from None
+        except Exception:
+            # Spring retries a 5xx. The header lets the failed job point at the errored LangSmith run.
+            raise HTTPException(status_code=500,detail="RUN_FAILED",headers=trace_headers(config) if started else None) from None
 
     @app.post("/internal/runs/resume", dependencies=[Depends(require_internal)])
     async def resume(request: ResumeRequest) -> dict:
@@ -134,6 +142,18 @@ def create_app() -> FastAPI:
         except Exception:
             raise HTTPException(status_code=502,detail="REWRITE_VERIFICATION_FAILED") from None
         return {"passed":result.passed,"reasoning":result.reasoning}
+
+    @app.get("/internal/regulations/document", dependencies=[Depends(require_internal)])
+    async def regulation_document(key: str, version: str) -> dict:
+        tools = McpTools(servers=("rag",))
+        try:
+            async with tools:
+                document = await source_document(tools.read, key, version)
+        except Exception:
+            raise HTTPException(status_code=502,detail="REGULATION_SOURCE_UNAVAILABLE") from None
+        if document is None:
+            raise HTTPException(status_code=404,detail="REGULATION_DOCUMENT_NOT_FOUND")
+        return document
 
     @app.post("/internal/runs/delete", dependencies=[Depends(require_internal)])
     async def delete_runs(request: ResumeRequest) -> dict:

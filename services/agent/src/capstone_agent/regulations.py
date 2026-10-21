@@ -31,6 +31,20 @@ PRECEDENT_MIN_SIMILARITY = 0.3
 SOURCE_TYPES = {"law": "law", "regulation": "law", "guideline": "guideline", "association": "association"}
 
 
+async def source_document(read, document_key: str, version: str) -> dict | None:
+    """Full original of one basis source, read through the rag-mcp resources for the basis panel.
+
+    The basis keeps document_key and version label, so regulation://corpus resolves the document_version_id
+    and regulation://documents/{id} returns its sections. Another version of the same law is never substituted.
+    """
+    corpus = await read("rag", "regulation://corpus")
+    match = next((d for d in corpus["documents"]
+                  if d["document_key"] == document_key and d["version_label"] == version), None)
+    if match is None:
+        return None
+    return await read("rag", f"regulation://documents/{match['document_version_id']}")
+
+
 def build_queries(finding: dict) -> list[str]:
     """One search per legal angle. Mixing two hints in one query dilutes both, so they run separately."""
     claim_type = finding.get("claimType", "")
