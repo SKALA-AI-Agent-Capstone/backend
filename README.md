@@ -59,6 +59,7 @@ RAG는 Handoff 기준의 빈 knowledge DB와 출처 목록이며, 로컬 수집 
 | [프로젝트 메모리](docs/08-project-memory.md) | 최신 결정, 폐기한 가정, 다음 작업 |
 | [입력 처리](docs/09-input-pipeline.md) | PDF와 이미지 분기, OCR와 Vision, 키, 원본 수명과 예외 |
 | [담당별 개발 계획](docs/10-work-breakdown.md) | 작업 카드, 입출력, 코드 배치와 통합 순서 |
+| [하네스 평가셋](docs/13-harness-evaluation.md) | 합성 광고 정답셋, 지표, 실행 방법과 전후 결과 기록 |
 
 제품 요구사항은 노션, 실행 코드의 계약은 packages/shared와 contracts가 원본이다.
 docs는 두 저장소의 공통 구현 안내다. 프론트엔드에 문서 내용을 복사하지 않는다.
