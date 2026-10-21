@@ -6,7 +6,7 @@ from pathlib import Path
 
 from capstone_shared.contracts import SearchRulesInput, SearchRulesResult
 from capstone_shared.rag_contracts import ClaimRulesResult, PrecedentSearchResult, RegulationSearchResult
-from capstone_shared.review_contracts import RunRequest, ResumeRequest, RewriteRequest, RewriteSuggestion, VerifyRewriteRequest, RewriteVerification, TextAssessment, VisualAssessment
+from capstone_shared.review_contracts import RunRequest, ResumeRequest, RewriteRequest, RewriteSuggestion, VerifyRewriteRequest, RewriteVerification, TextAssessment, VisualAssessment, ResultTile
 
 root = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
@@ -26,6 +26,7 @@ for name, model in [
     ("mvp-agent-rewrite-verify.output.schema.json", RewriteVerification),
     ("mvp-text-assessment.schema.json", TextAssessment),
     ("mvp-visual-assessment.schema.json", VisualAssessment),
+    ("mvp-result-tile.schema.json", ResultTile),
 ]:
     target = root / "contracts" / name
     content = json.dumps(model.model_json_schema(), ensure_ascii=False, indent=2) + "\n"

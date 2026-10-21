@@ -48,6 +48,19 @@ class VisualAssessment(BaseModel):
     unreadable: bool
 
 
+class ResultTile(BaseModel):
+    """result.tiles의 한 항목. 분석에 쓴 타일의 좌표만 남기고 픽셀은 저장하지 않는다.
+    region은 원본 페이지 기준 0~1 [x0, y0, x1, y1]이고 index는 분석 순서(파일, 페이지, 위에서 아래)다.
+    findings와 visualFindings의 tileId는 이 id 중 하나이거나, 대표 타일을 정할 수 없으면 null이다."""
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    index: int = Field(ge=0)
+    fileId: str
+    fileName: str
+    page: int = Field(ge=1)
+    region: list[float] = Field(min_length=4, max_length=4)
+
+
 class ResumeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     reviewId: str
