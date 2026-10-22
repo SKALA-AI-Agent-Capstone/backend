@@ -386,3 +386,7 @@ GET /api/v1/reviews/{id}/events로 중계한다. 프론트는 1.5초 폴링 대�
 - 별도 beauty-split-verification Compose 프로젝트와 독립 포트 및 볼륨, 생성된 무과금 환경으로 전체 서비스를 빌드하고 healthy를 확인했다.
 - 합성 통합 검사: HTTP와 MCP 인증, Spring 내부 연동, pgvector 읽기 권한, RabbitMQ AMQP, PNG 및 PDF와 증빙 입력, 기업 격리, HITL, 재검토, 분석과 승인 재개 작업의 done, 삭제까지 통과했다. 유료 호출 0회, 고객 파일 0개다.
 - 실제 LLM/VLM 출력과 검색 품질 및 지연 시간의 벤치마크는 재실행하지 않았다. 이번 검증은 핵심 소스와 런타임 설정 동일성 및 합성 연동 동작 보존을 확인한 것이다.
+
+## 2026-10-22 하네스 평가셋 다음 행동 평가
+
+증빙 추출 실패(H05) 처리와 frontend 판단 보류 분류를 컴포넌트 검사로 먼저 확인했다. 처음 실행은 Docker가 꺼져 로컬 RAG MCP 연결 실패로 최종 채점을 하지 못했다. 이후 ai_agent의 scripts/evaluate_actions.py로 2026-10-22 평가셋 전체를 3회씩 실행했다(첫 버전 25건, 정리한 버전 24건). H05는 매번 판단 보류로 일치했고, 정리한 버전에서는 24건 중 16건이 3회 모두 일치했다. 상세 결과는 docs/13-harness-evaluation.md의 2026-10-22 평가셋을 본다.
