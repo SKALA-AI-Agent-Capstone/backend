@@ -28,7 +28,7 @@ AI 결과는 내부 검토 초안이며 협회 자문이나 정부 인증을 대
 | 노션 항목 | 책임 | 현재 기반 |
 | --- | --- | --- |
 | FR-1, FR-5, FR-6 | Agent의 OCR, 판단, 리라이트, HITL | 두 분석 경로와 PostgreSQL HITL, 실제 모델 호출은 키 필요 |
-| FR-2, NFR-11 | rag-mcp의 법령과 기준, 사례 검색 | legalize-kr 코퍼스는 적재·임베딩·검색까지 연결됨, 나머지 출처 적재는 후속 |
+| FR-2, NFR-11 | rag-mcp의 법령과 기준, 사례 검색 | 화장품법 코퍼스(법제처 API)는 적재·임베딩·검색까지 연결됨, 나머지 출처 적재는 후속 |
 | FR-3, FR-4, FR-10 | business-mcp의 증빙 대조와 식약처 조회 | 증빙 문자 추출과 공식 조회 adapter. 실증(시험자료) 주장은 Agent(evidence.py)가 문서 요약과 광고 각주를 대조해 뒷받침함/다른 시험/조건 다름/증빙에 없음으로 판정(2026-10-21). business-mcp의 match_product_claims(기능성 보고 범위 대조)·match_patent_claims(특허 청구항 대조)는 여전히 미구현 |
 | FR-14, FR-15 | business-mcp의 특허 조회와 원문 대조 | KIPRIS 조회 adapter, 청구항 원문 대조는 후속 |
 | FR-7, NFR-4 | Backend, 큐와 Worker의 다건 처리 | 단건 검토는 RabbitMQ outbox(app.review_jobs)로 큐잉·재시도(최대 3회, 5s/30s)·DLQ까지 연결됨(REVIEW_QUEUE_ENABLED, Compose 기본값 true). 여러 광고를 한 번에 올리는 다건 업로드 API와 Agent 쪽 별도 Worker는 여전히 없음 |

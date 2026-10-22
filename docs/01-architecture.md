@@ -96,7 +96,7 @@ flowchart TB
   H -->|리포트 데이터| B
   A -->|문구마다 search_regulations| RM[RAG MCP]
   RM -. 읽기 전용 .-> K[(같은 PostgreSQL: knowledge, pgvector)]
-  LK[legalize-kr 화장품법 Markdown] -->|scripts/ingest_rag.py legalize| K
+  LK[법제처 API 화장품법, 시행령, 시행규칙, 고시] -->|scripts/ingest_rag.py lawapi| K
   PDF[나머지 출처 PDF] -. scripts/ingest_rag.py pdf, 원문 확보 후 .-> K
 ```
 
@@ -112,7 +112,7 @@ pgvector는 PostgreSQL의 확장이다. 별도 벡터 서버나 클라우드 계
 | Backend | 기업 권한, JWT 세션, 업로드, 결과와 광고 버전, 결정 저장, 원본 폐기 | Spring Boot 3, Security, JDBC, Flyway, Redis | SSE, 내구성 있는 작업 발행, 도메인 테이블 정규화 |
 | Agent | 광고 파싱, 두 분석 경로, 조건부 Business MCP 호출, HITL | FastAPI, LangGraph, OpenAI Responses, Pydantic, PostgreSQL checkpointer | 근거 검색과 검증 루프, API 사용량 계측, 제한 재시도 확장 |
 | Business MCP | 증빙 문자 추출, 식약처 품목 조회 adapter, KIPRIS 등록 후보 조회, GMP 업체와 성분 규제정보 조회 | FastMCP, httpx, 공통 파서 | 증빙 의미 구조화와 제품 주장 대조, 청구항 원문 확보와 대조 |
-| RAG MCP | search_regulations, search_precedents(키워드 검색, 임베딩 선택), 기존 v0.1 stub 유지. 화장품법은 legalize-kr, 나머지는 PDF 배치 적재 | FastMCP, psycopg, pgvector | PDF 원문 확보와 적재, 임베딩 모델 확정, 검색 평가, Agent 호출 연결 |
+| RAG MCP | search_regulations, search_precedents(키워드 검색, 임베딩 선택), 기존 v0.1 stub 유지. 화장품법과 고시는 법제처 API, 나머지는 PDF 배치 적재 | FastMCP, psycopg, pgvector | PDF 원문 확보와 적재, 임베딩 모델 확정, 검색 평가, Agent 호출 연결 |
 | Data | app, agent와 빈 knowledge, 원본 임시 캐시 | PostgreSQL 17, pgvector, Redis | 공개 코퍼스 적재와 검색 평가 |
 
 Agent API와 Worker는 노션의 한 Agent 서비스 안의 역할이다. 입력 처리를 위한 세 번째 MCP나 새 Worker 배포 서비스를 추가하지 않는다.
@@ -141,7 +141,7 @@ Agent의 DB 직접 접근은 agent checkpointer만 허용한다.
 | text_path, photo_path | OCR(Tesseract + VLM 보충, 음절 분리 교정)과 주장 추출, 사진 관찰 | OpenAI |
 | regulations (legal_basis) | 규칙 스캔으로 모델이 놓친 고위험 줄을 보충하고, 문구마다 규칙 조항, 보조 검색, 사례를 붙인다 | rag.scan_claim_lines, rag.lookup_claim_rules, rag.search_regulations, rag.search_precedents |
 | business | LLM이 findings를 보고 세 도구 중 필요한 것만 선택(2026-10-21부터 도구선택 loop) | business.structure_evidence, verify_functional_approval, verify_patent |
-| cross_checks | 규칙이 지정한 대조만 실행: 기능성 보고 vs 주장, 실증자료 제출, 성분 국내 금지와 제한, GMP, 특허 번호 | business.find_functional_reports, verify_gmp_company, lookup_ingredient_regulation, rag.check_ingredient_standard |
+| cross_checks | 규칙이 지정한 대조만 실행: 기능성 보고 vs 주장, 실증자료 제출, 성분 국내 금지와 제한, GMP, 특허 번호 | business.find_functional_reports, verify_gmp_company, rag.check_ingredient_standard |
 | violations | 조문을 참고한 자가검증 리라이트. 통과한 문안이 finding.rewrites로 저장된다 | OpenAI |
 | approval, report | ai_agent에 남아 있지만 Backend가 재개를 보내지 않는다(2026-10-22 승인 제거). report는 하는 일이 없다 | |
 
@@ -166,7 +166,7 @@ finding에는 basis(규칙 조항 retrieval=rule, 보조 검색 retrieval=search
 | 단건 즉시 응답과 SSE | 접수 후 202, 인증된 검토별 SSE(GET /api/v1/reviews/{id}/events). 스트림을 열지 못하면 1.5초 상태 폴링 |
 | 다건 Backend → Agent API → RabbitMQ → 내부 Worker | 단건 검사의 Backend → RabbitMQ → Backend 소비자 → Agent HTTP 경로부터 연결. 다건 Agent 내부 Worker는 후속 |
 | 한도 있는 Agent 도구선택 loop | business 노드는 구현됨(2026-10-21): LLM이 findings를 보고 structure_evidence/verify_functional_approval/verify_patent 중 필요한 것만 선택, Guardrail 총 8회/동일 tool 연속 2회/60초. regulations/cross_checks는 여전히 고정 순서(법령 근거는 매 finding마다 항상 필요하고, cross_checks 대상은 규칙 테이블이 정함) |
-| search_regulations, search_precedents | legalize-kr 화장품법 코퍼스는 적재·임베딩과 pgvector 검색이 연결됨. 나머지 출처(PDF) 적재는 원문 확보 후 진행 중 |
+| search_regulations, search_precedents | 화장품법 코퍼스(법제처 API)는 적재·임베딩과 pgvector 검색이 연결됨. 나머지 출처(PDF) 적재는 원문 확보 후 진행 중 |
 | 증빙 및 제품 주장 대조와 특허 청구항 대조 | 증빙 문자 추출과 조회 adapter까지만 구현 |
 | 사용량 이벤트와 별도 과금 원장 | app 스키마 내 Toss 테스트결제·크레딧 구매·리뷰당 크레딧 차감이 실제 동작. ERD v2의 judged_at 기준 reserve/charge/release와 별도 과금 DB 분리는 미구현 |
 | 서버 리포트 PDF | 브라우저 인쇄와 HTML 내보내기 |
