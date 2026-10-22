@@ -288,6 +288,28 @@ class ProductFlowTest {
     }
 
     @Test
+    void productsCanBeDeletedOnlyAfterTheirReviewsAreGone() throws Exception {
+        String empty = product(unique("빈 제품 삭제"));
+        mvc.perform(delete("/api/v1/products/" + empty).with(author())).andExpect(status().isOk());
+        mvc.perform(get("/api/v1/products/" + empty).with(author())).andExpect(status().isNotFound());
+
+        String used = product(unique("검토 있는 제품"));
+        String reviewId = submit("{\"productId\":\"" + used + "\"}");
+        assertThat(read(mvc.perform(delete("/api/v1/products/" + used).with(author()))
+                .andExpect(status().isConflict())).path("message").asText()).isEqualTo("PRODUCT_HAS_REVIEWS");
+        // 다른 기업은 있는지조차 알 수 없다
+        assertThat(read(mvc.perform(delete("/api/v1/products/" + used).with(outsider()))
+                .andExpect(status().isNotFound())).path("message").asText()).isEqualTo("PRODUCT_NOT_FOUND");
+
+        // 검토를 모두 지우면 삭제할 수 있다
+        mvc.perform(delete("/api/v1/reviews/" + reviewId).with(author())).andExpect(status().isOk());
+        mvc.perform(delete("/api/v1/products/" + used).with(author())).andExpect(status().isOk());
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM app.products WHERE id=CAST(? AS uuid)",
+                Integer.class, used)).isZero();
+        mvc.perform(delete("/api/v1/products/" + used).with(author())).andExpect(status().isNotFound());
+    }
+
+    @Test
     void legacySubmissionsFindOrCreateTheProductByName() throws Exception {
         String name = unique("예전 접수");
         String first = submit("{\"product\":{\"name\":\"" + name + "\"},\"media\":[]}");

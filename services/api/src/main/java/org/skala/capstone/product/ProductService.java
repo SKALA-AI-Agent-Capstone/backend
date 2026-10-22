@@ -13,6 +13,7 @@ import java.util.UUID;
 import org.skala.capstone.product.ProductRepository.ProductImage;
 import org.skala.capstone.review.ReviewAssetService;
 import org.skala.capstone.review.ThumbnailRenderer;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -86,6 +87,24 @@ public class ProductService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "PRODUCT_NAME_TAKEN");
         }
         return get(tenant, id);
+    }
+
+    /**
+     * 검토가 0건인 제품만 지운다. 검토가 남아 있으면 409 PRODUCT_HAS_REVIEWS이며, 화면은 검토를 먼저 지우라고 안내한다.
+     * 확인과 삭제 사이에 검토가 접수되면 외래 키가 삭제를 막고 같은 409가 된다.
+     */
+    public void delete(String tenant, String id) {
+        String product = uuid(id);
+        int deleted;
+        try {
+            deleted = products.deleteIfUnused(tenant, product);
+        } catch (DataIntegrityViolationException inUse) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "PRODUCT_HAS_REVIEWS");
+        }
+        if (deleted == 0) {
+            products.find(tenant, product).orElseThrow(ProductService::notFound);
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "PRODUCT_HAS_REVIEWS");
+        }
     }
 
     public ObjectNode replaceImage(String tenant, String id, MultipartFile image) {

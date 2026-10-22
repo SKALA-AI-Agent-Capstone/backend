@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import org.skala.capstone.violation.ReviewViewAssembler;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
@@ -55,6 +56,13 @@ public class ProductController {
             @PathVariable String id,
             @RequestBody JsonNode input) {
         return products.update(tenant(jwt), id, input);
+    }
+
+    /** 검토가 0건인 제품만 지운다. 남아 있으면 409 PRODUCT_HAS_REVIEWS. */
+    @DeleteMapping("/{id}")
+    public Map<String, Boolean> delete(@AuthenticationPrincipal Jwt jwt, @PathVariable String id) {
+        products.delete(tenant(jwt), id);
+        return Map.of("ok", true);
     }
 
     @PutMapping(value = "/{id}/image", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)

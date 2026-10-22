@@ -439,6 +439,7 @@ private이라 CDN 같은 공용 캐시에는 남지 않지만, 같은 브라우�
 | POST /api/v1/products | multipart `metadata`(JSON `{name, type}`, type 생략 시 general)와 선택 `image`. 201 |
 | GET /api/v1/products/{id} | 제품 하나 |
 | PATCH /api/v1/products/{id} | JSON `{name?, type?}`. 보낸 필드만 바꾼다 |
+| DELETE /api/v1/products/{id} | 검토가 0건인 제품만 지운다. `{"ok":true}` |
 | PUT /api/v1/products/{id}/image | multipart `image`로 대표 이미지를 바꾼다 |
 | GET /api/v1/products/{id}/image | 대표 이미지 원본 |
 | GET /api/v1/products/{id}/image/thumbnail | 너비 160px JPEG 썸네일 |
@@ -449,7 +450,9 @@ private이라 CDN 같은 공용 캐시에는 남지 않지만, 같은 브라우�
 - 대표 이미지는 PNG, JPEG, WebP만 받고(그 외는 415 `IMAGE_TYPE_UNSUPPORTED`, PDF 포함) 10MiB까지다(413 `IMAGE_LIMIT_10_MIB`).
   등록할 때 썸네일까지 만들어 저장한다. 이미지가 없으면 404 `PRODUCT_IMAGE_NOT_FOUND`, 썸네일을 만들 수 없던 이미지는 404 `THUMBNAIL_UNAVAILABLE`.
 - 이미지 URL은 바뀌지 않으므로 프론트는 `?v={image.version}`을 붙여 부른다. 그래서 두 이미지 API는 `Cache-Control: max-age=86400, private`를 보낸다.
-- 제품 이름을 바꿔도 이미 접수된 검토의 productName(접수 당시 이름)은 바뀌지 않는다. 제품 삭제 API는 아직 없다.
+- 제품 이름을 바꿔도 이미 접수된 검토의 productName(접수 당시 이름)은 바뀌지 않는다.
+- 삭제는 실수로 리포트를 잃지 않도록 검토가 남아 있으면 409 `PRODUCT_HAS_REVIEWS`로 거절한다. 화면은 "제품 안의 검토를 모두 삭제해야
+  제품을 삭제할 수 있다"는 안내를 띄운다. 확인과 삭제 사이에 검토가 접수돼도 외래 키가 막아 같은 409가 된다.
 
 검토 접수(POST /api/v1/reviews)와 제품:
 - metadata에 `productId`가 있으면 이 기업의 제품인지 확인하고(아니면 404 `PRODUCT_NOT_FOUND`) 그 제품으로 접수한다.

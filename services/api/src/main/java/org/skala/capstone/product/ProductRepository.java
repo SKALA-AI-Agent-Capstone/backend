@@ -118,5 +118,15 @@ public class ProductRepository {
                 tenant);
     }
 
+    /** 검토가 하나도 없는 제품만 지운다. 지운 행 수(0 또는 1)를 돌려준다. */
+    public int deleteIfUnused(String tenant, String id) {
+        return jdbc.update(
+                "DELETE FROM app.products p WHERE p.id = CAST(? AS uuid) AND p.tenant_id = CAST(? AS"
+                        + " uuid) AND NOT EXISTS (SELECT 1 FROM app.reviews r WHERE r.product_id ="
+                        + " p.id)",
+                id,
+                tenant);
+    }
+
     public record ProductImage(byte[] bytes, String mime, String sha256, byte[] thumbnail) {}
 }
