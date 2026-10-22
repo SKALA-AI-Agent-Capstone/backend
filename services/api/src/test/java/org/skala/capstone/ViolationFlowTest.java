@@ -1,5 +1,9 @@
 package org.skala.capstone;
 
+import org.skala.capstone.billing.CreditCatalog;
+import org.skala.capstone.billing.CreditLedgerService;
+import org.skala.capstone.common.AgentClient;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
@@ -52,7 +56,7 @@ class ViolationFlowTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired ObjectMapper json;
     @Autowired ViolationService violations;
-    @Autowired ReviewCreditService credits;
+    @Autowired CreditLedgerService credits;
     @Autowired CreditCatalog catalog;
     @Autowired DataSource dataSource;
     @Autowired ReviewService reviews;

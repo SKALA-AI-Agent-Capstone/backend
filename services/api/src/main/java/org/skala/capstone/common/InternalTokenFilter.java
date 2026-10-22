@@ -1,4 +1,4 @@
-package org.skala.capstone;
+package org.skala.capstone.common;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;

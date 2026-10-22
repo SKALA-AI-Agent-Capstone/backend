@@ -1,5 +1,7 @@
 package org.skala.capstone;
 
+import org.skala.capstone.common.AgentClient;
+
 import com.fasterxml.jackson.databind.*;
 import com.fasterxml.jackson.databind.node.*;
 import java.time.*;

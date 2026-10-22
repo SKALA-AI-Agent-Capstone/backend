@@ -1,5 +1,9 @@
 package org.skala.capstone;
 
+import org.skala.capstone.billing.CreditCatalog;
+import org.skala.capstone.billing.CreditLedgerService;
+import org.skala.capstone.billing.CreditRepository;
+
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -11,10 +15,10 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-class ReviewCreditServiceTest {
+class CreditLedgerServiceTest {
     private final JdbcTemplate jdbc=mock(JdbcTemplate.class);
     private final CreditCatalog catalog=mock(CreditCatalog.class);
-    private final ReviewCreditService credits=new ReviewCreditService(jdbc,catalog);
+    private final CreditLedgerService credits=new CreditLedgerService(new CreditRepository(jdbc),catalog);
     private static final String TENANT="00000000-0000-0000-0000-000000000001";
     private static final String USER="00000000-0000-0000-0000-000000000002";
     private static final String REVIEW="00000000-0000-0000-0000-000000000003";

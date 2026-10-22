@@ -14,6 +14,23 @@ Python 공통 모델과 생성 JSON Schema는 ai_agent/packages/shared와 ai_age
 
 ## 현재 실행 구조
 
+### Java API 코드 배치 (2026-10-22 구조 정리 B)
+
+`org.skala.capstone` 아래에서 `common`은 인증 설정과 공통 오류 및 Agent HTTP 클라이언트를,
+`auth`는 사용자 인증과 세션을, `billing`은 결제와 크레딧 원장을 소유한다.
+`reference`는 공개 근거 조회, `system`은 내부 환경 확인 API다.
+인증과 결제 요청은 `dto`의 record로 받고 Controller는 Service에 위임한다.
+SQL은 UserRepository, SessionRepository, CreditRepository, SystemRepository에서 실행한다.
+JDBC와 기존 DB 스키마를 유지하며 회원가입, 팀원 추가, Refresh 회전, 결제 확정의
+트랜잭션은 Service로 이동했다. Refresh 재사용 시 세션 폐기를 커밋하는 규칙도 유지한다.
+리뷰와 문구 결정의 패키지 분리는 구조 정리 C에서 이어서 진행한다.
+
+인증 동작 변경은 구조 이동과 별도 커밋이다. 회원가입과 팀원 추가는 비밀번호의 앞뒤 공백을
+보존하고 로그인은 입력 원문을 비교한다. 기존 최소 길이 검사는 유지하며 원문도 최대 72자로
+제한한다. 기존 계정 해시는 변경하지 않는다. 팀원 추가도 이메일 형식을 검사하고
+`INVALID_EMAIL` 또는 중복 시 `EMAIL_EXISTS`를 반환한다.
+record DTO에서 누락되거나 null인 필수 문자열은 입력 오류로 처리한다.
+
 ```mermaid
 flowchart TB
   U[기업 작성자와 검토자] --> V[Vue 3, Vite, Pinia]

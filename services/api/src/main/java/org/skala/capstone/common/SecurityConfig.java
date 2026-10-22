@@ -1,4 +1,4 @@
-package org.skala.capstone;
+package org.skala.capstone.common;
 
 import jakarta.servlet.DispatcherType;
 import java.nio.charset.StandardCharsets;
@@ -10,7 +10,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
-import org.springframework.jdbc.core.JdbcTemplate;
+import org.skala.capstone.auth.SessionRepository;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -42,7 +42,7 @@ public class SecurityConfig {
         return new NimbusJwtEncoder(new com.nimbusds.jose.jwk.source.ImmutableSecret<>(key));
     }
 
-    @Bean JwtDecoder jwtDecoder(SecretKeySpec key, JdbcTemplate jdbc) {
+    @Bean JwtDecoder jwtDecoder(SecretKeySpec key, SessionRepository sessions) {
         var decoder = NimbusJwtDecoder.withSecretKey(key).macAlgorithm(MacAlgorithm.HS256).build();
         decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
             // 발급과 검증을 같은 서버가 하므로 기본 60초 clock skew 없이 만료 시각을 그대로 적용한다.
@@ -50,10 +50,7 @@ public class SecurityConfig {
             new JwtIssuerValidator("beauty-capstone"),
             jwt -> {
                 try {
-                    Integer count = jdbc.queryForObject(
-                        "SELECT count(*) FROM app.sessions WHERE id=CAST(? AS uuid) AND expires_at>now()",
-                        Integer.class, jwt.getClaimAsString("sid"));
-                    if (count != null && count == 1) return OAuth2TokenValidatorResult.success();
+                    if (sessions.isActive(jwt.getClaimAsString("sid"))) return OAuth2TokenValidatorResult.success();
                 } catch (Exception ignored) { }
                 return OAuth2TokenValidatorResult.failure(new OAuth2Error("invalid_token"));
             }

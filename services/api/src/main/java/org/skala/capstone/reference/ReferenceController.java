@@ -1,4 +1,6 @@
-package org.skala.capstone;
+package org.skala.capstone.reference;
+
+import org.skala.capstone.common.AgentClient;
 
 import com.fasterxml.jackson.databind.*;
 import java.io.IOException;

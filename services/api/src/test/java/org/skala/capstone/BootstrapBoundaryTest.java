@@ -1,5 +1,10 @@
 package org.skala.capstone;
 
+import org.skala.capstone.auth.SessionRepository;
+import org.skala.capstone.common.SecurityConfig;
+import org.skala.capstone.system.EnvironmentController;
+import org.skala.capstone.system.EnvironmentService;
+
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -24,7 +29,10 @@ class BootstrapBoundaryTest {
     private MockMvc mvc;
 
     @MockitoBean
-    private JdbcTemplate jdbc;
+    private SessionRepository sessions;
+
+    @MockitoBean
+    private EnvironmentService environment;
 
     @Test
     void internalApiRejectsMissingToken() throws Exception {
