@@ -19,6 +19,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 public class ReviewController {
     private final ReviewService reviews;
     private final ReviewAssetService assets;
+    private final AssetThumbnailService thumbnails;
     private final ViolationDecisionService decisions;
     private final ReviewViewAssembler views;
     private final ReviewEvents events;
@@ -27,12 +28,14 @@ public class ReviewController {
     public ReviewController(
             ReviewService reviews,
             ReviewAssetService assets,
+            AssetThumbnailService thumbnails,
             ViolationDecisionService decisions,
             ReviewViewAssembler views,
             ReviewEvents events,
             ObjectMapper json) {
         this.reviews = reviews;
         this.assets = assets;
+        this.thumbnails = thumbnails;
         this.decisions = decisions;
         this.views = views;
         this.events = events;
@@ -49,6 +52,13 @@ public class ReviewController {
         return views.view(jwt.getClaimAsString("tenantId"), id);
     }
 
+    /**
+     * 원본과 썸네일은 asset id마다 내용이 바뀌지 않으므로 브라우저에 하루 캐시를 허용한다. private이라 공용 캐시(CDN)에는 남지 않는다.
+     * 같은 브라우저에서는 로그아웃 뒤에도 하루 동안 캐시가 남을 수 있다.
+     */
+    private static final CacheControl IMMUTABLE_ASSET =
+            CacheControl.maxAge(java.time.Duration.ofDays(1)).cachePrivate();
+
     /** 위반 검토/리포트 화면에서 원본을 보여줄 때 쓴다. run-token 전용인 /internal 엔드포인트와 다른 경로다. */
     @GetMapping("/api/v1/reviews/{id}/assets/{assetId}")
     public ResponseEntity<byte[]> userAsset(
@@ -57,9 +67,22 @@ public class ReviewController {
             @PathVariable String assetId) {
         var asset = assets.readPersistedAsset(jwt.getClaimAsString("tenantId"), id, assetId);
         return ResponseEntity.ok()
-                .cacheControl(CacheControl.noStore())
+                .cacheControl(IMMUTABLE_ASSET)
                 .contentType(MediaType.parseMediaType(asset.mimeType()))
                 .body(asset.bytes());
+    }
+
+    /** 목록 화면 썸네일(너비 160px JPEG). 만들 수 없는 원본은 404 THUMBNAIL_UNAVAILABLE이다. */
+    @GetMapping("/api/v1/reviews/{id}/assets/{assetId}/thumbnail")
+    public ResponseEntity<byte[]> thumbnail(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable String id,
+            @PathVariable String assetId) {
+        byte[] image = thumbnails.thumbnail(jwt.getClaimAsString("tenantId"), id, assetId);
+        return ResponseEntity.ok()
+                .cacheControl(IMMUTABLE_ASSET)
+                .contentType(MediaType.IMAGE_JPEG)
+                .body(image);
     }
 
     @PostMapping(value = "/api/v1/reviews", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)

@@ -408,6 +408,14 @@ DB 장애 중에는 반환이 지연될 수 있으며, 즉시 반환을 보장�
 캐시 TTL 만료 후에도 DB 원본과 유효한 실행 토큰이 남아 있으면 조회할 수 있지만, 해당 버전이 분석 중(queued, analyzing)일 때만이다.
 실행이 끝난(done, failed) 버전은 토큰이 맞아도 410 `RUN_FINISHED`다. 실행 토큰 행은 지우지 않으므로 이 상태 검사가 접근 기간을 실행 중으로 제한한다.
 
+2026-10-22 목록 썸네일과 원본 캐시: `GET /api/v1/reviews/{id}/assets/{assetId}/thumbnail`은 너비 160px JPEG를 돌려준다.
+기업 범위는 원본 API와 같고(다른 기업이나 없는 asset은 404 `ASSET_NOT_FOUND`), 높이는 원본 위쪽만 240px까지 자른다.
+처음 요청 때 원본으로 만들어 `review_assets.thumbnail`에 저장하고 이후에는 저장본을 준다. 이미지는 위쪽 영역만 줄여 읽고,
+PDF는 PDFBox로 첫 쪽만 낮은 해상도로 그린다. WebP, CMYK JPEG, 손상이나 암호 걸린 파일처럼 만들 수 없으면 저장하지 않고
+404 `THUMBNAIL_UNAVAILABLE`이며 화면은 형식 아이콘으로 대신한다.
+사용자용 원본 API와 썸네일 API는 asset id마다 내용이 바뀌지 않아 `Cache-Control: max-age=86400, private`를 보낸다.
+private이라 CDN 같은 공용 캐시에는 남지 않지만, 같은 브라우저에서는 로그아웃 뒤에도 하루 동안 캐시가 남을 수 있다.
+
 입력 검증 변경: 파일 검증과 읽기를 DB 저장 및 크레딧 예약 전에 끝낸다. 잘못된 metadata JSON은
 400 `INVALID_METADATA`, 파일 읽기 실패는 400 `UPLOAD_READ_FAILED`로 반환한다.
 파일 수, 크기, 서명과 제품명 제한은 유지하며 입력 오류는 잔액 부족 검사보다 먼저 반환될 수 있다.
