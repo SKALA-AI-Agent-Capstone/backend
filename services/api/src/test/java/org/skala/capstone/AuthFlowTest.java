@@ -1,5 +1,8 @@
 package org.skala.capstone;
 
+import org.skala.capstone.auth.TokenService;
+import org.skala.capstone.common.AgentClient;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -70,16 +73,16 @@ class AuthFlowTest {
 
     static String setCookie(MockHttpServletResponse response) {
         return response.getHeaders(HttpHeaders.SET_COOKIE).stream()
-            .filter(h -> h.startsWith(AuthTokens.COOKIE + "=")).findFirst().orElse(null);
+            .filter(h -> h.startsWith(TokenService.COOKIE + "=")).findFirst().orElse(null);
     }
 
     static String refreshFrom(MockHttpServletResponse response) {
         String header = setCookie(response);
         if (header == null) return null;
-        return header.substring(AuthTokens.COOKIE.length() + 1, header.indexOf(';'));
+        return header.substring(TokenService.COOKIE.length() + 1, header.indexOf(';'));
     }
 
-    static Cookie cookie(String refresh) { return new Cookie(AuthTokens.COOKIE, refresh); }
+    static Cookie cookie(String refresh) { return new Cookie(TokenService.COOKIE, refresh); }
 
     Session signup(String email) throws Exception {
         return session(postJson("/api/v1/users/signup",
@@ -126,7 +129,7 @@ class AuthFlowTest {
         // DB에는 Refresh Token 원문이 아니라 SHA-256 해시만 남는다
         String raw = refreshFrom(response);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM app.refresh_tokens WHERE token_hash=?", Integer.class, raw)).isZero();
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM app.refresh_tokens WHERE token_hash=?", Integer.class, AuthTokens.hash(raw))).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM app.refresh_tokens WHERE token_hash=?", Integer.class, TokenService.hash(raw))).isEqualTo(1);
     }
 
     @Test
@@ -213,7 +216,7 @@ class AuthFlowTest {
         Session start = signup(email());
         String user = start.body().path("user").path("id").asText();
         Session next = session(refresh(start.refresh()).andExpect(status().isOk()));
-        jdbc.update("UPDATE app.refresh_tokens SET used_at=now()-interval '31 seconds' WHERE token_hash=?", AuthTokens.hash(start.refresh()));
+        jdbc.update("UPDATE app.refresh_tokens SET used_at=now()-interval '31 seconds' WHERE token_hash=?", TokenService.hash(start.refresh()));
 
         var response = refresh(start.refresh())
             .andExpect(status().isUnauthorized())
@@ -232,7 +235,7 @@ class AuthFlowTest {
 
         Session start = signup(email());
         String user = start.body().path("user").path("id").asText();
-        jdbc.update("UPDATE app.refresh_tokens SET expires_at=now()-interval '1 second' WHERE token_hash=?", AuthTokens.hash(start.refresh()));
+        jdbc.update("UPDATE app.refresh_tokens SET expires_at=now()-interval '1 second' WHERE token_hash=?", TokenService.hash(start.refresh()));
         var response = refresh(start.refresh())
             .andExpect(status().isUnauthorized())
             .andExpect(jsonPath("$.message").value("REFRESH_TOKEN_EXPIRED"))

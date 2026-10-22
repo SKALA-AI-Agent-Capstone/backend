@@ -1,5 +1,8 @@
 package org.skala.capstone;
 
+import org.skala.capstone.billing.CreditLedgerService;
+import org.skala.capstone.common.AgentClient;
+
 import com.fasterxml.jackson.databind.*;
 import com.fasterxml.jackson.databind.node.*;
 import java.nio.charset.StandardCharsets;
@@ -24,14 +27,14 @@ public class ReviewService implements AutoCloseable {
     final ObjectMapper json;
     final AgentClient agent;
     final ViolationService violations;
-    final ReviewCreditService credits;
+    final CreditLedgerService credits;
     final TransactionTemplate tx;
     final ReviewEvents events;
     final boolean queueEnabled;
     final ExecutorService jobs=new ThreadPoolExecutor(2,2,0,TimeUnit.SECONDS,new ArrayBlockingQueue<>(8),
         Thread.ofPlatform().name("review-job-",0).factory(),new ThreadPoolExecutor.AbortPolicy());
     public ReviewService(ReviewStore store,StringRedisTemplate cache,ObjectMapper json,AgentClient agent,ViolationService violations,
-        ReviewCreditService credits,TransactionTemplate tx,ReviewEvents events,@Value("${capstone.review.queue-enabled:false}")boolean queueEnabled){
+        CreditLedgerService credits,TransactionTemplate tx,ReviewEvents events,@Value("${capstone.review.queue-enabled:false}")boolean queueEnabled){
         this.store=store;this.cache=cache;this.json=json;this.agent=agent;this.violations=violations;this.credits=credits;
         this.tx=tx;this.events=events;this.queueEnabled=queueEnabled;
     }

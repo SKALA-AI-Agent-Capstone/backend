@@ -1,5 +1,7 @@
 package org.skala.capstone;
 
+import org.skala.capstone.common.AgentClient;
+
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 

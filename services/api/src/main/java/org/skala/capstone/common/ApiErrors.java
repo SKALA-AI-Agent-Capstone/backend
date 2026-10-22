@@ -1,4 +1,4 @@
-package org.skala.capstone;
+package org.skala.capstone.common;
 
 import java.util.Map;
 import org.springframework.http.ResponseEntity;

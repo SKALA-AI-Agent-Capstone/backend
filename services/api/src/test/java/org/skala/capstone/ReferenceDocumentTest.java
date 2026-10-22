@@ -1,5 +1,8 @@
 package org.skala.capstone;
 
+import org.skala.capstone.common.AgentClient;
+import org.skala.capstone.reference.ReferenceController;
+
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 

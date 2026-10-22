@@ -50,10 +50,14 @@ frontend/src/
   components/review/         원본 뷰어와 근거, 추출 확인
 
 backend/services/api/src/main/java/org/skala/capstone/
-  auth/                      사용자와 기업 권한
-  assets/                    업로드 검증, Redis와 asset 수명
-  reviews/                   작업, 광고 버전, 결과와 이력
-  events/                    진행 이벤트와 SSE
+  common/                    SecurityConfig, InternalTokenFilter, ApiErrors, AgentClient
+  auth/                      AuthController, AuthService, TokenService, 사용자와 세션 저장소
+    dto/                     SignupRequest, LoginRequest, TeamMemberRequest
+  billing/                   BillingController, BillingService, TossClient, CreditCatalog와 원장
+    dto/                     OrderRequest, TossConfirmRequest
+  reference/                 ReferenceController
+  system/                    EnvironmentController, EnvironmentService, SystemRepository
+  (루트의 리뷰 관련 클래스)    구조 정리 C에서 review와 violation으로 분리 예정
 
 ai_agent/services/agent/src/capstone_agent/
   nodes/                     입력, 주장, 검색, 대조, 초안, 승인과 리포트

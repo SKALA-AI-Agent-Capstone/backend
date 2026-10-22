@@ -1,4 +1,4 @@
-package org.skala.capstone;
+package org.skala.capstone.common;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -15,8 +15,8 @@ public class AgentClient {
      *  traceId는 실패한 실행의 LangSmith run id이며 추적이 꺼져 있으면 null이다. */
     public static class AgentFailure extends IllegalStateException {
         public final int status; public final String detail,traceId;
-        AgentFailure(int status,String detail){this(status,detail,null);}
-        AgentFailure(int status,String detail,String traceId){super("AGENT_UNAVAILABLE");this.status=status;this.detail=detail;this.traceId=traceId;}
+        public AgentFailure(int status,String detail){this(status,detail,null);}
+        public AgentFailure(int status,String detail,String traceId){super("AGENT_UNAVAILABLE");this.status=status;this.detail=detail;this.traceId=traceId;}
     }
     final ObjectMapper json;
     final String agentUrl,internalToken;

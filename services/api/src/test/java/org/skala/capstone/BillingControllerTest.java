@@ -1,5 +1,12 @@
 package org.skala.capstone;
 
+import org.skala.capstone.billing.BillingController;
+import org.skala.capstone.billing.BillingService;
+import org.skala.capstone.billing.CreditCatalog;
+import org.skala.capstone.billing.CreditRepository;
+import org.skala.capstone.billing.TossClient;
+import org.skala.capstone.billing.dto.OrderRequest;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -16,13 +23,17 @@ class BillingControllerTest {
     private final CreditCatalog catalog=mock(CreditCatalog.class);
     private final Jwt jwt=mock(Jwt.class);
 
+    private BillingController billing(String clientKey, String secretKey) {
+        return new BillingController(new BillingService(new CreditRepository(jdbc),catalog,
+            new TossClient(new ObjectMapper(),clientKey,secretKey),"http://127.0.0.1:5173/credits"));
+    }
+
     @Test void balanceReadsTheAuthenticatedMember() {
         when(jwt.getSubject()).thenReturn("00000000-0000-0000-0000-000000000002");
         when(jwt.getClaimAsString("tenantId")).thenReturn("00000000-0000-0000-0000-000000000001");
         when(jdbc.queryForObject(startsWith("SELECT credit_balance FROM app.users"), eq(Integer.class), any(Object[].class)))
             .thenReturn(100);
-        var billing=new BillingController(jdbc,catalog,new ObjectMapper(),"http://127.0.0.1:5173/credits",
-            "test_gck_example","test_gsk_example");
+        var billing=billing("test_gck_example","test_gsk_example");
         assertEquals(100,billing.balance(jwt).get("balance"));
         verify(jdbc).queryForObject(startsWith("SELECT credit_balance FROM app.users"),eq(Integer.class),
             eq("00000000-0000-0000-0000-000000000002"),eq("00000000-0000-0000-0000-000000000001"));
@@ -34,13 +45,12 @@ class BillingControllerTest {
         when(catalog.price(2000)).thenReturn(80000);
         when(catalog.price(100)).thenReturn(5000);
         when(catalog.price(200)).thenReturn(9500);
-        var billing=new BillingController(jdbc,catalog,new ObjectMapper(),"http://127.0.0.1:5173/credits",
-            "test_ck_example","test_sk_example");
-        var result=billing.order(jwt,new BillingController.OrderInput(2000,"toss"));
+        var billing=billing("test_ck_example","test_sk_example");
+        var result=billing.order(jwt,new OrderRequest(2000,"toss"));
         assertEquals(80000,result.get("amount"));
         assertEquals(2000,result.get("credits"));
-        assertEquals(5000,billing.order(jwt,new BillingController.OrderInput(100,"toss")).get("amount"));
-        assertEquals(9500,billing.order(jwt,new BillingController.OrderInput(200,"toss")).get("amount"));
+        assertEquals(5000,billing.order(jwt,new OrderRequest(100,"toss")).get("amount"));
+        assertEquals(9500,billing.order(jwt,new OrderRequest(200,"toss")).get("amount"));
         verify(jdbc,times(3)).update(startsWith("INSERT INTO app.credit_orders"),any(Object[].class));
     }
 
@@ -50,30 +60,27 @@ class BillingControllerTest {
         when(jwt.getClaimAsString("tenantId")).thenReturn("00000000-0000-0000-0000-000000000001");
         when(jwt.getSubject()).thenReturn("00000000-0000-0000-0000-000000000002");
         when(catalog.price(100)).thenReturn(5000);
-        var widget=new BillingController(jdbc,catalog,new ObjectMapper(),"http://127.0.0.1:5173/credits",
-            "test_gck_example","test_gsk_example");
+        var widget=billing("test_gck_example","test_gsk_example");
         assertEquals(true,widget.config().get("tossEnabled"));
-        assertEquals("window",widget.order(jwt,new BillingController.OrderInput(100,"toss")).get("tossMode"));
-        var mixed=new BillingController(jdbc,catalog,new ObjectMapper(),"http://127.0.0.1:5173/credits",
-            "test_gck_example","test_sk_example");
+        assertEquals("window",widget.order(jwt,new OrderRequest(100,"toss")).get("tossMode"));
+        var mixed=billing("test_gck_example","test_sk_example");
         assertEquals(false,mixed.config().get("tossEnabled"));
     }
 
     @Test void missingKeysCannotCreateChargeOrder() {
         when(catalog.price(100)).thenReturn(5000);
-        var billing=new BillingController(jdbc,catalog,new ObjectMapper(),"http://127.0.0.1:5173/credits","","");
+        var billing=billing("","");
         var error=assertThrows(ResponseStatusException.class,
-            () -> billing.order(jwt,new BillingController.OrderInput(100,"toss")));
+            () -> billing.order(jwt,new OrderRequest(100,"toss")));
         assertEquals(503,error.getStatusCode().value());
         verifyNoInteractions(jdbc);
     }
 
     @Test void cardAndKakaoOrdersAreRejected() {
-        var billing=new BillingController(jdbc,catalog,new ObjectMapper(),"http://127.0.0.1:5173/credits",
-            "test_gck_example","test_gsk_example");
+        var billing=billing("test_gck_example","test_gsk_example");
         for (String method : new String[] {"card", "kakao"}) {
             var error=assertThrows(ResponseStatusException.class,
-                () -> billing.order(jwt,new BillingController.OrderInput(100,method)));
+                () -> billing.order(jwt,new OrderRequest(100,method)));
             assertEquals(400,error.getStatusCode().value());
         }
         verifyNoInteractions(jdbc);
@@ -81,10 +88,9 @@ class BillingControllerTest {
 
     @Test void unsupportedPackageIsRejectedBeforeDatabaseWrite() {
         when(catalog.price(500)).thenReturn(null);
-        var billing=new BillingController(jdbc,catalog,new ObjectMapper(),"http://127.0.0.1:5173/credits",
-            "test_ck_example","test_sk_example");
+        var billing=billing("test_ck_example","test_sk_example");
         var error=assertThrows(ResponseStatusException.class,
-            () -> billing.order(jwt,new BillingController.OrderInput(500,"toss")));
+            () -> billing.order(jwt,new OrderRequest(500,"toss")));
         assertEquals(400,error.getStatusCode().value());
         verifyNoInteractions(jdbc);
     }
