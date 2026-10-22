@@ -84,7 +84,6 @@ services:
       KIPRIS_SERVICE_KEY: ${KIPRIS_SERVICE_KEY:-}
       KIPRIS_WORD_SEARCH_URL: ${KIPRIS_WORD_SEARCH_URL:-https://plus.kipris.or.kr/kipo-api/kipi/patUtiModInfoSearchSevice/getWordSearch}
       MFDS_GMP_URL: ${MFDS_GMP_URL:-}
-      MFDS_REGULATION_URL: ${MFDS_REGULATION_URL:-}
     ports:
       - "127.0.0.1:${BUSINESS_MCP_PORT:-8002}:8002"
     depends_on:
@@ -108,11 +107,14 @@ services:
       RAG_REGISTRY: /app/registry/reference-sources.json
       RAG_DATA_DIR: /app/data
       LAW_OC: ${LAW_OC:-}
-      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       RAG_EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:-text-embedding-3-small}
+      RAG_PDF_VISION_MODEL: ${RAG_PDF_VISION_MODEL:-gpt-5.4-mini}
+      RAG_PDF_AUTO_VERIFY: ${RAG_PDF_AUTO_VERIFY:-false}
+      RAG_PDF_QA_DIR: ${RAG_PDF_QA_DIR:-}
     volumes:
       - ./data:/app/data
+      - ./services/api/src/main/resources/reference-sources.json:/app/registry/reference-sources.json:ro
     restart: "no"
     depends_on:
       postgres:
