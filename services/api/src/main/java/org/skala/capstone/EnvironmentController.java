@@ -11,10 +11,8 @@ import java.util.Map;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -77,13 +75,5 @@ public class EnvironmentController {
             "service", "api", "contract_version", "0.1.0",
             "mode", "development-scaffold", "dependencies", dependencies
         );
-    }
-
-    @PostMapping("/api/reviews")
-    public ResponseEntity<Map<String, String>> reviewPlaceholder() {
-        return ResponseEntity.status(501).body(Map.of(
-            "code", "NOT_IMPLEMENTED",
-            "message", "Review submission is not implemented in the development scaffold."
-        ));
     }
 }

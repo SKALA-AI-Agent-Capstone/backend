@@ -74,12 +74,6 @@ public class ReviewController {
         if(value==null)throw new ResponseStatusException(HttpStatus.GONE,"ORIGINAL_EXPIRED_REUPLOAD_REQUIRED");
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).contentType(MediaType.parseMediaType(rows.getFirst().get("mime_type").toString())).body(Base64.getDecoder().decode(value));
     }
-    /** Earlier Agent builds report only finished steps here. */
-    @PostMapping("/internal/reviews/{id}/progress")
-    public Map<String,Boolean> progress(@PathVariable String id,@RequestHeader("X-Run-Token")String token,@RequestBody JsonNode body){
-        ObjectNode event=body.isObject()?((ObjectNode)body).deepCopy():store.mapper().createObjectNode();event.put("type","step_done");
-        return agentEvent(id,token,event);
-    }
     /** Agent progress events: step_done marks the stored step, and every event is relayed to open SSE streams. */
     @PostMapping("/internal/reviews/{id}/events")
     public Map<String,Boolean> agentEvent(@PathVariable String id,@RequestHeader("X-Run-Token")String token,@RequestBody ObjectNode body){

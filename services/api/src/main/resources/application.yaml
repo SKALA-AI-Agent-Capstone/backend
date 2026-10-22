@@ -1,5 +1,10 @@
 server:
   port: 8080
+  # 목록과 상세 JSON은 수백 KB까지 커진다. SSE(text/event-stream)는 이벤트가 늦게 도착하지 않게 압축하지 않는다.
+  compression:
+    enabled: true
+    mime-types: application/json,application/problem+json,text/plain
+    min-response-size: 1KB
 spring:
   servlet:
     multipart:
