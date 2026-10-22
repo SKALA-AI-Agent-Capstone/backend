@@ -12,14 +12,14 @@ search_regulations와 search_precedents다. 기존 기반의 이름을 목표 AP
 
 | 출처 | 경로 | 적재 단위 |
 | --- | --- | --- |
-| S05 화장품법 법률, 시행령, 시행규칙 | legalize-kr. GitHub가 막히면 법제처 API 현행본(lawapi:화장품법/*) | 조문 |
+| S05 화장품법 법률, 시행령, 시행규칙 | 법제처 API 현행본(lawapi:화장품법/법률, 시행령, 시행규칙). 2026-10-22 legalize-kr(GitHub) 경로 삭제 | 조문 |
 | S06 시행규칙 별표 5 | 법제처 API 법령 본문의 별표 | 호와 목 (별표 5 제2호 가목 등) |
 | S07 표시광고 실증 규정 | 법제처 API 행정규칙 | 조문, 별표는 표현별 행 |
 | S08 기능성화장품 심사 규정 | 법제처 API 행정규칙 | 조문과 별표 4 |
 | S09 표시광고법 | 법제처 API 법령 | 조문 |
 | S10 화장품 안전기준 등에 관한 규정 (신규) | 법제처 API 행정규칙 | 조문, 별표 1(사용 금지)과 별표 2(사용 제한) |
-| S01 관리 지침, S02 협회 기준, S03 시험방법 | PDF (없으면 공식 주소에서 내려받음) | 문서 자체의 제목(Ⅰ., 1., [별표]) 단위 |
-| S04 2026 지침과 위반사례 | PDF, 2~7쪽 rules, 8~27쪽 cases | 슬라이드. 사례 본문은 이미지라 제목 위주 |
+| S01 관리 지침, S02 협회 기준 | PDF (없으면 공식 주소에서 내려받음) | 제목 단위. S01 별표 1, 2는 표의 행과 비고도 별도 청크로 적재 |
+| S04 2026 지침과 위반사례 | PDF, 2~7쪽 rules, 8~27쪽 cases | 글자 추출이 빈약한 이미지 페이지는 비전 모델로 읽고, 불확실하면 좌우 확대 재시도. 계속 불확실한 페이지만 제외하고 경고를 남김 |
 
 ```sh
 uv run --all-packages --frozen python scripts/ingest_rag.py all      # 호스트에서 전체
@@ -29,6 +29,10 @@ docker compose run --rm rag-ingest                                   # 컨테이
 - compose를 올리면 rag-ingest가 한 번 돌고, knowledge.chunks가 비어 있을 때만 전체를 적재한다. LAW_OC가 있어야 법제처 경로가 동작한다.
 - 같은 문서를 다시 받으면 버전 전체의 시행 기간을 다시 계산한다. 검색은 검토일에 시행 중인 버전만 본다.
 - knowledge.article_links에 조문 사이의 인용, 위임(implements), 별표 연결을 저장한다. 인용 대상이 8개를 넘는 허브 조문(권한의 위임, 벌칙)은 뺀다.
+- S01 별표 1과 별표 2는 각각 원문 행으로 저장한다. 별표 1의 비고가 `[별표2] 1.` 같은 항목을 인용하면 검색 결과의 `related`에 별표 2 해당 번호의 실증 대상과 비고를 연결하고 Agent 판단 문맥에도 전달한다. 금지 표현 전체를 자동 예외나 적합으로 판정하지 않는다. 기존 S01 적재본에는 행 청크가 없으므로 `ingest_rag.py pdf`를 다시 실행해야 한다(`--if-empty` 없이).
+- 검수된 `data/curated/<ID>.md`가 원본 PDF 해시와 일치하면 우선 사용한다. 색인 범위 페이지의 30% 이상이 이미지 페이지인 PDF(S04 등)는 일치하는 MD가 없으면 모델로 읽지 않고 문서 전체를 적재에서 빼며, 배치 출력에 `PDF_NEEDS_CURATED_MD`(이미지 페이지 목록, 필요한 MD 경로)를 남긴다. 실제 모델 판독을 검수 MD와 비교했을 때 S04 이미지 페이지의 핵심 문구가 58%만 맞고 일부 오독이 통과했기 때문이다. 이미지가 적은 새 PDF를 MD 없이 자동 대조해 적재하려면 `RAG_PDF_AUTO_VERIFY=true`를 설정한다. 이미지 페이지를 전사한 뒤 원본 이미지를 다시 보고 오독을 수정한다. 모델이 `uncertain=false`라고 답해도 코드 검사(개정 전·후 열 분리와 빈 열, 두 판독 사이 숫자·단위 불일치, PDF 글자층 수치 누락, 별표·※·단서·제외 문구 누락, 18,000자 초과)에 걸리면 좌우 확대로 다시 읽고, 그래도 걸리면 그 페이지를 색인에서 제외한다. 모델이 고친 내용은 한 번 더 대조해 숫자·주석이 그대로일 때만 통과한다. 색인 범위(page_ranges) 밖 이미지 페이지는 모델에 보내지 않는다. 이 경로는 이미지 페이지당 3~6회의 유료 모델 호출이 발생할 수 있다.
+- 신뢰 수준은 페이지마다 구분한다. `human_verified`(사람이 `원본 이미지 대조 완료`로 표시, 표식 없음), `auto_verified`(모델 재대조와 코드 검사 통과, 본문에 `[이미지 자동 전사 - 모델 원본 재대조 통과, 사람 검수 전]`), `draft`(검수 전 초안, `[이미지 자동 전사 - 원본 대조 필요]`), `excluded`(색인 제외), `text`(PDF 글자층). 배치 출력의 `PDF_PAGE_TRUST` 줄에 문서별 페이지 목록이 나오고, 자동 대조 결과는 `RAG_PDF_QA_DIR`(기본 `data/pdf-qa/<ID>.<해시12자>.auto.json`)에 페이지별 신뢰 수준, 제외 사유, 모델 수정 기록으로 남는다. `data/curated`는 건드리지 않는다. `IMAGE_NOT_READ`는 글자가 많은 페이지의 큰 그림을 읽지 않았다는 뜻이다.
+- 같은 자동 대조 결과를 사람이 검토할 MD로 남기고 싶으면 ai_agent에서 `python scripts/curate_pdf.py ../backend/data/sources/S04.pdf`를 실행한다. 기존 MD는 `--force` 없이 덮어쓰지 않으며 `.qa.json`에 대조 문제와 불확실한 페이지를 기록한다. MD 생성은 RAG 적재에 필수가 아니다.
 
 ### 규칙표 (services/rag-mcp/src/capstone_rag_mcp/claim_rules.json)
 
@@ -71,6 +75,8 @@ attention=true인 상태는 담당자가 확인할 항목이다. 어떤 상태�
 
 ## 2026-10-20 수집 경로 변경
 
+> 2026-10-22: 화장품법, 시행령, 시행규칙도 법제처 API 현행본으로 옮기고 legalize-kr 경로, `ingest_rag.py legalize`, `--as-of`, GITHUB_TOKEN을 삭제했다. 과거 버전은 더 받지 않는다. 이미 적재된 legalize-kr 행은 다음 재적재 때 법제처 버전의 시행일 전날로 effective_until이 정리되어, 과거 검토일에만 보이고 같은 법령이 검색에 두 번 나오지 않는다. 이 절의 나머지는 2026-10-20 당시 기록이다.
+
 노션 참고자료 9건 중 화장품법은 [legalize-kr](https://github.com/legalize-kr/legalize-kr/tree/main/kr/%ED%99%94%EC%9E%A5%ED%92%88%EB%B2%95)에서, 나머지는 PDF로 적재한다.
 사용 API 4종은 색인하지 않고 business-mcp 도구로 두어 Agent가 필요할 때 고른다.
 각 출처의 경로는 reference-sources.json의 acquisition 필드가 원본이다.
@@ -79,14 +85,14 @@ attention=true인 상태는 담당자가 확인할 항목이다. 어떤 상태�
 | --- | --- | --- |
 | S05 화장품법 제13조, 제14조 | legalize-kr | 법률, 시행령, 시행규칙 세 파일 전체를 조문 단위로 적재 |
 | S06 시행규칙 별표 5 | legalize-kr + PDF | 시행규칙 조문은 legalize-kr, 별표 5 표 본문은 Markdown에 없어 PDF |
-| S01 관리 지침, S03 실증 시험방법 | PDF | 식약처 안내서 |
+| S01 관리 지침 | PDF | 식약처 안내서 |
 | S02 협회 광고자문 기준 | PDF | 협회 기준, 법령과 같은 효력으로 취급하지 않음 |
 | S04 2026 지침 및 위반사례 | PDF | 규정과 사례 페이지 범위(page_ranges)를 적기 전까지 적재하지 않음 |
 | S07 실증 규정, S08 기능성 심사 규정 | PDF | 식약처 고시. legalize-kr는 법률, 시행령, 시행규칙만 다룸 |
 | S09 표시광고법 제3조 | PDF | legalize-kr에도 있어 method만 바꾸면 전환 가능 |
 
 ```sh
-GITHUB_TOKEN=... uv run --all-packages --frozen python scripts/ingest_rag.py legalize   # 화장품법
+uv run --all-packages --frozen python scripts/ingest_rag.py lawapi                       # 화장품법과 고시 (LAW_OC 필요)
 uv run --all-packages --frozen python scripts/ingest_rag.py pdf                          # data/sources/S0x.pdf
 ```
 
@@ -95,6 +101,7 @@ uv run --all-packages --frozen python scripts/ingest_rag.py pdf                 
 - legalize-kr 본문은 공포본 기준이라, 부칙에서 시행일을 늦춘 일부 조문이 섞일 수 있다. 부칙과 조문별 시행일 처리는 후속이다.
 - legalize-kr는 force-push로 커밋 해시가 바뀔 수 있다고 공지한다. 버전 식별은 공포일자와 공포번호로 하고 해시는 storage_key의 참고값이다.
 - GitHub 비인증 API 한도는 시간당 60회다. GITHUB_TOKEN은 공개 읽기 권한이면 충분하며 .env에만 둔다.
+- 법령과 고시의 300자 이상 조문은 항·호 단위 자식 조각으로 저장한다(section `제14조 (…) ▸ 제3항`, 스키마 변경 없음). 검색은 자식으로 순위를 매기고 조문 전체를 부모로 돌려주며, 맞은 항·호를 결과의 item에 적는다. 규칙 조회, 조문 연결, 문서 원문은 자식을 합친 조문 단위로 읽는다. 조각 구성이 바뀌면 content_sha256이 바뀌어 다시 적재할 때 새 버전으로 들어간다(2026-10-22).
 - 검색은 임베딩이 없어도 문자 bigram 키워드 순위로 동작한다. RAG_EMBEDDING_MODEL(기본 text-embedding-3-small)로 임베딩하면 벡터 순위와 RRF로 합친다. `batch embed`가 이미 적재된 조각만 임베딩한다.
 
 ## RAG 연동 현황과 브랜치 간 통합 가이드 (2026-10-20 기준)
@@ -107,11 +114,11 @@ RAG 계약(packages/shared/src/capstone_shared/rag_contracts.py, contracts/searc
 
 | 구성 | 상태 | 확인 근거 |
 | --- | --- | --- |
-| 화장품법 적재 | 법률 4개 버전, 시행령 1개, 시행규칙 1개, 조문 315개 | 새 clone에서 ingest_rag.py legalize 실행 후 knowledge 행 수 |
+| 화장품법 적재 | 법률 4개 버전, 시행령 1개, 시행규칙 1개, 조문 315개 (2026-10-20 legalize-kr 기준 기록. 2026-10-22부터 법제처 API 현행본) | 새 clone에서 ingest_rag.py lawapi 실행 후 knowledge 행 수 |
 | rag-mcp search_regulations | 등록, 인증된 HTTP 호출로 FOUND 응답 | 아래 6번 확인 코드 |
 | rag-mcp search_precedents | 등록, 사례 미적재라 CORPUS_NOT_INDEXED | 같은 코드 |
 | v0.1 search_rules, search_cases, get_evidence | 2026-10-21 삭제 | 호출하던 곳 없음, docs/03-contracts.md 참고 |
-| business-mcp API 도구 4개 | verify_functional_approval, verify_patent, verify_gmp_company, lookup_ingredient_regulation | 키가 없으면 API_NOT_CONFIGURED |
+| business-mcp API 도구 3개 | verify_functional_approval, verify_patent, verify_gmp_company (lookup_ingredient_regulation은 2026-10-22 삭제) | 키가 없으면 API_NOT_CONFIGURED |
 | PDF 출처 8건 | 수집기만 있음, 원문 미적재 | ingest_rag.py pdf가 PDF_NOT_FOUND로 건너뜀 |
 
 ### 2. Agent와 화면 연결 (feat/rag-agent-connect에서 해결)
@@ -163,7 +170,7 @@ RegulationHit를 화면의 basis 형식(frontend shared/components/review/BasisI
 | original | excerpt | 저장 원문 그대로. 요약하거나 바꾸지 않음 |
 | plain | (없음) | 쉬운 설명은 Agent가 작성. RAG는 만들지 않음. 없으면 scope를 임시 표시 |
 | sourceType | (없음) | RegulationHit에 아직 없음. RAG가 source_type 필드를 추가할 예정(5번 계획 1) |
-| sourceUrl | source_url | legalize-kr 커밋 링크 또는 공식 페이지 |
+| sourceUrl | source_url | 법제처 법령 페이지 또는 출처 공식 페이지 |
 
 결과 수준 필드 제안: standardsSnapshot에는 hits의 (source, version, effective_from) 중복 제거 목록을,
 retrievalStatus에는 "connected"(한 번 이상 FOUND 또는 NO_RELEVANT_EVIDENCE), "error"(그 밖) 중 하나를 넣는다.
@@ -217,7 +224,7 @@ from capstone_shared.review_contracts import RunRequest, ResumeRequest, RewriteR
 | 순서 | 작업 | 산출물 | 다른 브랜치 영향 |
 | --- | --- | --- | --- |
 | 1 | RegulationHit에 source_type 추가 | 계약과 스키마 갱신 | Agent와 같은 PR에서 합의 (필드 추가만) |
-| 2 | S06 별표 5 PDF 확보와 적재, 이어서 S01, S02, S03, S07, S08, S09 | data/sources/S0x.pdf, knowledge 행 | 없음 (데이터만) |
+| 2 | S06 별표 5 PDF 확보와 적재, 이어서 S01, S02, S07, S08, S09 | data/sources/S0x.pdf, knowledge 행 | 없음 (데이터만) |
 | 3 | S04 규정과 사례 page_ranges 확정 | search_precedents 결과 생성 | 없음 |
 | 4 | 임베딩 모델 확정(text-embedding-3-small, 1024차원)과 적재, 완료 2026-10-21 | retrieval_mode=hybrid | keyword_score, vector_score 필드 추가 |
 | 5 | 평가셋: 검증표 예시 4개와 실제 화면 문구("지친 피부 시간을 되돌리는", "탄력 광채 안티에이징") | 기대 조문 정답표와 결과표 | 없음 |
@@ -230,7 +237,7 @@ from capstone_shared.review_contracts import RunRequest, ResumeRequest, RewriteR
 
 ```sh
 docker compose --profile web up --build -d --wait
-GITHUB_TOKEN=$(gh auth token) uv run --all-packages --frozen python scripts/ingest_rag.py legalize
+uv run --all-packages --frozen python scripts/ingest_rag.py lawapi
 ```
 
 ```python
