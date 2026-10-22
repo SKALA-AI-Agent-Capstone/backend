@@ -1141,6 +1141,69 @@ class ViolationFlowTest {
     }
 
     @Test
+    void thumbnailIsCreatedOnceStoredAndTenantScoped() throws Exception {
+        String id = review();
+        String assetId = UUID.randomUUID().toString();
+        java.awt.image.BufferedImage image =
+                new java.awt.image.BufferedImage(1200, 3000, java.awt.image.BufferedImage.TYPE_INT_RGB);
+        java.io.ByteArrayOutputStream encoded = new java.io.ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(image, "png", encoded);
+        byte[] png = encoded.toByteArray();
+        assetRepository.create(
+                assetId, id, 1, "ad.png", "image/png", "advertisement", "", png, ReviewAssetService.hash(png));
+        String path = "/api/v1/reviews/" + id + "/assets/" + assetId + "/thumbnail";
+
+        var first =
+                mvc.perform(get(path).with(as(AUTHOR)))
+                        .andExpect(status().isOk())
+                        .andExpect(header().string("Content-Type", "image/jpeg"))
+                        .andExpect(header().string("Cache-Control", "max-age=86400, private"))
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsByteArray();
+        assertThat(first.length).isLessThan(png.length);
+        byte[] stored =
+                jdbc.queryForObject(
+                        "SELECT thumbnail FROM app.review_assets WHERE id=CAST(? AS uuid)",
+                        byte[].class,
+                        assetId);
+        assertThat(stored).isEqualTo(first);
+
+        // 저장된 썸네일이 있으면 원본 없이도 그대로 돌려준다.
+        jdbc.update("UPDATE app.review_assets SET bytes=NULL WHERE id=CAST(? AS uuid)", assetId);
+        var again =
+                mvc.perform(get(path).with(as(REVIEWER)))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsByteArray();
+        assertThat(again).isEqualTo(first);
+
+        mvc.perform(get(path).with(as(OUTSIDER))).andExpect(status().isNotFound());
+        mvc.perform(get("/api/v1/reviews/" + id + "/assets/" + UUID.randomUUID() + "/thumbnail").with(as(AUTHOR)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message").value("ASSET_NOT_FOUND"));
+    }
+
+    @Test
+    void unreadableOriginalHasNoThumbnailAndStoresNothing() throws Exception {
+        String id = review();
+        String assetId = UUID.randomUUID().toString();
+        byte[] broken = {(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3, 4};
+        assetRepository.create(
+                assetId, id, 1, "ad.png", "image/png", "advertisement", "", broken, ReviewAssetService.hash(broken));
+        mvc.perform(get("/api/v1/reviews/" + id + "/assets/" + assetId + "/thumbnail").with(as(AUTHOR)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message").value("THUMBNAIL_UNAVAILABLE"));
+        assertThat(
+                        jdbc.queryForObject(
+                                "SELECT thumbnail IS NULL FROM app.review_assets WHERE id=CAST(? AS uuid)",
+                                Boolean.class,
+                                assetId))
+                .isTrue();
+    }
+
+    @Test
     void persistedOriginalAssetIsServedOnlyToOwningTenant() throws Exception {
         String id = review();
         String assetId = UUID.randomUUID().toString();
@@ -1159,6 +1222,7 @@ class ViolationFlowTest {
                 mvc.perform(get("/api/v1/reviews/" + id + "/assets/" + assetId).with(as(AUTHOR)))
                         .andExpect(status().isOk())
                         .andExpect(header().string("Content-Type", "image/png"))
+                        .andExpect(header().string("Cache-Control", "max-age=86400, private"))
                         .andReturn();
         assertThat(ok.getResponse().getContentAsByteArray()).isEqualTo(png);
 

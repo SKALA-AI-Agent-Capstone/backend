@@ -259,3 +259,9 @@ NFR-17~20도 재확인했다. 현재 비밀번호 해시와 세션 무효화, AP
 - 사람 다시쓰기 한도 M은 `capstone.review.human-rewrite-limit`(환경변수 HUMAN_REWRITE_LIMIT, 기본 3)이며 requested_by_human 행 수로 센다.
 - V5는 V4 이전 결과 중 최신 버전이 done인 review의 findings를 옮겼다.
 - V15는 끝나지 않은 승인 후 Agent 재개 작업(app.review_jobs kind=resume)을 `failed`(`REVIEW_APPROVAL_REMOVED`)로 닫는다. kind 컬럼과 제약은 이력으로 남긴다.
+
+## 2026-10-22 목록 썸네일
+
+V17은 `app.review_assets.thumbnail bytea`를 추가한다. 목록 화면 썸네일(너비 160px, 높이 240px까지의 JPEG)을
+첫 요청 때 원본으로 만들어 저장하며, 만들 수 없는 원본은 비워 둔다. 기존 행은 바꾸지 않고 따로 일괄 변환하지 않는다.
+썸네일은 원본과 같은 행에 있어 검토를 지우면 함께 지워진다.
