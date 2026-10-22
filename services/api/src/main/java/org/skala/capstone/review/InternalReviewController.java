@@ -26,6 +26,7 @@ public class InternalReviewController {
     @GetMapping("/internal/reviews/{id}/assets/{assetId}")
     public ResponseEntity<byte[]> asset(@PathVariable String id,@PathVariable String assetId,@RequestParam int versionNo,@RequestHeader("X-Run-Token")String token){
         authorizeRun(id,versionNo,token);
+        requireActiveRun(id,versionNo);
         var asset=assets.readRunAsset(id,versionNo,assetId);
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).contentType(MediaType.parseMediaType(asset.mimeType())).body(asset.bytes());
     }
@@ -49,6 +50,14 @@ public class InternalReviewController {
         }
         events.publishAfterCommit(id,no,type,data);
         return Map.of("ok",true);
+    }
+    /**
+     * 원본이 DB에 보존되고 실행 토큰은 지워지지 않으므로, 실행이 끝난 버전의 원본은 내주지 않는다.
+     * Agent와 Business MCP는 분석 중(queued, analyzing)에만 원본을 읽는다.
+     */
+    private void requireActiveRun(String id,int no){
+        var version=ReviewDocument.from(store.get(store.tenant(id),id)).version(no);
+        if(!version.status().running())throw new ResponseStatusException(HttpStatus.GONE,"RUN_FINISHED");
     }
     private void authorizeRun(String id,int no,String runToken){
         var rows=tokens.find(id,no);

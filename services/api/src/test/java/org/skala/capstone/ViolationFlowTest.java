@@ -665,6 +665,13 @@ class ViolationFlowTest {
                 .header("Authorization",internal).header("X-Run-Token",token)).andExpect(status().isForbidden());
         mvc.perform(get("/internal/reviews/"+id+"/assets/"+assetId).param("versionNo","1")
                 .header("Authorization",internal).header("X-Run-Token","wrong")).andExpect(status().isForbidden());
+        // 실행이 끝난 버전은 토큰이 맞아도 원본을 내주지 않는다(원본은 DB에 남고 토큰은 지워지지 않는다).
+        for(String finished:List.of("done","failed")){
+            jdbc.update("UPDATE app.reviews SET document=jsonb_set(document,'{versions,0,status}',to_jsonb(?::text)) WHERE id=CAST(? AS uuid)",finished,id);
+            mvc.perform(get("/internal/reviews/"+id+"/assets/"+assetId).param("versionNo","1")
+                    .header("Authorization",internal).header("X-Run-Token",token))
+                .andExpect(status().isGone()).andExpect(jsonPath("$.message").value("RUN_FINISHED"));
+        }
     }
 
     @Test
