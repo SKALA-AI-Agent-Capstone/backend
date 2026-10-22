@@ -68,7 +68,7 @@ class ViolationFlowTest {
     @Autowired org.skala.capstone.review.ReviewAssetService assets;
     @Autowired org.skala.capstone.review.RunTokenRepository tokens;
     @Autowired org.skala.capstone.auth.UserRepository users;
-    @Autowired org.skala.capstone.review.queue.JobRepository jobs;
+    @MockitoSpyBean org.skala.capstone.review.queue.JobRepository jobs;
     @Autowired org.skala.capstone.review.ReviewFailureService failures;
     @MockitoSpyBean org.skala.capstone.billing.CreditRepository creditRepository;
     @MockitoSpyBean org.skala.capstone.review.ReviewFailureRepository failureRepository;
@@ -120,7 +120,7 @@ class ViolationFlowTest {
     void zeroBalanceCannotStartReviewAndConcurrentReservationsCannotOverspend() throws Exception {
         jdbc.update("UPDATE app.users SET credit_balance=0 WHERE id=CAST(? AS uuid)",AUTHOR.id());
         int before=jdbc.queryForObject("SELECT count(*) FROM app.reviews WHERE author_id=CAST(? AS uuid)",Integer.class,AUTHOR.id());
-        var file=new MockMultipartFile("files","ad.png","image/png",new byte[]{1});
+        var file=new MockMultipartFile("files","ad.png","image/png",new byte[]{(byte)137,80,78,71,13,10,26,10,0});
         mvc.perform(multipart("/api/v1/reviews").file(file)
                 .param("metadata","{\"product\":{\"name\":\"검사\"}}")
                 .with(as(AUTHOR)))
@@ -188,16 +188,21 @@ class ViolationFlowTest {
     }
 
     @Test
-    void queuedSubmissionCommitsItsOutboxAndReservationEvenWhenRedisIsDown() {
+    void queuedSubmissionCommitsItsOutboxAndReservationEvenWhenRedisIsDown() throws Exception {
         jdbc.update("UPDATE app.users SET credit_balance=500 WHERE id=CAST(? AS uuid)", AUTHOR.id());
         @SuppressWarnings("unchecked") ValueOperations<String,String> values=mock(ValueOperations.class);
         when(redis.opsForValue()).thenReturn(values);
         doThrow(new RedisConnectionFailureException("synthetic Redis outage")).when(values)
             .set(anyString(),anyString(),any(java.time.Duration.class));
         var queued = new org.skala.capstone.review.ReviewService(reviewRepository, assets, tokens, users, jobs,
-            reviews, credits, json, true);
-        ObjectNode submitted = tx.execute(status -> queued.submit(authorJwt(), "{\"product\":{\"name\":\"검사\"}}",
-            List.of(validAd()), List.of()));
+            reviews, credits, json, tx, true);
+        var file=new MockMultipartFile("files","ad.png","image/png",validAd().getBytes()) {
+            @Override public byte[] getBytes() throws java.io.IOException {
+                assertThat(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                return super.getBytes();
+            }
+        };
+        ObjectNode submitted = queued.submit(authorJwt(), "{\"product\":{\"name\":\"검사\"}}", List.of(file), List.of());
         String id = submitted.path("id").asText();
         assertThat(balance()).isEqualTo(400);
         assertThat(chargeStatus(id)).isEqualTo("reserved");
@@ -207,6 +212,51 @@ class ViolationFlowTest {
         assertThat(jdbc.queryForObject("SELECT count(*) FROM app.review_assets WHERE review_id=CAST(? AS uuid)", Integer.class, id)).isEqualTo(1);
         verifyNoInteractions(agent);
         credits.release(id, 1);
+    }
+
+    @Test
+    void outboxWriteFailureRollsBackReservationAndOriginalWithoutPopulatingCache() {
+        jdbc.update("UPDATE app.users SET credit_balance=500 WHERE id=CAST(? AS uuid)",AUTHOR.id());
+        int before=jdbc.queryForObject("SELECT count(*) FROM app.reviews",Integer.class);
+        @SuppressWarnings("unchecked") ValueOperations<String,String> values=mock(ValueOperations.class);
+        when(redis.opsForValue()).thenReturn(values);
+        doThrow(new IllegalStateException("synthetic outbox failure")).when(jobs).create(anyString(),anyInt(),anyString());
+        var queued=new org.skala.capstone.review.ReviewService(reviewRepository,assets,tokens,users,jobs,reviews,credits,json,tx,true);
+        org.junit.jupiter.api.Assertions.assertThrows(org.springframework.web.server.ResponseStatusException.class,
+            () -> queued.submit(authorJwt(),"{\"product\":{\"name\":\"검사\"}}",List.of(validAd()),List.of()));
+        assertThat(balance()).isEqualTo(500);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM app.reviews",Integer.class)).isEqualTo(before);
+        verify(values,never()).set(anyString(),anyString(),any(java.time.Duration.class));
+        verifyNoInteractions(agent);
+    }
+
+    @Test
+    void invalidMetadataAndFileAreRejectedBeforeCreatingAReservation() throws Exception {
+        jdbc.update("UPDATE app.users SET credit_balance=500 WHERE id=CAST(? AS uuid)",AUTHOR.id());
+        int before=jdbc.queryForObject("SELECT count(*) FROM app.reviews",Integer.class);
+        mvc.perform(multipart("/api/v1/reviews").file(validAd()).param("metadata","{bad-json").with(as(AUTHOR)))
+            .andExpect(status().isBadRequest()).andExpect(jsonPath("$.message").value("INVALID_METADATA"));
+        mvc.perform(multipart("/api/v1/reviews").file(new MockMultipartFile("files","bad.png","image/png",new byte[]{1}))
+                .param("metadata","{\"product\":{\"name\":\"검사\"}}").with(as(AUTHOR)))
+            .andExpect(status().isUnsupportedMediaType());
+        assertThat(balance()).isEqualTo(500);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM app.reviews",Integer.class)).isEqualTo(before);
+    }
+
+    @Test
+    void lifecycleEventsArePublishedAfterCommitAndDiscardedOnRollback() {
+        String id=UUID.randomUUID().toString();
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,()->tx.executeWithoutResult(status->{
+            events.publishAfterCommit(id,1,"completed");
+            assertThat(events.replay(id)).isEmpty();
+            throw new IllegalStateException("synthetic rollback");
+        }));
+        assertThat(events.replay(id)).isEmpty();
+        tx.executeWithoutResult(status->{
+            events.publishAfterCommit(id,1,"completed");
+            assertThat(events.replay(id)).isEmpty();
+        });
+        assertThat(events.replay(id)).hasSize(1);
     }
 
     @Test

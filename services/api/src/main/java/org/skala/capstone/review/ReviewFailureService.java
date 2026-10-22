@@ -1,5 +1,7 @@
 package org.skala.capstone.review;
 
+import org.skala.capstone.review.model.ReviewDocument;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
 import org.skala.capstone.billing.CreditLedgerService;
@@ -45,11 +47,7 @@ public class ReviewFailureService {
         Boolean failed = tx.execute(status -> {
             boolean[] changed = {false};
             reviews.mutate(failure.tenant(), failure.reviewId(), doc -> {
-                var version = ReviewRepository.version(doc, failure.version());
-                // 먼저 정상 완료된 결과와 과금은 늦게 도착한 실패 요청이 덮어쓰지 않는다.
-                if ("done".equals(version.path("status").asText())) return;
-                version.put("status", "failed").put("error", failure.error());
-                changed[0] = true;
+                changed[0] = ReviewDocument.from(doc).version(failure.version()).fail(failure.error());
             });
             if (changed[0]) credits.settle(failure.reviewId(), failure.version(), false);
             failures.remove(failure);

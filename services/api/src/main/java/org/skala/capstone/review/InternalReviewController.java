@@ -1,5 +1,7 @@
 package org.skala.capstone.review;
 
+import org.skala.capstone.review.model.ReviewDocument;
+
 import com.fasterxml.jackson.databind.node.*;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -15,9 +17,10 @@ public class InternalReviewController {
     private final ReviewAssetService assets;
     private final RunTokenRepository tokens;
     private final ReviewEvents events;
+    private final com.fasterxml.jackson.databind.ObjectMapper json;
 
-    public InternalReviewController(ReviewRepository store,ReviewAssetService assets,RunTokenRepository tokens,ReviewEvents events) {
-        this.store=store;this.assets=assets;this.tokens=tokens;this.events=events;
+    public InternalReviewController(ReviewRepository store,ReviewAssetService assets,RunTokenRepository tokens,ReviewEvents events,com.fasterxml.jackson.databind.ObjectMapper json) {
+        this.store=store;this.assets=assets;this.tokens=tokens;this.events=events;this.json=json;
     }
 
     @GetMapping("/internal/reviews/{id}/assets/{assetId}")
@@ -32,11 +35,11 @@ public class InternalReviewController {
         int no=body.path("versionNo").asInt();authorizeRun(id,no,token);
         String type=body.path("type").asText();
         if(!ReviewEvents.AGENT_TYPES.contains(type))throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"INVALID_EVENT_TYPE");
-        ObjectNode data=store.mapper().createObjectNode();
+        ObjectNode data=json.createObjectNode();
         if(type.equals("step_done")){
             int step=body.path("step").asInt(-1);if(step<0||step>4)throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"INVALID_STEP");
             String tenant=store.tenant(id);
-            store.mutate(tenant,id,d->((ArrayNode)ReviewRepository.version(d,no).path("steps")).set(step,store.mapper().getNodeFactory().numberNode(100)));
+            store.mutate(tenant,id,d->ReviewDocument.from(d).version(no).completeStep(step));
             data.put("step",step);
         }else{
             String tool=body.path("tool").asText("");
@@ -44,7 +47,7 @@ public class InternalReviewController {
             data.put("tool",tool);
             if(type.equals("tool_finished"))data.put("ok",body.path("ok").asBoolean(true));
         }
-        events.publish(id,no,type,data);
+        events.publishAfterCommit(id,no,type,data);
         return Map.of("ok",true);
     }
     private void authorizeRun(String id,int no,String runToken){

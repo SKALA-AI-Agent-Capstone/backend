@@ -1,5 +1,7 @@
 package org.skala.capstone.review;
 
+import org.skala.capstone.review.model.ReviewDocument;
+
 import com.fasterxml.jackson.databind.*;
 import com.fasterxml.jackson.databind.node.*;
 import java.util.*;
@@ -67,9 +69,8 @@ public class ReviewController {
     public ResponseEntity<SseEmitter> events(@AuthenticationPrincipal Jwt jwt,@PathVariable String id,
         @RequestHeader(value="Last-Event-ID",required=false)String lastEventId){
         ObjectNode snapshot=views.view(jwt.getClaimAsString("tenantId"),id);
-        JsonNode latest=ReviewRepository.latest(snapshot);
         // 분석 중인 동안만 스트림을 연다.
-        boolean running=Set.of("queued","analyzing").contains(latest.path("status").asText());
+        boolean running=ReviewDocument.from(snapshot).latestVersion().status().running();
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).header("X-Accel-Buffering","no")
             .body(events.subscribe(id,snapshot,running,lastEventId));
     }

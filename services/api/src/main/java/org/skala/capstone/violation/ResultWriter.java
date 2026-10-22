@@ -1,5 +1,8 @@
 package org.skala.capstone.violation;
 
+import org.skala.capstone.review.model.ReviewDocument;
+import org.skala.capstone.review.model.AnalysisResult;
+
 import com.fasterxml.jackson.databind.*;
 import com.fasterxml.jackson.databind.node.*;
 import java.util.*;
@@ -20,7 +23,11 @@ public class ResultWriter {
         this.store=store;this.repository=repository;this.json=json;this.tx=tx;
     }
     public void saveResult(String tenant,String id,int no,JsonNode response){
-        ObjectNode result=response.path("result") instanceof ObjectNode o?o.deepCopy():json.createObjectNode();
+        saveResult(tenant,id,no,AnalysisResult.fromAgent(response));
+    }
+
+    public void saveResult(String tenant,String id,int no,AnalysisResult response){
+        ObjectNode result=response.snapshot();
         record Row(String id,String excerpt,String severity,List<String> rewrites){}
         List<Row> rows=new ArrayList<>();
         for(JsonNode f:result.path("findings")){
@@ -35,13 +42,9 @@ public class ResultWriter {
         tx.executeWithoutResult(status->{
             boolean[] latest={false};
             store.mutate(tenant,id,d->{
-                ObjectNode v=ReviewRepository.version(d,no);
-                if ("failed".equals(v.path("status").asText())) {
-                    throw new IllegalStateException("REVIEW_ALREADY_FAILED");
-                }
-                v.set("result",result);v.put("status","done");
-                v.set("steps",json.valueToTree(List.of(100,100,100,100,100)));
-                latest[0]=ReviewRepository.latest(d).path("no").asInt()==no;
+                ReviewDocument document=ReviewDocument.from(d);
+                document.version(no).complete(AnalysisResult.from(result));
+                latest[0]=document.latestVersion().number()==no;
             });
             if(!latest[0])return;
             repository.deleteForReview(id);

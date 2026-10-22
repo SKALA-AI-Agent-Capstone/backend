@@ -49,6 +49,23 @@ Agent 호출을 잠금 밖에서 수행하는 순서, 큐의 publisher confirm�
 `INVALID_EMAIL` 또는 중복 시 `EMAIL_EXISTS`를 반환한다.
 record DTO에서 누락되거나 null인 필수 문자열은 입력 오류로 처리한다.
 
+### 리뷰 상태와 장애 복구 보강 (2026-10-22)
+
+`review.model`의 ReviewDocument와 ReviewVersion은 JSONB의 예전 필드와 버전을 보존하면서
+상태 전이를 담당한다. ReviewStatus는 queued, analyzing, done, failed를 구분하고,
+AnalysisResult가 문구와 사진 모두 complete인 결과의 과금 가능 여부를 판단한다.
+완료되거나 실패한 버전은 다시 분석 중으로 바뀌지 않으며 실패한 버전에 늦게 도착한 결과도 저장하지 않는다.
+Agent 결과의 확장 필드는 JSON으로 유지하고 JPA나 DB 스키마 정규화로 전환하지 않는다.
+
+ReviewSubmission은 파일 수, 크기와 서명 검증 및 파일 읽기를 DB 트랜잭션 전에 끝낸 입력이다.
+ReviewService는 이후 TransactionTemplate 안에서 원본, 검토, 실행 토큰, 예약과 outbox를 함께 저장한다.
+Redis 쓰기는 커밋 후 보조 작업이고, 원본 조회는 실행 범위를 검사한 뒤 캐시 장애 시 DB로 대체한다.
+진행 및 완료 이벤트는 외부 트랜잭션에 참여한 경우에도 커밋 이후에만 발행한다.
+
+실패 의도는 V16의 review_failure_requests에 먼저 보존한다. ReviewFailureService는 실패 상태와
+예약 반환을 한 트랜잭션으로 정산하고 커밋 뒤 실패 이벤트를 발행한다. 실패 요청과 큐가 없는
+정체 예약은 60초마다 복구한다. DB 장애 중 반환 지연은 가능하며 복구를 통한 최종 반환을 목표로 한다.
+
 ```mermaid
 flowchart TB
   U[기업 작성자와 검토자] --> V[Vue 3, Vite, Pinia]

@@ -1,5 +1,9 @@
 package org.skala.capstone.review;
 
+import org.skala.capstone.review.model.ReviewStatus;
+import org.skala.capstone.review.model.ReviewDocument;
+import org.skala.capstone.review.model.AnalysisResult;
+
 import com.fasterxml.jackson.databind.*;
 import com.fasterxml.jackson.databind.node.*;
 import java.util.concurrent.*;
@@ -60,27 +64,20 @@ public class ReviewRunner implements AutoCloseable {
     }
     public void runQueued(JsonNode request)throws Exception{
         String tenant=request.path("tenantId").asText(),id=request.path("reviewId").asText();int no=request.path("versionNo").asInt();
-        store.mutate(tenant,id,d->{
-            var version=ReviewRepository.version(d,no);
-            if ("failed".equals(version.path("status").asText())) throw new IllegalStateException("REVIEW_ALREADY_FAILED");
-            version.put("status","analyzing");
-        });
-        events.publish(id,no,"started");
-        JsonNode response=callAgent("/internal/runs",request);
+        store.mutate(tenant,id,d->ReviewDocument.from(d).version(no).start());
+        events.publishAfterCommit(id,no,"started");
+        AnalysisResult response=AnalysisResult.fromAgent(callAgent("/internal/runs",request));
         tx.executeWithoutResult(status->{
             results.saveResult(tenant,id,no,response);
-            JsonNode pipeline=response.path("result").path("pipelineStatus");
-            // HTTP 200 alone is not a completed analysis: missing models and partial results are free.
-            credits.settle(id,no,"complete".equals(pipeline.path("text").asText())
-                && "complete".equals(pipeline.path("visual").asText()));
+            credits.settle(id,no,response.chargeable());
         });
         // 결과가 저장되면 바로 리포트다. 승인 대기가 없으므로 completed 하나로 스트림을 닫는다.
-        events.publish(id,no,"completed");
+        events.publishAfterCommit(id,no,"completed");
         try{assets.purge(id,no);}catch(Exception ignored){}
     }
     public boolean completed(String tenant,String id,int no){
         try{
-            if(!"done".equals(ReviewRepository.version(store.get(tenant,id),no).path("status").asText()))return false;
+            if(ReviewDocument.from(store.get(tenant,id)).version(no).status()!=ReviewStatus.DONE)return false;
             String status=credits.status(id,no);
             // A retained partial result is also terminal, with its reservation returned to the user.
             return "charged".equals(status) || "released".equals(status);
@@ -88,14 +85,14 @@ public class ReviewRunner implements AutoCloseable {
     }
     public boolean terminalFailure(String tenant,String id,int no){
         try{
-            if(!"failed".equals(ReviewRepository.version(store.get(tenant,id),no).path("status").asText()))return false;
+            if(ReviewDocument.from(store.get(tenant,id)).version(no).status()!=ReviewStatus.FAILED)return false;
             String status=credits.status(id,no);
             return "released".equals(status);
         }catch(Exception ignored){return false;}
     }
     /** The queue will run the job again; the browser keeps its stream and shows the retry. */
     public void retryScheduled(String id,int no,int attempt,int delaySeconds){
-        events.publish(id,no,"retry_scheduled",json.createObjectNode().put("attempt",attempt).put("delaySeconds",delaySeconds));
+        events.publishAfterCommit(id,no,"retry_scheduled",json.createObjectNode().put("attempt",attempt).put("delaySeconds",delaySeconds));
     }
     public JsonNode callAgent(String path,JsonNode body)throws Exception{return agent.post(path,body);}
     public void fail(String tenant,String id,int no,String error){

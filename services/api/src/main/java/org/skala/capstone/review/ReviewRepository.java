@@ -15,8 +15,7 @@ public class ReviewRepository {
     private final JdbcTemplate jdbc;
     private final ObjectMapper json;
     public ReviewRepository(JdbcTemplate jdbc,ObjectMapper json){this.jdbc=jdbc;this.json=json;}
-    public ObjectMapper mapper() { return json; }
-    public ObjectNode parse(String raw){try{return (ObjectNode)json.readTree(raw);}catch(Exception e){throw new IllegalStateException(e);}}
+    private ObjectNode parse(String raw){try{return (ObjectNode)json.readTree(raw);}catch(Exception e){throw new IllegalStateException(e);}}
     public ObjectNode get(String tenant,String id){
         var rows=jdbc.queryForList("SELECT document::text FROM app.reviews WHERE id=CAST(? AS uuid) AND tenant_id=CAST(? AS uuid)",id,tenant);
         if(rows.isEmpty())throw new ResponseStatusException(HttpStatus.NOT_FOUND,"REVIEW_NOT_FOUND");
@@ -35,11 +34,6 @@ public class ReviewRepository {
         jdbc.update("UPDATE app.reviews SET document=CAST(? AS jsonb),updated_at=now() WHERE id=CAST(? AS uuid)",doc.toString(),id);
         return doc;
     }
-    public static ObjectNode version(ObjectNode doc,int no){
-        for(JsonNode version:doc.withArray("versions"))if(version.path("no").asInt()==no)return (ObjectNode)version;
-        throw new ResponseStatusException(HttpStatus.NOT_FOUND,"VERSION_NOT_FOUND");
-    }
-    public static ObjectNode latest(ObjectNode doc){ArrayNode a=doc.withArray("versions");return (ObjectNode)a.get(a.size()-1);}
     public void create(String id,String tenant,String author,ObjectNode doc) {
         jdbc.update("INSERT INTO app.reviews(id,tenant_id,author_id,document) VALUES (CAST(? AS uuid),CAST(? AS uuid),CAST(? AS uuid),CAST(? AS jsonb))",
             id,tenant,author,doc.toString());

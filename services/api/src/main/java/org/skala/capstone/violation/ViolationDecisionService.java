@@ -1,5 +1,8 @@
 package org.skala.capstone.violation;
 
+import org.skala.capstone.review.model.ReviewStatus;
+import org.skala.capstone.review.model.ReviewDocument;
+
 import com.fasterxml.jackson.databind.*;
 import com.fasterxml.jackson.databind.node.*;
 import java.time.*;
@@ -42,7 +45,7 @@ public class ViolationDecisionService {
         if(!author.equals(jwt.getSubject()) && !Set.of("admin","reviewer").contains(jwt.getClaimAsString("role")))
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,"AUTHOR_OR_REVIEWER_REQUIRED");
         ObjectNode doc=store.get(tenant,id);
-        if(doc.withArray("versions").isEmpty() || !"done".equals(ReviewRepository.latest(doc).path("status").asText()))
+        if(doc.withArray("versions").isEmpty() || ReviewDocument.from(doc).latestVersion().status()!=ReviewStatus.DONE)
             throw new ResponseStatusException(HttpStatus.CONFLICT,"VERSION_NOT_READY");
         return new Locked(doc,author);
     }
@@ -69,14 +72,14 @@ public class ViolationDecisionService {
             String[] target=tx.execute(status->{
                 Locked review=lockOpenReview(jwt,id);
                 String excerpt=(String)lockViolation(id,violationId).get("text_excerpt");
-                for(JsonNode f:ReviewRepository.latest(review.doc()).path("result").path("findings"))
+                for(JsonNode f:ReviewDocument.from(review.doc()).latestVersion().result().snapshot().path("findings"))
                     if(violationId.equals(f.path("violationId").asText()))return new String[]{f.path("reason").asText(""),excerpt};
                 return new String[]{"",excerpt};
             });
             JsonNode verification;
             try{
                 // 원문도 함께 보내 원문의 규칙 표현이 남았는지, 새 주장이 들어갔는지까지 검사받는다.
-                verification=agent.post("/internal/rewrites/verify",store.mapper().createObjectNode()
+                verification=agent.post("/internal/rewrites/verify",json.createObjectNode()
                     .put("reviewId",id).put("tenantId",tenant).put("text",manualText).put("reason",target[0]).put("phrase",target[1]));
             }catch(AgentClient.AgentFailure failure){
                 if(failure.status==503 && "TEXT_MODEL_NOT_CONFIGURED".equals(failure.detail))
@@ -136,7 +139,7 @@ public class ViolationDecisionService {
             var violation=lockViolation(id,violationId);
             requireRetryLeft(violationId);
             JsonNode finding=json.createObjectNode();
-            for(JsonNode f:ReviewRepository.latest(review.doc()).path("result").path("findings"))
+            for(JsonNode f:ReviewDocument.from(review.doc()).latestVersion().result().snapshot().path("findings"))
                 if(violationId.equals(f.path("violationId").asText()))finding=f;
             ObjectNode c=json.createObjectNode().put("reviewId",id).put("tenantId",tenant)
                 .put("phrase",(String)violation.get("text_excerpt")).put("reason",finding.path("reason").asText(""))

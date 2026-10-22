@@ -1,5 +1,7 @@
 package org.skala.capstone.violation;
 
+import org.skala.capstone.review.model.ReviewDocument;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -50,7 +52,7 @@ public class ReviewViewAssembler {
         Map<String, Integer> order = new HashMap<>();
         if (!doc.withArray("versions").isEmpty()) {
             int index = 0;
-            for (JsonNode finding : ReviewRepository.latest(doc).path("result").path("findings")) {
+            for (JsonNode finding : ReviewDocument.from(doc).latestVersion().result().snapshot().path("findings")) {
                 String violationId = finding.path("violationId").asText("");
                 if (!violationId.isEmpty()) {
                     findingIds.put(violationId, finding.path("id").asText(null));

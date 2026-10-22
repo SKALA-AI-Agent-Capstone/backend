@@ -10,6 +10,8 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * Relays review progress to browsers over SSE (FR-8, NFR-1).
@@ -34,6 +36,19 @@ public class ReviewEvents {
     });
 
     public ReviewEvents(ObjectMapper json){this.json=json;}
+
+    public void publishAfterCommit(String reviewId,int versionNo,String type,ObjectNode extra){
+        ObjectNode data=extra==null?null:extra.deepCopy();
+        if(TransactionSynchronizationManager.isActualTransactionActive()){
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization(){
+                @Override public void afterCommit(){publish(reviewId,versionNo,type,data);}
+            });
+        }else publish(reviewId,versionNo,type,data);
+    }
+
+    public void publishAfterCommit(String reviewId,int versionNo,String type){
+        publishAfterCommit(reviewId,versionNo,type,null);
+    }
 
     /** Opens a stream. The caller has already checked that the review belongs to the user's tenant. */
     public SseEmitter subscribe(String reviewId,ObjectNode snapshot,boolean running,String lastEventId){
