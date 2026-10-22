@@ -238,17 +238,17 @@ NFR-17~20도 재확인했다. 현재 비밀번호 해시와 세션 무효화, AP
 현재 승인 이력은 검토 결과에 보존되지만 이력 삭제 후에도 남는 별도 감사 원장까지 구현된 것은 아니다.
 
 
-## 문구별 위반과 HITL 저장 규칙 (feat/violation-tables)
+## 문구별 위반 저장 규칙 (feat/violation-tables, 2026-10-22 검토 전체 승인 제거)
 
-- 원본: 문구별 위반은 `app.violations`와 `app.violation_rewrites`, review 전체 판단은 `app.reviews.hitl_status/hitl_comment/decided_by/decided_at`이다.
-- `reviews.document` JSONB는 분석 결과 원문(versions[].result)과 프론트 호환용 approval 사본을 계속 가진다. approval 사본은 프론트가 `hitl`을 읽도록 바뀌면 제거한다.
-- violations는 항상 최신 버전 하나만 가리킨다. 재검토 제출 시 이전 violations와 결정을 지우고 hitl_status를 pending으로 되돌린다. 이전 버전의 findings와 approval 이력은 JSONB versions에 남는다.
+2026-10-22 팀 결정으로 검토 전체 승인, 검토 완료 상태, 재검토를 없앴다. 아래 규칙 중 승인과 재검토에 관한 이전 내용은 지웠다.
+
+- 원본: 문구별 위반은 `app.violations`와 `app.violation_rewrites`다. 결정은 잠기지 않아 언제든 다시 바꿀 수 있다.
+- `app.reviews.hitl_status/hitl_comment/decided_by/decided_at` 컬럼과 이전 문서의 JSONB `approval`은 남아 있지만 읽거나 쓰지 않는다.
+  데이터를 지우는 마이그레이션은 팀이 확정한 뒤 별도로 한다. 새 버전 문서는 `approval`을 만들지 않는다.
+- 검토마다 버전은 1 하나다. 승인 제거 전에 만든 v2 이상 문서는 그대로 두며 violations는 최신 버전을 가리킨다.
 - Agent 결과 저장(ReviewService.execute)과 같은 트랜잭션에서 findings를 violations로 만든다. phrase가 비어 있는 finding은 건너뛴다.
   phrase는 text_excerpt, severity는 high/medium/low가 아니면 낮추지 않고 medium, rewrites의 비어 있지 않은 항목은 attempt_no 1..n(requested_by_human=false), 마지막 항목이 rewrite_suggestion이다.
   각 JSONB finding에는 `violationId`를 넣어 finding과 행을 연결한다.
-- 위반 0건 자동 승인(hitl_status=approved, decided_by NULL, decided_at=now)은 text와 visual 파이프라인이 모두 complete이고 사진 관찰도 0건일 때만 한다.
-  모델 키가 없거나 일부 실패해서 비어 있는 결과를 승인으로 만들지 않기 위해서다. 자동 승인 뒤 Agent에 approved resume을 보낸다.
 - 사람 다시쓰기 한도 M은 `capstone.review.human-rewrite-limit`(환경변수 HUMAN_REWRITE_LIMIT, 기본 3)이며 requested_by_human 행 수로 센다.
-- 모든 violation의 final_resolution이 정해져야 approved를 허용한다(앱 검증). rejected와 revision_requested는 미결정 문구가 있어도 허용한다.
-- V5는 V4 이전 결과 중 최신 버전이 done인 review의 findings를 옮긴다. hitl_status는 V4가 옮긴 값을 유지하고 과거 위반 0건 결과를 자동 승인하지 않는다.
-  따라서 V4 이전에 승인된 review에는 미결정 violation이 남을 수 있다.
+- V5는 V4 이전 결과 중 최신 버전이 done인 review의 findings를 옮겼다.
+- V15는 끝나지 않은 승인 후 Agent 재개 작업(app.review_jobs kind=resume)을 `failed`(`REVIEW_APPROVAL_REMOVED`)로 닫는다. kind 컬럼과 제약은 이력으로 남긴다.

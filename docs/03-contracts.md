@@ -310,15 +310,16 @@ GET /api/v1/reviews/{reviewId}/events, `text/event-stream`. 일반 JSON API와 �
 | step_done | Agent, 단계 완료(0 준비, 1 문구, 2 사진, 3 법령과 공식 조회, 4 결과 저장) | step |
 | tool_started, tool_finished | Agent, 법령 검색(legal_basis)과 business-mcp 도구 | tool, ok(끝날 때. 어댑터의 api_error와 미설정은 false) |
 | retry_scheduled | Spring 큐, 일시 실패 후 재시도 예약 | attempt, delaySeconds |
-| approval_required | Spring, 결과 저장 후 사람 승인이 필요할 때 | hitlStatus |
-| completed | Spring, 결과와 크레딧 정산 저장 후. 스트림을 닫는다 | hitlStatus(pending 또는 자동 승인 approved) |
+| completed | Spring, 결과와 크레딧 정산 저장 후. 결과가 곧 리포트다. 스트림을 닫는다 | |
 | failed | Spring, 최종 실패. 스트림을 닫는다 | error |
 
 15초마다 `:ping` 주석을 보낸다. Agent는 POST /internal/reviews/{id}/events(내부 토큰과 X-Run-Token)로 step_done, tool_started, tool_finished만 보낼 수 있다.
 옛 /internal/reviews/{id}/progress는 2026-10-22에 지웠다(호출하는 Agent 없음). 저장된 결과가 원본이며 이벤트는 보조 신호다.
 구독자와 재전송 버퍼는 API 프로세스 메모리에 있다. API를 여러 대로 늘리면 Redis pub/sub 같은 공유 채널이 필요하다.
 
-내부 /internal/runs와 /internal/runs/resume의 원본 모델은 packages/shared/src/capstone_shared/review_contracts.py,
+2026-10-22 승인을 없애면서 approval_required, resume_completed, resume_failed 이벤트도 없앴다.
+
+내부 /internal/runs의 원본 모델은 packages/shared/src/capstone_shared/review_contracts.py,
 JSON Schema는 contracts/mvp-*.schema.json이다. runToken은 서버 전용이고 모델 입력 및 checkpoint에 넣지 않는다.
 Business MCP의 structure_evidence는 실행 문맥을 서버 HTTP 헤더에서 받는 최소 구현이다.
 verify_functional_approval와 verify_patent는 실제 HTTP adapter와 설정/오류 처리를 추가했지만 승인키를 사용한 정상 응답 검증은 미완료다.
@@ -326,24 +327,28 @@ MFDS_REPORT_URL은 공식 getRptPrdlstInq01 경로를 기본값으로 제공한�
 match_product_claims와 match_patent_claims, 두 목표 RAG 검색은 이번 최소 기능에서 구현하지 않았다.
 
 
-### 문구별 위반과 HITL 결정 (feat/violation-tables)
+### 문구별 위반과 결정 (feat/violation-tables, 2026-10-22 검토 전체 승인 제거)
+
+2026-10-22 팀 결정으로 검토 전체 승인(승인, 수정 요청, 반려), 검토 완료 상태, 재검토(같은 검토에 새 버전 올리기)를 없앴다.
+분석이 끝나면 결과가 바로 리포트이고, 사람은 문구마다 원문 유지, 수정안 채택, 직접 수정, 다시쓰기를 그때그때 한다.
+`POST /api/v1/reviews/{id}/decision`, `POST /api/v1/reviews/{id}/re-review`는 없다(404). 수정한 광고는 새 검토로 올린다.
 
 저장 원본과 규칙은 docs/04-data.md의 문구별 위반과 HITL 저장 규칙 절을 따른다. 모든 경로는 JWT의 tenantId로 review를 찾으므로 다른 기업의 review와 violation은 404다.
 review id와 violation id가 UUID가 아니면 400 `INVALID_REQUEST`, violation이 해당 review에 없으면 404 `VIOLATION_NOT_FOUND`다.
 
-GET /api/v1/reviews/{reviewId} (POST 생성과 재검토, 결정 API의 응답도 같은 형태) 기존 review 문서에 두 필드를 더한다.
+GET /api/v1/reviews/{reviewId} (POST 생성과 문구 결정 API의 응답도 같은 형태) 기존 review 문서에 두 필드를 더한다.
 
-- `hitl`: status(pending, approved, rejected, revision_requested), comment, decidedBy, decidedByName, decidedAt, autoApproved(위반 0건 자동 승인),
-  violationCount, undecidedCount, canApprove(최신 버전 done, pending, 미결정 0건).
+- `hitl`: violationCount, undecidedCount. 리포트 하단 "확인 문구 N건 중 M건 결정" 진행률이며, 모두 결정해도 따로 완료 상태는 없다.
 - `violations[]`: 최신 버전 finding 순서. id, findingId(JSONB finding id), textExcerpt, severity, rewriteSuggestion, rewriteAttemptCount,
   humanRetryCount, humanRetryLimit, finalResolution(kept, rewritten, rewritten_manual 또는 null), finalText, finalTextValidated, decidedBy, decidedByName, decidedAt,
   rewrites[](attemptNo, text, requestedByHuman, retryNote, createdAt).
 - 최신 버전 `result.findings[]`의 각 항목에도 `violationId`가 있다.
 
-GET /api/v1/reviews 목록의 각 review에는 `hitl`(canApprove 제외)만 더한다.
+GET /api/v1/reviews 목록의 각 review에도 같은 `hitl`을 더한다(violations는 싣지 않는다).
+새로 만든 버전 문서에는 `approval`이 없다. 승인 제거 전에 저장된 문서의 `approval`과 app.reviews.hitl_* 컬럼은 남아 있지만 읽거나 쓰지 않는다.
 
-POST /api/v1/reviews/{reviewId}/violations/{violationId}/decision: 작성자, reviewer, admin. review가 pending이고 최신 버전이 done이어야 한다(409 `VERSION_NOT_READY`, `ALREADY_DECIDED`).
-review가 결정되기 전에는 다시 보내 결정을 바꿀 수 있다.
+POST /api/v1/reviews/{reviewId}/violations/{violationId}/decision: 작성자, reviewer, admin. 최신 버전이 done이어야 한다(409 `VERSION_NOT_READY`).
+결정은 잠기지 않아 언제든 다시 보내 바꿀 수 있다.
 
 - `{"resolution":"kept"}`: finalText=원문.
 - `{"resolution":"rewritten","attemptNo":2}`: 해당 시도의 문안. attemptNo가 없으면 최신 rewriteSuggestion. 제안이 없으면 409 `NO_REWRITE_SUGGESTION`, 없는 시도는 404 `REWRITE_ATTEMPT_NOT_FOUND`.
@@ -358,23 +363,9 @@ POST /api/v1/reviews/{reviewId}/violations/{violationId}/rewrite-requests `{"ret
 성공하면 requested_by_human=true인 새 시도가 추가되고 rewriteSuggestion이 바뀐다. 기존 문구 결정은 유지한다.
 Agent 모델 키가 없으면 503 `REWRITE_MODEL_NOT_CONFIGURED`, Agent 연결 실패는 503 `AGENT_UNAVAILABLE`, 생성 실패는 502 `REWRITE_FAILED`이며 이때는 저장하지 않는다.
 
-POST /api/v1/reviews/{reviewId}/decision `{"versionNo":1,"state":"approved|rejected|changes_requested|revision_requested","comment":"..."}`: reviewer와 admin.
-changes_requested는 revision_requested로 저장한다. approved는 모든 violation이 결정된 뒤에만 가능하며 아니면 409 `VIOLATIONS_UNDECIDED`.
-이미 결정되었거나 자동 승인된 review는 409 `ALREADY_DECIDED`. 결정은 app.reviews.hitl_*에 저장하고, 프론트 호환을 위해 최신 버전 JSONB approval(state는 기존 값 changes_requested 유지)과 history에도 같이 남긴다.
-Agent resume 계약(contracts/mvp-agent-resume.input.schema.json)은 바꾸지 않았고 changes_requested로 전달한다.
-
-### 결정 후 Agent 재개 작업 (feat/resume-job-queue)
-
-- 수동 결정(decision API)과 위반 0건 자동 승인 모두 결정 저장과 같은 트랜잭션에 `app.review_jobs`의 `kind='resume'` 행을 기록한다(V14).
-  작업 키는 (review_id, version_no, kind)이고 request는 reviewId, tenantId, versionNo, state다. 승인 API는 Agent를 기다리지 않고 `agentResume=pending`으로 응답한다.
-- 메시지 본문은 `reviewId:versionNo:kind`다. kind가 없는 예전 메시지는 분석(run)으로 읽는다.
-- 재개는 60초 타임아웃으로 /internal/runs/resume을 부른다. 연결 실패, 5xx, 429는 최대 5회(5초, 30초, 2분 간격) 재시도한다.
-  404 `CHECKPOINT_NOT_FOUND`와 그 밖의 4xx는 바로 실패다. 실패하면 `agentResume=failed`, `agentResumeError`를 남기고 메시지는 DLQ로 간다.
-- 재개 실패는 크레딧 반환이나 버전 실패 처리를 하지 않는다. 크레딧은 분석 결과 저장 때 이미 정산된다.
-- 3분 넘게 running인 재개 작업은 agentResume을 확인해 done 또는 retry로 되돌린다.
-- Agent는 thread id의 PostgreSQL advisory lock 안에서 재개한다. 같은 재개가 겹쳐 와도 한 번만 이어서 실행하고 나머지는 `alreadyResumed`로 답한다.
-- 재개가 끝나면 SSE로 `resume_completed` 또는 `resume_failed`(error)를 보낸다. agentResume이 pending인 리뷰는 이 이벤트까지 스트림을 연다.
-- 큐를 끈 개발 모드는 커밋 뒤 한 번 직접 호출하며 재시도는 없다.
+검토 전체 결정 API와 결정 후 Agent 재개 작업(app.review_jobs kind=resume, /internal/runs/resume 호출)은 2026-10-22에 없앴다.
+V15가 끝나지 않은 재개 작업을 `failed`(`REVIEW_APPROVAL_REMOVED`)로 닫았고, 브로커에 남은 재개 메시지는 실행하지 않고 DLQ로 보낸다.
+Agent 그래프의 승인 대기(interrupt)와 /internal/runs/resume은 ai_agent에 남아 있지만 Backend는 더 이상 부르지 않는다. 승인 노드 뒤 report 노드는 하는 일이 없어 기능 영향은 없다.
 
 Agent 내부 POST /internal/rewrites: 입력 contracts/mvp-agent-rewrite.input.schema.json(reviewId, tenantId, phrase, reason, claimType, previousRewrites, retryNote),
 출력 mvp-agent-rewrite.output.schema.json(text). 내부 토큰 필수. 모델 키가 없으면 503 `TEXT_MODEL_NOT_CONFIGURED`, 공급자 실패는 502.

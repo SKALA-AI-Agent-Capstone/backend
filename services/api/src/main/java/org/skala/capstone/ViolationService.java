@@ -9,15 +9,13 @@ import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
- * 문구별 위반(app.violations, app.violation_rewrites)과 review 전체 HITL 결정(app.reviews.hitl_*)의 원본.
- * reviews.document JSONB는 분석 결과 원문과 프론트 호환용 approval 사본만 유지한다.
- * 재검토 버전 구조가 없으므로 violations는 항상 "최신 버전" 결과만 가리킨다.
+ * 문구별 위반(app.violations, app.violation_rewrites)의 원본. 검토 전체 승인과 재검토는 2026-10-22에 없앴다.
+ * 결과는 분석이 끝나면 바로 리포트로 보이고, 사람은 문구마다 원문 유지, 수정안 채택, 직접 수정, 다시쓰기를 그때그때 한다.
+ * reviews.hitl_* 컬럼은 남아 있지만 더 이상 읽거나 쓰지 않는다.
  */
 @Service
 public class ViolationService {
@@ -28,14 +26,9 @@ public class ViolationService {
     final AgentClient agent;
     final TransactionTemplate tx;
     final int humanRewriteLimit;
-    final ReviewEvents events;
-    final boolean queueEnabled;
-    static final Duration RESUME_TIMEOUT=Duration.ofSeconds(60);
-    public ViolationService(ReviewStore store,AgentClient agent,TransactionTemplate tx,ReviewEvents events,
-        @Value("${capstone.review.human-rewrite-limit:3}")int humanRewriteLimit,
-        @Value("${capstone.review.queue-enabled:false}")boolean queueEnabled){
+    public ViolationService(ReviewStore store,AgentClient agent,TransactionTemplate tx,
+        @Value("${capstone.review.human-rewrite-limit:3}")int humanRewriteLimit){
         this.store=store;this.jdbc=store.jdbc();this.json=store.mapper();this.agent=agent;this.tx=tx;this.humanRewriteLimit=humanRewriteLimit;
-        this.events=events;this.queueEnabled=queueEnabled;
     }
 
     // ---------- Agent 결과 저장 ----------
@@ -43,9 +36,8 @@ public class ViolationService {
     /**
      * Agent 결과를 버전에 저장하고, 최신 버전이면 findings를 violations로 교체한다.
      * 각 finding에는 violationId를 넣어 프론트가 JSONB finding과 행을 연결할 수 있게 한다.
-     * @return 위반 후보 0건 자동 승인이 일어났으면 true. 그때 Agent 재개 작업도 같은 트랜잭션에 기록한다.
      */
-    public boolean saveResult(String tenant,String id,int no,JsonNode response){
+    public void saveResult(String tenant,String id,int no,JsonNode response){
         ObjectNode result=response.path("result") instanceof ObjectNode o?o.deepCopy():json.createObjectNode();
         record Row(String id,String excerpt,String severity,List<String> rewrites){}
         List<Row> rows=new ArrayList<>();
@@ -58,21 +50,15 @@ public class ViolationService {
             for(JsonNode r:f.path("rewrites"))if(!r.asText("").isBlank())rewrites.add(r.asText());
             rows.add(new Row(violationId,phrase,severity(f.path("severity").asText("")),rewrites));
         }
-        boolean auto=rows.isEmpty() && cleanResult(result);
-        return Boolean.TRUE.equals(tx.execute(status->{
+        tx.executeWithoutResult(status->{
             boolean[] latest={false};
             store.mutate(tenant,id,d->{
                 ObjectNode v=ReviewStore.version(d,no);
                 v.set("result",result);v.put("status","done");
                 v.set("steps",json.valueToTree(List.of(100,100,100,100,100)));
                 latest[0]=ReviewStore.latest(d).path("no").asInt()==no;
-                if(latest[0] && auto){
-                    ObjectNode approval=(ObjectNode)v.path("approval");approval.put("state","approved").put("agentResume","pending");
-                    approval.withArray("history").add(json.createObjectNode().put("action","approved").put("by","system").put("role","system")
-                        .put("comment","위반 후보 0건 자동 승인").put("at",Instant.now().toString()));
-                }
             });
-            if(!latest[0])return false;
+            if(!latest[0])return;
             jdbc.update("DELETE FROM app.violations WHERE review_id=CAST(? AS uuid)",id);
             for(Row row:rows){
                 String suggestion=row.rewrites().isEmpty()?null:row.rewrites().getLast();
@@ -82,40 +68,13 @@ public class ViolationService {
                     jdbc.update("INSERT INTO app.violation_rewrites(id,violation_id,attempt_no,text,requested_by_human) VALUES (CAST(? AS uuid),CAST(? AS uuid),?,?,false)",
                         UUID.randomUUID().toString(),row.id(),i+1,row.rewrites().get(i));
             }
-            if(auto){
-                jdbc.update("UPDATE app.reviews SET hitl_status='approved',hitl_comment=NULL,decided_by=NULL,decided_at=now() WHERE id=CAST(? AS uuid)",id);
-                enqueueResume(tenant,id,no,"approved");
-            }
-            else resetDecision(id);
-            return auto;
-        }));
+        });
     }
 
     /** Agent severity가 허용값이 아니면 낮추지 않고 medium으로 둔다. */
     static String severity(String raw){
         String value=raw.toLowerCase(Locale.ROOT).trim();
         return SEVERITIES.contains(value)?value:"medium";
-    }
-
-    /**
-     * 자동 승인은 위반 0건이 "검토를 실제로 끝낸 결과"일 때만 한다.
-     * 모델 키 없음이나 부분 실패로 findings가 비면 사람이 판단해야 하므로 pending으로 둔다.
-     * 사진 관찰은 violations로 정규화하지 않지만, 하나라도 있으면 사람이 봐야 하므로 자동 승인하지 않는다.
-     */
-    static boolean cleanResult(JsonNode result){
-        JsonNode pipeline=result.path("pipelineStatus");
-        return result.path("findings").isArray() && "complete".equals(pipeline.path("text").asText())
-            && "complete".equals(pipeline.path("visual").asText())
-            && result.path("visualFindings").isArray() && result.path("visualFindings").isEmpty();
-    }
-
-    /** 재검토 제출 시 이전 버전의 문구와 결정을 비운다. 이전 버전 결과 원문은 JSONB versions에 남는다. */
-    public void resetForNewVersion(String id){
-        jdbc.update("DELETE FROM app.violations WHERE review_id=CAST(? AS uuid)",id);
-        resetDecision(id);
-    }
-    void resetDecision(String id){
-        jdbc.update("UPDATE app.reviews SET hitl_status='pending',hitl_comment=NULL,decided_by=NULL,decided_at=NULL WHERE id=CAST(? AS uuid)",id);
     }
 
     // ---------- 조회 ----------
@@ -130,12 +89,11 @@ public class ViolationService {
     public List<ObjectNode> list(String tenant){
         Map<String,ObjectNode> hitl=new HashMap<>();
         jdbc.query("""
-            SELECT r.id::text,r.hitl_status,r.hitl_comment,r.decided_by::text,u.name,r.decided_at,
+            SELECT r.id::text,
               (SELECT count(*) FROM app.violations v WHERE v.review_id=r.id),
               (SELECT count(*) FROM app.violations v WHERE v.review_id=r.id AND v.final_resolution IS NULL)
-            FROM app.reviews r LEFT JOIN app.users u ON u.id=r.decided_by WHERE r.tenant_id=CAST(? AS uuid)""",
-            rs->{hitl.put(rs.getString(1),hitlNode(rs.getString(2),rs.getString(3),rs.getString(4),rs.getString(5),
-                rs.getObject(6,OffsetDateTime.class),rs.getInt(7),rs.getInt(8)));},tenant);
+            FROM app.reviews r WHERE r.tenant_id=CAST(? AS uuid)""",
+            rs->{hitl.put(rs.getString(1),hitlNode(rs.getInt(2),rs.getInt(3)));},tenant);
         List<ObjectNode> docs=store.list(tenant);
         for(ObjectNode doc:docs){ObjectNode h=hitl.get(doc.path("id").asText());if(h!=null)doc.set("hitl",h);}
         return docs;
@@ -180,32 +138,23 @@ public class ViolationService {
         violations.sort(Comparator.comparing(v->order.getOrDefault(v.path("id").asText(),Integer.MAX_VALUE)));
         doc.set("violations",json.valueToTree(violations));
         int undecided=(int)violations.stream().filter(v->v.path("finalResolution").isNull()).count();
-        var r=jdbc.queryForMap("""
-            SELECT r.hitl_status,r.hitl_comment,r.decided_by::text AS decided_by,u.name,r.decided_at
-            FROM app.reviews r LEFT JOIN app.users u ON u.id=r.decided_by WHERE r.id=CAST(? AS uuid)""",id);
-        OffsetDateTime decidedAt=r.get("decided_at") instanceof java.sql.Timestamp t?t.toInstant().atOffset(ZoneOffset.UTC):null;
-        ObjectNode hitl=hitlNode((String)r.get("hitl_status"),(String)r.get("hitl_comment"),(String)r.get("decided_by"),(String)r.get("name"),
-            decidedAt,violations.size(),undecided);
-        boolean ready=!versions.isEmpty() && "done".equals(ReviewStore.latest(doc).path("status").asText());
-        hitl.put("canApprove",ready && "pending".equals(hitl.path("status").asText()) && undecided==0);
-        doc.set("hitl",hitl);
+        doc.set("hitl",hitlNode(violations.size(),undecided));
     }
 
-    ObjectNode hitlNode(String status,String comment,String decidedBy,String name,OffsetDateTime at,int total,int undecided){
-        return json.createObjectNode().put("status",status).put("comment",comment).put("decidedBy",decidedBy).put("decidedByName",name)
-            .put("decidedAt",iso(at)).put("autoApproved","approved".equals(status) && decidedBy==null)
-            .put("violationCount",total).put("undecidedCount",undecided);
+    /** 리포트 하단의 "확인 문구 N건 중 M건 결정" 진행률. 결정이 끝나도 따로 완료 상태는 없다. */
+    ObjectNode hitlNode(int total,int undecided){
+        return json.createObjectNode().put("violationCount",total).put("undecidedCount",undecided);
     }
     static String iso(OffsetDateTime at){return at==null?null:at.toInstant().toString();}
 
     // ---------- 문구별 결정 ----------
 
-    record Locked(ObjectNode doc,String authorId,String hitlStatus){}
+    record Locked(ObjectNode doc,String authorId){}
 
-    /** 같은 기업의 review를 잠그고, 문구 결정이 가능한 상태인지 검사한다. */
+    /** 같은 기업의 review를 잠그고, 분석이 끝나 문구를 고칠 수 있는 상태인지 검사한다. */
     Locked lockOpenReview(Jwt jwt,String id){
         String tenant=jwt.getClaimAsString("tenantId");
-        var rows=jdbc.queryForList("SELECT author_id::text AS author_id,hitl_status FROM app.reviews WHERE id=CAST(? AS uuid) AND tenant_id=CAST(? AS uuid) FOR UPDATE",id,tenant);
+        var rows=jdbc.queryForList("SELECT author_id::text AS author_id FROM app.reviews WHERE id=CAST(? AS uuid) AND tenant_id=CAST(? AS uuid) FOR UPDATE",id,tenant);
         if(rows.isEmpty())throw new ResponseStatusException(HttpStatus.NOT_FOUND,"REVIEW_NOT_FOUND");
         String author=(String)rows.getFirst().get("author_id");
         if(!author.equals(jwt.getSubject()) && !Set.of("admin","reviewer").contains(jwt.getClaimAsString("role")))
@@ -213,9 +162,7 @@ public class ViolationService {
         ObjectNode doc=store.get(tenant,id);
         if(doc.withArray("versions").isEmpty() || !"done".equals(ReviewStore.latest(doc).path("status").asText()))
             throw new ResponseStatusException(HttpStatus.CONFLICT,"VERSION_NOT_READY");
-        String hitl=(String)rows.getFirst().get("hitl_status");
-        if(!"pending".equals(hitl))throw new ResponseStatusException(HttpStatus.CONFLICT,"ALREADY_DECIDED");
-        return new Locked(doc,author,hitl);
+        return new Locked(doc,author);
     }
 
     Map<String,Object> lockViolation(String id,String violationId){
@@ -350,106 +297,6 @@ public class ViolationService {
     void requireRetryLeft(String violationId){
         int used=jdbc.queryForObject("SELECT count(*) FROM app.violation_rewrites WHERE violation_id=CAST(? AS uuid) AND requested_by_human",Integer.class,violationId);
         if(used>=humanRewriteLimit)throw new ResponseStatusException(HttpStatus.CONFLICT,"HUMAN_REWRITE_LIMIT_REACHED");
-    }
-
-    // ---------- review 전체 결정 ----------
-
-    /** changes_requested(기존 프론트 입력)와 revision_requested(DB 값)를 같은 결정으로 받는다. */
-    static String hitlState(String input){
-        return switch(input){
-            case "approved","rejected"->input;
-            case "changes_requested","revision_requested"->"revision_requested";
-            default->null;
-        };
-    }
-    /** JSONB approval과 Agent resume 계약은 아직 changes_requested를 쓴다. */
-    static String legacyState(String hitl){return "revision_requested".equals(hitl)?"changes_requested":hitl;}
-
-    public ObjectNode decideReview(Jwt jwt,String id,JsonNode input){
-        uuid(id);
-        if(!Set.of("admin","reviewer").contains(jwt.getClaimAsString("role")))throw new ResponseStatusException(HttpStatus.FORBIDDEN,"REVIEWER_REQUIRED");
-        String state=hitlState(input.path("state").asText("")),comment=input.path("comment").asText("").trim(),tenant=jwt.getClaimAsString("tenantId");
-        int no=input.path("versionNo").asInt();
-        if(state==null || comment.isEmpty())throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"DECISION_AND_REVIEW_NOTE_REQUIRED");
-        String legacy=legacyState(state);
-        tx.executeWithoutResult(status->{
-            var rows=jdbc.queryForList("SELECT hitl_status FROM app.reviews WHERE id=CAST(? AS uuid) AND tenant_id=CAST(? AS uuid) FOR UPDATE",String.class,id,tenant);
-            if(rows.isEmpty())throw new ResponseStatusException(HttpStatus.NOT_FOUND,"REVIEW_NOT_FOUND");
-            String by=jdbc.queryForObject("SELECT name FROM app.users WHERE id=CAST(? AS uuid)",String.class,jwt.getSubject());
-            store.mutate(tenant,id,d->{
-                ObjectNode v=ReviewStore.latest(d);
-                if(v.path("no").asInt()!=no || !v.path("status").asText().equals("done"))throw new ResponseStatusException(HttpStatus.CONFLICT,"VERSION_NOT_READY");
-                if(!"pending".equals(rows.getFirst()))throw new ResponseStatusException(HttpStatus.CONFLICT,"ALREADY_DECIDED");
-                if("approved".equals(state)){
-                    int undecided=jdbc.queryForObject("SELECT count(*) FROM app.violations WHERE review_id=CAST(? AS uuid) AND final_resolution IS NULL",Integer.class,id);
-                    if(undecided>0)throw new ResponseStatusException(HttpStatus.CONFLICT,"VIOLATIONS_UNDECIDED");
-                }
-                // 프론트 호환용 사본. 원본은 app.reviews.hitl_* 이다.
-                ObjectNode approval=(ObjectNode)v.path("approval");approval.put("state",legacy);
-                approval.withArray("history").add(json.createObjectNode().put("action",legacy).put("by",by).put("role",jwt.getClaimAsString("role")).put("comment",comment).put("at",Instant.now().toString()));
-                approval.put("agentResume","pending");
-            });
-            jdbc.update("UPDATE app.reviews SET hitl_status=?,hitl_comment=?,decided_by=CAST(? AS uuid),decided_at=now() WHERE id=CAST(? AS uuid)",
-                state,comment,jwt.getSubject(),id);
-            // 재개는 결정과 같은 트랜잭션에 작업으로 남긴다. 승인 응답은 Agent를 기다리지 않는다.
-            enqueueResume(tenant,id,no,legacy);
-        });
-        return view(tenant,id);
-    }
-
-    // ---------- 결정 후 Agent 재개 (agentResume: pending → completed | failed) ----------
-
-    /**
-     * 현재 트랜잭션 안에서 재개를 예약한다. 큐가 켜져 있으면 app.review_jobs(kind=resume)에 기록하고
-     * 발행, 재시도, 실패 처리는 ReviewJobQueue가 맡는다. 큐가 꺼진 개발 모드는 커밋 뒤 한 번 직접 호출한다.
-     */
-    void enqueueResume(String tenant,String id,int no,String state){
-        if(queueEnabled){
-            ObjectNode request=json.createObjectNode().put("reviewId",id).put("tenantId",tenant).put("versionNo",no).put("state",state);
-            jdbc.update("INSERT INTO app.review_jobs(review_id,version_no,kind,request) VALUES (CAST(? AS uuid),?,'resume',CAST(? AS jsonb)) "+
-                "ON CONFLICT (review_id,version_no,kind) DO NOTHING",id,no,request.toString());
-            return;
-        }
-        Runnable direct=()->Thread.ofVirtual().start(()->{
-            try{resumeQueued(tenant,id,no,state);}
-            catch(AgentClient.AgentFailure failure){
-                if(failure.status>=400 && failure.status<500 && failure.status!=429)
-                    resumeFailed(tenant,id,no,failure.detail.isBlank()?"AGENT_REJECTED":failure.detail);
-            }catch(Exception ignored){ /* 개발 모드에는 재시도가 없어 pending으로 남는다. */ }
-        });
-        if(TransactionSynchronizationManager.isSynchronizationActive())
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization(){
-                @Override public void afterCommit(){direct.run();}
-            });
-        else direct.run();
-    }
-
-    /** 재개 한 번. 실패는 예외로 돌려 호출자(큐)가 재시도나 실패를 정한다. 이미 재개된 checkpoint는 Agent가 성공으로 답한다. */
-    void resumeQueued(String tenant,String id,int no,String state)throws Exception{
-        agent.post("/internal/runs/resume",json.createObjectNode().put("reviewId",id).put("tenantId",tenant).put("versionNo",no).put("state",state),
-            RESUME_TIMEOUT);
-        markResume(tenant,id,no,"completed",null);
-        events.publish(id,no,"resume_completed");
-    }
-
-    /** 재개를 포기했다. 저장된 결정과 크레딧 정산은 그대로 두고 화면에 실패만 알린다. */
-    void resumeFailed(String tenant,String id,int no,String error){
-        markResume(tenant,id,no,"failed",error);
-        events.publish(id,no,"resume_failed",json.createObjectNode().put("error",error));
-    }
-
-    boolean resumeCompleted(String tenant,String id,int no){
-        try{
-            return "completed".equals(ReviewStore.version(store.get(tenant,id),no).path("approval").path("agentResume").asText());
-        }catch(Exception ignored){return false;}
-    }
-
-    private void markResume(String tenant,String id,int no,String status,String error){
-        store.mutate(tenant,id,d->{
-            ObjectNode approval=(ObjectNode)ReviewStore.version(d,no).path("approval");
-            approval.put("agentResume",status);
-            if(error==null)approval.remove("agentResumeError");else approval.put("agentResumeError",error);
-        });
     }
 
     static void uuid(String value){UUID.fromString(value);}

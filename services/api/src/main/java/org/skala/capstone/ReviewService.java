@@ -45,30 +45,19 @@ public class ReviewService implements AutoCloseable {
         throw new ResponseStatusException(HttpStatus.UNSUPPORTED_MEDIA_TYPE,"PDF_OR_IMAGE_REQUIRED");
     }
     @Transactional
-    public ObjectNode submit(Jwt jwt,String metadata,List<MultipartFile> files,List<MultipartFile> evidence,String parent){
+    public ObjectNode submit(Jwt jwt,String metadata,List<MultipartFile> files,List<MultipartFile> evidence){
         if(files==null || files.isEmpty() || files.size()>5 || evidence.size()>10)
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"AD_FILES_REQUIRED_MAX_5");
         ObjectNode meta=store.parse(metadata);
         if(meta.path("product").path("name").asText("").isBlank())throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"PRODUCT_NAME_REQUIRED");
-        String tenant=jwt.getClaimAsString("tenantId"),id=parent==null?UUID.randomUUID().toString():parent;
-        ObjectNode doc;
-        int no;
-        if(parent==null){
-            doc=json.createObjectNode();String now=Instant.now().toString();
-            doc.put("id",id).put("tenantId",tenant).put("authorId",jwt.getSubject()).put("createdAt",now).put("updatedAt",now);
-            doc.put("authorName",store.jdbc().queryForObject("SELECT name FROM app.users WHERE id=CAST(? AS uuid)",String.class,jwt.getSubject()));
-            doc.put("productName",meta.path("product").path("name").asText());doc.putNull("campaign");doc.putArray("versions");no=1;
-            store.jdbc().update("INSERT INTO app.reviews(id,tenant_id,author_id,document) VALUES (CAST(? AS uuid),CAST(? AS uuid),CAST(? AS uuid),CAST(? AS jsonb))",id,tenant,jwt.getSubject(),doc.toString());
-        }else{
-            doc=store.get(tenant,id);
-            if(!doc.path("authorId").asText().equals(jwt.getSubject()) && !"admin".equals(jwt.getClaimAsString("role")))
-                throw new ResponseStatusException(HttpStatus.FORBIDDEN,"AUTHOR_REQUIRED");
-            if(Set.of("queued","analyzing").contains(ReviewStore.latest(doc).path("status").asText()))
-                throw new ResponseStatusException(HttpStatus.CONFLICT,"REVIEW_RUNNING");
-            no=ReviewStore.latest(doc).path("no").asInt()+1;
-            // violations는 최신 버전만 가리킨다. 새 버전 결과가 저장될 때 다시 채운다.
-            violations.resetForNewVersion(id);
-        }
+        // 재검토(같은 검토에 새 버전 올리기)는 2026-10-22에 없앴다. 검토마다 버전은 1 하나뿐이다.
+        String tenant=jwt.getClaimAsString("tenantId"),id=UUID.randomUUID().toString();
+        int no=1;
+        ObjectNode doc=json.createObjectNode();String now=Instant.now().toString();
+        doc.put("id",id).put("tenantId",tenant).put("authorId",jwt.getSubject()).put("createdAt",now).put("updatedAt",now);
+        doc.put("authorName",store.jdbc().queryForObject("SELECT name FROM app.users WHERE id=CAST(? AS uuid)",String.class,jwt.getSubject()));
+        doc.put("productName",meta.path("product").path("name").asText());doc.putNull("campaign");doc.putArray("versions");
+        store.jdbc().update("INSERT INTO app.reviews(id,tenant_id,author_id,document) VALUES (CAST(? AS uuid),CAST(? AS uuid),CAST(? AS uuid),CAST(? AS jsonb))",id,tenant,jwt.getSubject(),doc.toString());
         List<MultipartFile> all=new ArrayList<>(files);all.addAll(evidence);
         if(all.stream().mapToLong(MultipartFile::getSize).sum()>75L*1024*1024)
             throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE,"TOTAL_LIMIT_75_MIB");
@@ -95,7 +84,6 @@ public class ReviewService implements AutoCloseable {
             input.put("copy","");input.set("files",ads);input.set("evidence",docs);
             ObjectNode version=json.createObjectNode().put("no",no).put("authorId",jwt.getSubject()).put("authorName",doc.path("authorName").asText()).put("createdAt",Instant.now().toString()).put("status","queued");
             version.set("input",input);version.set("steps",json.valueToTree(List.of(0,0,0,0,0)));version.putNull("result");version.putNull("error");version.putNull("originalsDiscardedAt");
-            version.set("approval",json.createObjectNode().put("state","pending").set("history",json.createArrayNode()));
             String runToken=UUID.randomUUID().toString()+UUID.randomUUID();
             store.jdbc().update("INSERT INTO app.review_runs VALUES (CAST(? AS uuid),?,?)",id,no,hash(runToken.getBytes(StandardCharsets.UTF_8)));
             final int versionNo=no;
@@ -129,17 +117,15 @@ public class ReviewService implements AutoCloseable {
         store.mutate(tenant,id,d->ReviewStore.version(d,no).put("status","analyzing"));
         events.publish(id,no,"started");
         JsonNode response=callAgent("/internal/runs",request);
-        boolean auto=Boolean.TRUE.equals(tx.execute(status->{
-            boolean approved=violations.saveResult(tenant,id,no,response);
+        tx.executeWithoutResult(status->{
+            violations.saveResult(tenant,id,no,response);
             JsonNode pipeline=response.path("result").path("pipelineStatus");
             // HTTP 200 alone is not a completed analysis: missing models and partial results are free.
             credits.settle(id,no,"complete".equals(pipeline.path("text").asText())
                 && "complete".equals(pipeline.path("visual").asText()));
-            return approved;
-        }));
-        // approval_required goes first because completed closes the stream.
-        if(!auto)events.publish(id,no,"approval_required",json.createObjectNode().put("hitlStatus","pending"));
-        events.publish(id,no,"completed",json.createObjectNode().put("hitlStatus",auto?"approved":"pending"));
+        });
+        // 결과가 저장되면 바로 리포트다. 승인 대기가 없으므로 completed 하나로 스트림을 닫는다.
+        events.publish(id,no,"completed");
         try{purge(id,no);}catch(Exception ignored){}
     }
     boolean completed(String tenant,String id,int no){

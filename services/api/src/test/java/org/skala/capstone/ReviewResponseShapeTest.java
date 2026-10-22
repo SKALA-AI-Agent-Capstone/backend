@@ -113,10 +113,10 @@ class ReviewResponseShapeTest {
         return names;
     }
 
+    // 2026-10-22 검토 전체 승인을 없애면서 version.approval과 hitl의 승인 필드(status, comment, decided*, autoApproved, canApprove)를 뺐다.
     static final List<String> VERSION_FIELDS = List.of(
-        "approval", "authorId", "authorName", "createdAt", "error", "input", "no", "originalsDiscardedAt", "result", "status", "steps");
-    static final List<String> HITL_FIELDS = List.of(
-        "autoApproved", "comment", "decidedAt", "decidedBy", "decidedByName", "status", "undecidedCount", "violationCount");
+        "authorId", "authorName", "createdAt", "error", "input", "no", "originalsDiscardedAt", "result", "status", "steps");
+    static final List<String> HITL_FIELDS = List.of("undecidedCount", "violationCount");
 
     @Test
     void listItemsKeepTheirCurrentFields() throws Exception {
@@ -129,7 +129,7 @@ class ReviewResponseShapeTest {
         assertThat(keys(item)).containsExactly(
             "authorId", "authorName", "campaign", "createdAt", "hitl", "id", "productName", "tenantId", "updatedAt", "versions");
         assertThat(keys(item.path("versions").get(0))).containsExactlyElementsOf(VERSION_FIELDS);
-        // 목록의 hitl에는 canApprove가 없고 violations도 싣지 않는다
+        // 목록은 결정 진행률(hitl)만 싣고 violations는 싣지 않는다
         assertThat(keys(item.path("hitl"))).containsExactlyElementsOf(HITL_FIELDS);
         // 지금은 목록도 결과 전체를 싣는다. 목록 요약 응답을 만들 때 이 줄을 의도적으로 바꾼다.
         assertThat(item.path("versions").get(0).path("result").path("findings")).hasSize(1);
@@ -147,16 +147,12 @@ class ReviewResponseShapeTest {
         assertThat(version.path("status").asText()).isEqualTo("done");
         assertThat(keys(version.path("input"))).containsExactly("copy", "evidence", "files", "media", "product");
         assertThat(keys(version.path("input").path("files").get(0))).containsExactly("docType", "id", "kind", "mime", "name", "role", "size");
-        assertThat(keys(version.path("approval"))).containsExactly("history", "state");
         assertThat(keys(version.path("result"))).containsExactly("findings", "pipelineStatus", "visualFindings");
         // 서버는 Agent의 문구에 violationId를 덧붙인다
         assertThat(keys(version.path("result").path("findings").get(0)))
             .containsExactly("claimType", "id", "phrase", "reason", "rewrites", "severity", "violationId");
 
-        List<String> detailHitl = new ArrayList<>(HITL_FIELDS);
-        detailHitl.add("canApprove");
-        Collections.sort(detailHitl);
-        assertThat(keys(detail.path("hitl"))).containsExactlyElementsOf(detailHitl);
+        assertThat(keys(detail.path("hitl"))).containsExactlyElementsOf(HITL_FIELDS);
         assertThat(keys(detail.path("violations").get(0))).containsExactly(
             "decidedAt", "decidedBy", "decidedByName", "finalResolution", "finalText", "finalTextValidated", "findingId",
             "humanRetryCount", "humanRetryLimit", "id", "rewriteAttemptCount", "rewriteSuggestion", "rewrites", "severity", "textExcerpt");
