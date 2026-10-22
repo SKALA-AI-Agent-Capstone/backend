@@ -5,6 +5,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.nio.charset.StandardCharsets;
 import org.skala.capstone.auth.dto.LoginRequest;
 import org.skala.capstone.auth.dto.SignupRequest;
 import org.skala.capstone.auth.dto.TeamMemberRequest;
@@ -54,7 +55,7 @@ public class AuthService {
     private static String password(String input) {
         // 길이 검사는 유지하되 실제 비밀번호의 공백은 저장과 비교에서 그대로 보존한다.
         value(input, "password", 10, 72);
-        if (input.length() > 72) {
+        if (input.getBytes(StandardCharsets.UTF_8).length > 72) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "INVALID_PASSWORD");
         }
         return input;

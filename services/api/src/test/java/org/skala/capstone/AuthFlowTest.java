@@ -346,4 +346,19 @@ class AuthFlowTest {
         node.fieldNames().forEachRemaining(names::add);
         return names;
     }
+
+    @Test
+    void newPasswordsEnforceTheBcryptByteLimitForSignupAndTeamMembers() throws Exception {
+        String overLimit="가".repeat(25);
+        postJson("/api/v1/users/signup",Map.of("email",email(),"password",overLimit,"name","n","tenantName","t"))
+            .andExpect(status().isBadRequest()).andExpect(jsonPath("$.message").value("INVALID_PASSWORD"));
+        String member=email(), boundary="가".repeat(24);
+        Session admin=session(postJson("/api/v1/users/signup",Map.of("email",member,"password",boundary,"name","n","tenantName","t"))
+            .andExpect(status().isOk()));
+        postJson("/api/v1/users/login",Map.of("email",member,"password",boundary)).andExpect(status().isOk());
+        mvc.perform(post("/api/v1/users/team").header(HttpHeaders.AUTHORIZATION,"Bearer "+admin.access())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(Map.of("email",email(),"password",overLimit,"name","n","role","author"))))
+            .andExpect(status().isBadRequest()).andExpect(jsonPath("$.message").value("INVALID_PASSWORD"));
+    }
 }
