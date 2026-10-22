@@ -345,6 +345,10 @@ GET /api/v1/reviews/{reviewId} (POST 생성과 문구 결정 API의 응답도 �
 - 최신 버전 `result.findings[]`의 각 항목에도 `violationId`가 있다.
 
 GET /api/v1/reviews 목록의 각 review에도 같은 `hitl`을 더한다(violations는 싣지 않는다).
+2026-10-22 목록 요약: `GET /api/v1/reviews?view=summary`는 같은 목록에 `summary: true`를 붙이고, 버전마다 `result` 대신
+`{analyzedAt, findingCount, severityCounts}`만 싣는다. `severityCounts`는 저장된 위험도 값(소문자)별 문구 수이며 high, medium, low는 0이어도 있다.
+input(검색에 쓰는 copy와 파일 정보), 상태, 단계, `hitl`은 전체 목록과 같다. view가 없거나 다른 값이면 예전 전체 문서를 그대로 보낸다.
+상세 화면과 리포트는 결과 전체가 필요하므로 GET /api/v1/reviews/{reviewId}를 쓴다.
 새로 만든 버전 문서에는 `approval`이 없다. 승인 제거 전에 저장된 문서의 `approval`과 app.reviews.hitl_* 컬럼은 남아 있지만 읽거나 쓰지 않는다.
 
 POST /api/v1/reviews/{reviewId}/violations/{violationId}/decision: 작성자, reviewer, admin. 최신 버전이 done이어야 한다(409 `VERSION_NOT_READY`).

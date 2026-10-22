@@ -133,8 +133,39 @@ class ReviewResponseShapeTest {
         assertThat(keys(item.path("versions").get(0))).containsExactlyElementsOf(VERSION_FIELDS);
         // 목록은 결정 진행률(hitl)만 싣고 violations는 싣지 않는다
         assertThat(keys(item.path("hitl"))).containsExactlyElementsOf(HITL_FIELDS);
-        // 지금은 목록도 결과 전체를 싣는다. 목록 요약 응답을 만들 때 이 줄을 의도적으로 바꾼다.
+        // 기본 목록은 하위 호환을 위해 결과 전체를 그대로 싣는다. 목록 화면은 view=summary를 쓴다.
         assertThat(item.path("versions").get(0).path("result").path("findings")).hasSize(1);
+    }
+
+    @Test
+    void summaryListReplacesResultsWithCountsOnly() throws Exception {
+        String id = submitAndWait();
+        String full = mvc.perform(get("/api/v1/reviews").with(author())).andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString();
+        String compact = mvc.perform(get("/api/v1/reviews").param("view", "summary").with(author())).andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString();
+        JsonNode item = null;
+        for (JsonNode candidate : json.readTree(compact)) if (candidate.path("id").asText().equals(id)) item = candidate;
+        assertThat(item).isNotNull();
+
+        // 전체 목록과 같은 필드에 summary 표시만 더한다
+        assertThat(keys(item)).containsExactly(
+            "authorId", "authorName", "campaign", "createdAt", "hitl", "id", "productName", "summary", "tenantId", "updatedAt", "versions");
+        assertThat(item.path("summary").asBoolean()).isTrue();
+        JsonNode version = item.path("versions").get(0);
+        assertThat(keys(version)).containsExactlyElementsOf(VERSION_FIELDS);
+        assertThat(keys(version.path("input"))).containsExactly("copy", "evidence", "files", "media", "product");
+        assertThat(keys(version.path("result"))).containsExactly("analyzedAt", "findingCount", "severityCounts");
+        assertThat(version.path("result").path("findingCount").asInt()).isEqualTo(1);
+        assertThat(version.path("result").path("severityCounts").path("high").asInt()).isEqualTo(1);
+        assertThat(version.path("result").path("severityCounts").path("medium").asInt()).isZero();
+        assertThat(keys(item.path("hitl"))).containsExactlyElementsOf(HITL_FIELDS);
+        // 요약은 전체 목록보다 작다(실제 결과에서는 문구별 근거 원문과 OCR 문구가 빠져 차이가 훨씬 크다)
+        assertThat(compact.length()).isLessThan(full.length());
+        // 다른 view 값은 예전 전체 목록이다
+        JsonNode other = json.readTree(mvc.perform(get("/api/v1/reviews").param("view", "unknown").with(author()))
+            .andReturn().getResponse().getContentAsString());
+        assertThat(other.get(0).has("summary")).isFalse();
     }
 
     @Test
