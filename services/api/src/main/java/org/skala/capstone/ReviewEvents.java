@@ -20,7 +20,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 @Component
 public class ReviewEvents {
     static final Set<String> AGENT_TYPES=Set.of("step_done","tool_started","tool_finished");
-    static final Set<String> TERMINAL=Set.of("completed","failed","resume_completed","resume_failed");
+    static final Set<String> TERMINAL=Set.of("completed","failed");
     static final long TIMEOUT_MS=10*60*1000L;
     static final int REPLAY=50;
 

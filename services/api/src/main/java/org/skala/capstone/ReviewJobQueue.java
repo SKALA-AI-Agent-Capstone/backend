@@ -43,30 +43,27 @@ class ReviewQueueTopology {
 @ConditionalOnProperty(name="capstone.review.queue-enabled",havingValue="true")
 public class ReviewJobQueue {
     private static final Logger log=LoggerFactory.getLogger(ReviewJobQueue.class);
-    /** Analysis is paid and slow, so it gets few attempts. Resume is free and quick, so it gets more. */
-    static final int MAX_ATTEMPTS=3,MAX_RESUME_ATTEMPTS=5;
-    static final String RUN="run",RESUME="resume";
+    /** Analysis is paid and slow, so it gets few attempts. */
+    static final int MAX_ATTEMPTS=3;
+    /** 승인 뒤 Agent 재개(kind=resume)는 2026-10-22 승인을 없애면서 지웠다. 남은 종류는 분석(run)뿐이다. */
+    static final String RUN="run";
     private final JdbcTemplate jdbc;
     private final RabbitTemplate rabbit;
     private final ObjectMapper json;
     private final ReviewService reviews;
-    private final ViolationService violations;
 
-    public ReviewJobQueue(JdbcTemplate jdbc,RabbitTemplate rabbit,ObjectMapper json,ReviewService reviews,ViolationService violations){
-        this.jdbc=jdbc;this.rabbit=rabbit;this.json=json;this.reviews=reviews;this.violations=violations;
+    public ReviewJobQueue(JdbcTemplate jdbc,RabbitTemplate rabbit,ObjectMapper json,ReviewService reviews){
+        this.jdbc=jdbc;this.rabbit=rabbit;this.json=json;this.reviews=reviews;
         rabbit.setMandatory(true);
     }
 
-    static int retryDelay(String kind,int attempt){
-        if(RUN.equals(kind))return attempt==1?5:30;
-        return attempt==1?5:attempt==2?30:120;
-    }
+    static int retryDelay(int attempt){return attempt==1?5:30;}
 
     /** Outbox publisher: an API restart cannot lose a committed job. Duplicate publishes are harmless. */
     @Scheduled(fixedDelay=3000,initialDelay=3000)
     public void dispatch(){
         var rows=jdbc.queryForList("SELECT review_id::text,version_no,kind FROM app.review_jobs "+
-            "WHERE status IN ('pending','retry') AND next_attempt_at<=now() ORDER BY next_attempt_at LIMIT 20");
+            "WHERE status IN ('pending','retry') AND kind='run' AND next_attempt_at<=now() ORDER BY next_attempt_at LIMIT 20");
         for(var row:rows){
             String id=row.get("review_id").toString(),kind=row.get("kind").toString();
             int no=((Number)row.get("version_no")).intValue();
@@ -87,6 +84,7 @@ public class ReviewJobQueue {
     /**
      * A task is ACKed only after its outcome or next retry has been recorded in PostgreSQL.
      * The body is reviewId:versionNo:kind. Messages published before V14 have no kind and are analysis runs.
+     * A leftover resume message is rejected to the dead-letter queue; V15 closed its job row.
      */
     @RabbitListener(queues=ReviewQueueTopology.MAIN,ackMode="MANUAL",concurrency="2")
     public void consume(org.springframework.amqp.core.Message message,Channel channel)throws Exception{
@@ -97,7 +95,7 @@ public class ReviewJobQueue {
         int no;
         try{no=Integer.parseInt(key[1]);UUID.fromString(id);}
         catch(IllegalArgumentException invalid){channel.basicReject(tag,false);return;}
-        if(!RUN.equals(kind) && !RESUME.equals(kind)){channel.basicReject(tag,false);return;}
+        if(!RUN.equals(kind)){channel.basicReject(tag,false);return;}
         var claimed=jdbc.queryForList("UPDATE app.review_jobs SET status='running',attempts=attempts+1,updated_at=now() "+
             "WHERE review_id=CAST(? AS uuid) AND version_no=? AND status IN ('pending','published','retry') "+
             "AND next_attempt_at<=now() AND kind=? "+
@@ -108,31 +106,22 @@ public class ReviewJobQueue {
         var request=json.readTree(row.get("request").toString());
         String tenant=request.path("tenantId").asText();
         try{
-            if(RUN.equals(kind)){
-                if(!reviews.completed(tenant,id,no))reviews.runQueued(request);
-            }else if(!violations.resumeCompleted(tenant,id,no)){
-                violations.resumeQueued(tenant,id,no,request.path("state").asText());
-            }
+            if(!reviews.completed(tenant,id,no))reviews.runQueued(request);
         }catch(Exception failure){
             try{
                 var agentFailure=failure instanceof AgentClient.AgentFailure f?f:null;
                 boolean permanent=agentFailure!=null
                     && agentFailure.status>=400 && agentFailure.status<500 && agentFailure.status!=429;
                 String trace=agentFailure==null?null:agentFailure.traceId;
-                String error=agentFailure!=null && !agentFailure.detail.isBlank()?agentFailure.detail:failure.getClass().getSimpleName();
-                int max=RUN.equals(kind)?MAX_ATTEMPTS:MAX_RESUME_ATTEMPTS;
-                if(!permanent && attempt<max){
-                    int delay=retryDelay(kind,attempt);
+                if(!permanent && attempt<MAX_ATTEMPTS){
+                    int delay=retryDelay(attempt);
                     jdbc.update("UPDATE app.review_jobs SET status='retry',updated_at=now(), "+
                         "next_attempt_at=now()+(? * interval '1 second'),last_error=?,last_trace_id=? "+
                         "WHERE review_id=CAST(? AS uuid) AND version_no=? AND kind=?",delay,failure.getClass().getSimpleName(),trace,id,no,kind);
                     channel.basicAck(tag,false);
-                    if(RUN.equals(kind))reviews.retryScheduled(id,no,attempt,delay);
+                    reviews.retryScheduled(id,no,attempt,delay);
                 }else{
-                    // Only an analysis failure returns credits and fails the version. A failed resume keeps the
-                    // stored decision and the charge; it is shown to the reviewer as agentResume=failed.
-                    if(RUN.equals(kind))reviews.failQueued(tenant,id,no);
-                    else violations.resumeFailed(tenant,id,no,error);
+                    reviews.failQueued(tenant,id,no);
                     jdbc.update("UPDATE app.review_jobs SET status='failed',request='{}'::jsonb,updated_at=now(),last_error=?,last_trace_id=? "+
                         "WHERE review_id=CAST(? AS uuid) AND version_no=? AND kind=?",failure.getClass().getSimpleName(),trace,id,no,kind);
                     channel.basicReject(tag,false);
@@ -154,34 +143,25 @@ public class ReviewJobQueue {
     }
 
     /**
-     * Recover deliveries left running by a crashed consumer after the Agent's HTTP timeout
-     * (analysis 300 seconds, resume 60 seconds).
+     * Recover deliveries left running by a crashed consumer after the Agent's HTTP timeout (analysis 300 seconds).
      */
     @Scheduled(fixedDelay=60000,initialDelay=60000)
     public void recoverStale(){
         var rows=jdbc.queryForList("SELECT review_id::text,version_no,kind,attempts,request->>'tenantId' AS tenant "+
-            "FROM app.review_jobs WHERE status='running' AND updated_at<now()-"+
-            "CASE WHEN kind='resume' THEN interval '3 minutes' ELSE interval '7 minutes' END LIMIT 20");
+            "FROM app.review_jobs WHERE status='running' AND kind='run' AND updated_at<now()-interval '7 minutes' LIMIT 20");
         for(var row:rows){
             String id=row.get("review_id").toString(),kind=row.get("kind").toString();
             int no=((Number)row.get("version_no")).intValue(),attempts=((Number)row.get("attempts")).intValue();
             String tenant=row.get("tenant").toString();
             try{
-                boolean done,failed;
-                if(RUN.equals(kind)){
-                    done=reviews.completed(tenant,id,no);
-                    failed=reviews.terminalFailure(tenant,id,no);
-                    if(!done && !failed && attempts>=MAX_ATTEMPTS){reviews.failQueued(tenant,id,no);failed=true;}
-                }else{
-                    done=violations.resumeCompleted(tenant,id,no);
-                    failed=false;
-                    if(!done && attempts>=MAX_RESUME_ATTEMPTS){violations.resumeFailed(tenant,id,no,"RESUME_STALLED");failed=true;}
-                }
+                boolean done=reviews.completed(tenant,id,no);
+                boolean failed=reviews.terminalFailure(tenant,id,no);
+                if(!done && !failed && attempts>=MAX_ATTEMPTS){reviews.failQueued(tenant,id,no);failed=true;}
                 String status=done?"done":failed?"failed":"retry";
                 jdbc.update("UPDATE app.review_jobs SET status=?,request=CASE WHEN ?='retry' THEN request ELSE '{}'::jsonb END, "+
                     "next_attempt_at=now(),updated_at=now() "+
-                    "WHERE review_id=CAST(? AS uuid) AND version_no=? AND kind=? AND status='running' AND updated_at<now()-"+
-                    "CASE WHEN kind='resume' THEN interval '3 minutes' ELSE interval '7 minutes' END",status,status,id,no,kind);
+                    "WHERE review_id=CAST(? AS uuid) AND version_no=? AND kind=? AND status='running' AND updated_at<now()-interval '7 minutes'",
+                    status,status,id,no,kind);
             }catch(Exception error){
                 log.warn("Stale review {} job recovery failed for {} v{}",kind,id,no,error);
             }

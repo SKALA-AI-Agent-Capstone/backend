@@ -31,11 +31,10 @@ flowchart TB
   M -->|인증된 MCP tools/call| BM[Business MCP: FastMCP]
   BM -->|증빙 asset 읽기| B
   BM -->|서버의 승인키로 조회| EX[식약처, KIPRIS Plus]
-  BM --> H[LangGraph HITL interrupt]
+  BM --> H[LangGraph 결과와 checkpoint]
   H --> CP[(같은 PostgreSQL: agent checkpoint)]
-  H -->|미승인 초안| B
-  V -->|검토 의견과 승인 결정| B
-  B -->|해당 버전 재개| H
+  H -->|검토 결과, 곧 리포트| B
+  V -->|문구별 결정과 다시쓰기| B
   H -->|리포트 데이터| B
   A -->|문구마다 search_regulations| RM[RAG MCP]
   RM -. 읽기 전용 .-> K[(같은 PostgreSQL: knowledge, pgvector)]
@@ -72,7 +71,8 @@ Agent의 DB 직접 접근은 agent checkpointer만 허용한다.
 6. 문구는 PDF 파싱과 OCR 후 LLM으로 확인할 주장 후보를 만든다. 사진은 별도 VLM 호출로 비교 표현과 조명 및 각도 등 관찰 한계를 기록한다.
 7. 두 결과가 합류한다. business 노드는 findings와 증빙·제품·특허번호 정황만 LLM에 보여주고, structure_evidence/verify_functional_approval/verify_patent 중 필요한 도구만 LLM이 골라 호출한다(2026-10-21부터 입력값 존재 여부의 조건문이 아니라 OpenAI tool-calling 기반 도구선택 loop, Guardrail: 총 8회/동일 tool 연속 2회/60초). 도구 오류는 항목별로 분리한다.
 8. Graph는 초안과 사람 확인 대기를 PostgreSQL checkpoint에 저장하고 실행 요청을 종료한다. Backend가 초안을 app에 보존하고 원본을 Redis에서 삭제한다.
-9. 검토자 또는 관리자가 최신 버전의 의견과 결정을 저장한다. Backend는 먼저 결정을 보존하고 해당 Graph를 재개한다.
+9. 결과는 바로 리포트로 보인다. 작성자, 검토자, 관리자는 위반 문구마다 원문 유지, 수정안 채택, 직접 수정(Agent 재검증), 다시쓰기(Agent 생성)를 그때그때 한다.
+   검토 전체 승인, 검토 완료 상태, 재검토는 2026-10-22에 없앴다. 수정한 광고는 새 검토로 올린다.
 10. 결과와 이력을 다시 조회하고 브라우저 인쇄로 PDF 저장 또는 HTML 내보내기를 한다. 서버가 PDF 바이너리를 생성하는 기능은 아직 없다.
 
 처리 완료는 AI 추론이나 법령 적합성 확인 완료와 다르다. 모델 키가 없으면 native PDF와 로컬 OCR은 수행해도 문구 모델과 사진 모델은 `not_configured`다.
@@ -85,7 +85,7 @@ Agent의 DB 직접 접근은 agent checkpointer만 허용한다.
 | business | LLM이 findings를 보고 세 도구 중 필요한 것만 선택(2026-10-21부터 도구선택 loop) | business.structure_evidence, verify_functional_approval, verify_patent |
 | cross_checks | 규칙이 지정한 대조만 실행: 기능성 보고 vs 주장, 실증자료 제출, 성분 국내 금지와 제한, GMP, 특허 번호 | business.find_functional_reports, verify_gmp_company, lookup_ingredient_regulation, rag.check_ingredient_standard |
 | violations | 조문을 참고한 자가검증 리라이트. 통과한 문안이 finding.rewrites로 저장된다 | OpenAI |
-| approval, report | 사람 승인 대기와 재개 | |
+| approval, report | ai_agent에 남아 있지만 Backend가 재개를 보내지 않는다(2026-10-22 승인 제거). report는 하는 일이 없다 | |
 
 결과의 retrievalStatus는 connected, not_indexed, error, skipped 중 하나다. 근거와 대조 결과는 확인할 후보일 뿐이라 `legalStatus=not_evaluated`를 유지하고 적합 점수를 만들지 않는다.
 finding에는 basis(규칙 조항 retrieval=rule, 보조 검색 retrieval=search, 연결 조항 related), rules, evidenceRequirements, checks가 붙는다.
@@ -98,7 +98,7 @@ finding에는 basis(규칙 조항 retrieval=rule, 보조 검색 retrieval=search
 - 같은 브라우저의 선택한 File은 임시 미리보기가 가능하지만 새로고침하거나 다른 기기에서 열면 원본이 없다. 같은 파일 재열람 기능은 후속이다.
 - 파일이 손상됐거나 지원하지 않는 형식이면 접수 또는 파싱 단계에서 실패한다. 실패한 작업은 새 원본을 제출한다.
 - 모델과 공공 API 오류는 적합 판정으로 바꾸지 않는다. 정상 조회 결과 없음과 API 설정 또는 연결 실패를 구분한다.
-- 승인 결정과 Agent 재개 작업(app.review_jobs, kind=resume)을 한 트랜잭션에 저장하고, RabbitMQ 큐가 재개를 보내고 재시도한다. `approval.agentResume`은 pending, completed, failed 중 하나다. 재개 실패는 결정과 크레딧에 영향을 주지 않는다.
+- 승인 결정과 결정 후 Agent 재개 작업(app.review_jobs kind=resume)은 2026-10-22에 없앴다. 남은 큐 작업은 분석(run)뿐이다.
 - 삭제는 실행 중인 작업을 막고 체크포인트부터 삭제한 뒤 app 이력과 asset 메타데이터를 삭제한다.
 
 ## 노션 목표와 현재 MVP의 차이

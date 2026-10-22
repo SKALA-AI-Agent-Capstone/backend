@@ -244,13 +244,11 @@ class ViolationFlowTest {
                 .contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isOk());
         assertThat(read(id).path("versions").get(0).path("steps").get(1).asInt()).isEqualTo(100);
 
-        events.publish(id,1,"approval_required");
         events.publish(id,1,"completed");
         String text=stream.getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
         assertThat(text).contains("event:snapshot").contains("event:step_done").contains("\"step\":1")
             .contains("event:tool_started").contains("\"tool\":\"verify_patent\"").contains("\"ok\":false")
-            .contains("event:approval_required").contains("event:completed");
-        assertThat(text.indexOf("event:approval_required")).isLessThan(text.indexOf("event:completed"));
+            .contains("event:completed").doesNotContain("approval_required");
         assertThat(events.subscriberCount(id)).isZero();
 
         // 다시 접속하면 Last-Event-ID 이후 이벤트만 다시 받는다.
@@ -271,83 +269,41 @@ class ViolationFlowTest {
         assertThat(events.subscriberCount(id)).isZero();
     }
 
-    @Autowired ReviewStore store;
-
-    /** 큐를 켠 설정의 ViolationService. 재개는 Agent를 부르지 않고 outbox 작업으로만 남아야 한다. */
-    ViolationService queued(){return new ViolationService(store,agent,tx,events,2,true);}
-    org.springframework.security.oauth2.jwt.Jwt jwtOf(User u){
-        return org.springframework.security.oauth2.jwt.Jwt.withTokenValue("t").header("alg","none").subject(u.id())
-            .claim("tenantId",u.tenant()).claim("role",u.role()).build();
-    }
-    Map<String,Object> resumeJob(String id){
-        return jdbc.queryForMap("SELECT status,request->>'state' AS state,request->>'tenantId' AS tenant FROM app.review_jobs "+
-            "WHERE review_id=CAST(? AS uuid) AND version_no=1 AND kind='resume'",id);
+    @Test
+    void savedResultIsTheFinalReportWithoutApprovalOrAgentResume()throws Exception{
+        clearInvocations(agent);
+        String clean=review(),withFindings=review();
+        violations.saveResult(TENANT,clean,1,result("complete","complete"));
+        violations.saveResult(TENANT,withFindings,1,result("complete","complete",finding("text-0","주름 개선","low")));
+        // 위반이 0건이어도 자동 승인은 없고, 재개 작업도 Agent 재개 호출도 없다.
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM app.review_jobs WHERE review_id IN (CAST(? AS uuid),CAST(? AS uuid))",
+            Integer.class,clean,withFindings)).isZero();
+        verify(agent,after(300).never()).post(eq("/internal/runs/resume"),any(),any());
+        verify(agent,never()).post(eq("/internal/runs/resume"),any());
+        assertThat(jdbc.queryForObject("SELECT hitl_status FROM app.reviews WHERE id=CAST(? AS uuid)",String.class,clean)).isEqualTo("pending");
+        JsonNode body=read(mvc.perform(get("/api/v1/reviews/"+clean).with(as(AUTHOR))).andExpect(status().isOk()));
+        assertThat(body.path("hitl").path("violationCount").asInt()).isZero();
+        assertThat(body.path("hitl").has("status")).isFalse();
+        assertThat(body.path("versions").get(0).path("status").asText()).isEqualTo("done");
     }
 
     @Test
-    void decisionWritesTheResumeJobInTheSameTransactionAndDoesNotWaitForTheAgent()throws Exception{
-        clearInvocations(agent);
+    void reviewDecisionAndReReviewEndpointsAreGone()throws Exception{
         String id=reviewWithTwoFindings();
-        ViolationService service=queued();
-        // 미결정 문구가 있어 승인이 거절되면 재개 작업도 남지 않는다.
-        org.junit.jupiter.api.Assertions.assertThrows(org.springframework.web.server.ResponseStatusException.class,
-            ()->service.decideReview(jwtOf(REVIEWER),id,json.valueToTree(Map.of("versionNo",1,"state","approved","comment","ok"))));
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM app.review_jobs WHERE review_id=CAST(? AS uuid)",Integer.class,id)).isZero();
-
-        JsonNode view=service.decideReview(jwtOf(REVIEWER),id,json.valueToTree(Map.of("versionNo",1,"state","changes_requested","comment","fix")));
-        assertThat(view.path("hitl").path("status").asText()).isEqualTo("revision_requested");
-        assertThat(view.path("versions").get(0).path("approval").path("agentResume").asText()).isEqualTo("pending");
-        assertThat(resumeJob(id)).containsEntry("status","pending").containsEntry("state","changes_requested").containsEntry("tenant",TENANT);
-        verify(agent,after(300).never()).post(eq("/internal/runs/resume"),any(),any());
+        mvc.perform(postJson("/api/v1/reviews/"+id+"/decision",Map.of("versionNo",1,"state","approved","comment","ok")).with(as(REVIEWER)))
+            .andExpect(status().isNotFound());
+        var file=new MockMultipartFile("files","ad.png","image/png",new byte[]{(byte)0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A,1});
+        mvc.perform(multipart("/api/v1/reviews/"+id+"/re-review").file(file).param("metadata","{\"product\":{\"name\":\"p\"}}").with(as(AUTHOR)))
+            .andExpect(status().isNotFound());
     }
 
     @Test
-    void autoApprovalWritesTheResumeJobWithTheResult()throws Exception{
-        clearInvocations(agent);
-        String id=review();
-        assertThat(queued().saveResult(TENANT,id,1,result("complete","complete"))).isTrue();
-        assertThat(resumeJob(id)).containsEntry("status","pending").containsEntry("state","approved");
-        verify(agent,after(300).never()).post(eq("/internal/runs/resume"),any(),any());
-        // 위반이 남은 결과는 사람 결정 전이므로 재개 작업이 없다.
-        String pending=review();
-        queued().saveResult(TENANT,pending,1,result("complete","complete",finding("text-0","주름 개선","low")));
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM app.review_jobs WHERE review_id=CAST(? AS uuid)",Integer.class,pending)).isZero();
-    }
-
-    @Test
-    void resumeOutcomeChangesOnlyAgentResumeNotTheDecisionOrCredits()throws Exception{
-        String id=review();
-        jdbc.update("UPDATE app.users SET credit_balance=100 WHERE id=CAST(? AS uuid)",AUTHOR.id());
-        credits.reserve(TENANT,AUTHOR.id(),id,1);
-        ViolationService service=queued();
-        tx.executeWithoutResult(s->{service.saveResult(TENANT,id,1,result("complete","complete"));credits.settle(id,1,true);});
-        int balance=jdbc.queryForObject("SELECT credit_balance FROM app.users WHERE id=CAST(? AS uuid)",Integer.class,AUTHOR.id());
-
-        service.resumeFailed(TENANT,id,1,"CHECKPOINT_NOT_FOUND");
-        JsonNode approval=read(id).path("versions").get(0).path("approval");
-        assertThat(approval.path("agentResume").asText()).isEqualTo("failed");
-        assertThat(approval.path("agentResumeError").asText()).isEqualTo("CHECKPOINT_NOT_FOUND");
-        assertThat(service.resumeCompleted(TENANT,id,1)).isFalse();
-        assertThat(jdbc.queryForObject("SELECT hitl_status FROM app.reviews WHERE id=CAST(? AS uuid)",String.class,id)).isEqualTo("approved");
-        assertThat(jdbc.queryForObject("SELECT status FROM app.review_credit_charges WHERE review_id=CAST(? AS uuid)",String.class,id)).isEqualTo("charged");
-        assertThat(jdbc.queryForObject("SELECT credit_balance FROM app.users WHERE id=CAST(? AS uuid)",Integer.class,AUTHOR.id())).isEqualTo(balance);
-
-        service.resumeQueued(TENANT,id,1,"approved");
-        approval=read(id).path("versions").get(0).path("approval");
-        assertThat(approval.path("agentResume").asText()).isEqualTo("completed");
-        assertThat(approval.has("agentResumeError")).isFalse();
-        assertThat(service.resumeCompleted(TENANT,id,1)).isTrue();
-        verify(agent).post(eq("/internal/runs/resume"),argThat(c->c.path("versionNo").asInt()==1),eq(ViolationService.RESUME_TIMEOUT));
-    }
-
-    @Test
-    void resumePendingReviewKeepsTheProgressStreamOpenUntilTheResumeEvent()throws Exception{
+    void legacyPendingResumeNoLongerKeepsTheStreamOpen()throws Exception{
+        // 승인을 없애기 전에 저장된 문서에는 approval.agentResume=pending이 남아 있을 수 있다.
         String id=reviewWithTwoFindings();
         jdbc.update("UPDATE app.reviews SET document=jsonb_set(document,'{versions,0,approval,agentResume}','\"pending\"'::jsonb) WHERE id=CAST(? AS uuid)",id);
-        var stream=mvc.perform(get("/api/v1/reviews/"+id+"/events").with(as(AUTHOR))).andExpect(request().asyncStarted()).andReturn();
-        assertThat(events.subscriberCount(id)).isEqualTo(1);
-        events.publish(id,1,"resume_completed");
-        assertThat(stream.getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8)).contains("event:resume_completed");
+        var result=mvc.perform(get("/api/v1/reviews/"+id+"/events").with(as(AUTHOR))).andReturn();
+        assertThat(result.getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8)).contains("event:snapshot");
         assertThat(events.subscriberCount(id)).isZero();
     }
 
@@ -398,30 +354,12 @@ class ViolationFlowTest {
         assertThat(v.get(1).path("rewriteSuggestion").isNull()).isTrue();
         assertThat(body.path("versions").get(0).path("result").path("findings").get(0).path("violationId").asText())
             .isEqualTo(v.get(0).path("id").asText());
-        assertThat(body.path("hitl").path("status").asText()).isEqualTo("pending");
+        assertThat(body.path("hitl").path("violationCount").asInt()).isEqualTo(2);
         assertThat(body.path("hitl").path("undecidedCount").asInt()).isEqualTo(2);
-        assertThat(body.path("hitl").path("canApprove").asBoolean()).isFalse();
     }
 
     @Test
-    void zeroViolationsAutoApproveOnlyWhenBothPipelinesCompleted()throws Exception{
-        String clean=review(),unconfigured=review();
-        assertThat(violations.saveResult(TENANT,clean,1,result("complete","complete"))).isTrue();
-        assertThat(violations.saveResult(TENANT,unconfigured,1,result("not_configured","not_configured"))).isFalse();
-        var row=jdbc.queryForMap("SELECT hitl_status,decided_by,decided_at FROM app.reviews WHERE id=CAST(? AS uuid)",clean);
-        assertThat(row.get("hitl_status")).isEqualTo("approved");
-        assertThat(row.get("decided_by")).isNull();
-        assertThat(row.get("decided_at")).isNotNull();
-        JsonNode body=read(mvc.perform(get("/api/v1/reviews/"+clean).with(as(REVIEWER))));
-        assertThat(body.path("hitl").path("autoApproved").asBoolean()).isTrue();
-        assertThat(body.path("versions").get(0).path("approval").path("state").asText()).isEqualTo("approved");
-        assertThat(jdbc.queryForObject("SELECT hitl_status FROM app.reviews WHERE id=CAST(? AS uuid)",String.class,unconfigured)).isEqualTo("pending");
-        mvc.perform(postJson("/api/v1/reviews/"+clean+"/decision",Map.of("versionNo",1,"state","rejected","comment","c")).with(as(REVIEWER)))
-            .andExpect(status().isConflict()).andExpect(jsonPath("$.message").value("ALREADY_DECIDED"));
-    }
-
-    @Test
-    void approvalRequiresEveryViolationResolved()throws Exception{
+    void violationsCanBeDecidedOneByOneAndChangedLater()throws Exception{
         String id=reviewWithTwoFindings();
         JsonNode v=read(mvc.perform(get("/api/v1/reviews/"+id).with(as(AUTHOR)))).path("violations");
         String first=v.get(0).path("id").asText(),second=v.get(1).path("id").asText();
@@ -430,7 +368,8 @@ class ViolationFlowTest {
         mvc.perform(postJson(base+first+"/decision",Map.of("resolution","rewritten","attemptNo",1)).with(as(AUTHOR)))
             .andExpect(status().isOk()).andExpect(jsonPath("$.violations[0].finalText").value("주름 개선 도움"))
             .andExpect(jsonPath("$.violations[0].finalTextValidated").value(true))
-            .andExpect(jsonPath("$.violations[0].decidedBy").value(AUTHOR.id()));
+            .andExpect(jsonPath("$.violations[0].decidedBy").value(AUTHOR.id()))
+            .andExpect(jsonPath("$.hitl.undecidedCount").value(1));
         // 사람이 쓴 문구는 Agent 재검증을 통과하기 전까지 저장하지 않는다(기본 mock은 passed=false).
         mvc.perform(postJson(base+second+"/decision",Map.of("resolution","rewritten_manual","finalText","효과적인 보습")).with(as(AUTHOR)))
             .andExpect(status().isConflict()).andExpect(jsonPath("$.message").value("MANUAL_TEXT_FAILED_VERIFICATION"));
@@ -438,36 +377,15 @@ class ViolationFlowTest {
             .andExpect(status().isConflict()).andExpect(jsonPath("$.message").value("NO_REWRITE_SUGGESTION"));
         assertThat(jdbc.queryForObject("SELECT final_resolution FROM app.violations WHERE id=CAST(? AS uuid)",String.class,second)).isNull();
 
-        mvc.perform(postJson("/api/v1/reviews/"+id+"/decision",Map.of("versionNo",1,"state","approved","comment","ok")).with(as(REVIEWER)))
-            .andExpect(status().isConflict()).andExpect(jsonPath("$.message").value("VIOLATIONS_UNDECIDED"));
-
+        // 검토자는 남의 검토에서도 문구를 고를 수 있다. 모두 결정해도 완료 상태는 따로 없다.
         mvc.perform(postJson(base+second+"/decision",Map.of("resolution","kept")).with(as(REVIEWER)))
             .andExpect(status().isOk()).andExpect(jsonPath("$.violations[1].finalText").value("100% 효과"))
-            .andExpect(jsonPath("$.hitl.canApprove").value(true));
-        // 작성자는 문구를 고를 수 있지만 전체 승인은 할 수 없다.
-        mvc.perform(postJson("/api/v1/reviews/"+id+"/decision",Map.of("versionNo",1,"state","approved","comment","ok")).with(as(AUTHOR)))
-            .andExpect(status().isForbidden());
-        mvc.perform(postJson("/api/v1/reviews/"+id+"/decision",Map.of("versionNo",1,"state","approved","comment","ok")).with(as(REVIEWER)))
-            .andExpect(status().isOk()).andExpect(jsonPath("$.hitl.status").value("approved"))
-            .andExpect(jsonPath("$.hitl.decidedBy").value(REVIEWER.id()))
-            .andExpect(jsonPath("$.versions[0].approval.state").value("approved"));
-        var row=jdbc.queryForMap("SELECT hitl_status,hitl_comment,decided_by::text AS by FROM app.reviews WHERE id=CAST(? AS uuid)",id);
-        assertThat(row).containsEntry("hitl_status","approved").containsEntry("hitl_comment","ok").containsEntry("by",REVIEWER.id());
-        // 큐가 꺼진 개발 모드는 커밋 뒤 별도 스레드에서 한 번 재개한다.
-        verify(agent,timeout(3000)).post(eq("/internal/runs/resume"),argThat(c->c.path("state").asText().equals("approved")),any());
-        // 결정 이후에는 문구도 잠긴다.
-        mvc.perform(postJson(base+second+"/decision",Map.of("resolution","kept")).with(as(REVIEWER)))
-            .andExpect(status().isConflict()).andExpect(jsonPath("$.message").value("ALREADY_DECIDED"));
-    }
-
-    @Test
-    void changesRequestedIsStoredAsRevisionRequested()throws Exception{
-        String id=reviewWithTwoFindings();
-        mvc.perform(postJson("/api/v1/reviews/"+id+"/decision",Map.of("versionNo",1,"state","changes_requested","comment","fix")).with(as(REVIEWER)))
-            .andExpect(status().isOk()).andExpect(jsonPath("$.hitl.status").value("revision_requested"))
-            .andExpect(jsonPath("$.versions[0].approval.state").value("changes_requested"));
-        // 큐가 꺼진 개발 모드는 커밋 뒤 별도 스레드에서 한 번 재개한다.
-        verify(agent,timeout(3000)).post(eq("/internal/runs/resume"),argThat(c->c.path("state").asText().equals("changes_requested")),any());
+            .andExpect(jsonPath("$.hitl.undecidedCount").value(0))
+            .andExpect(jsonPath("$.hitl.status").doesNotExist());
+        // 결정은 잠기지 않는다. 나중에 다시 바꿀 수 있다.
+        mvc.perform(postJson(base+first+"/decision",Map.of("resolution","kept")).with(as(AUTHOR)))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.violations[0].finalResolution").value("kept"));
+        verify(agent,never()).post(eq("/internal/runs/resume"),any(),any());
     }
 
     @Test
@@ -564,15 +482,6 @@ class ViolationFlowTest {
         JsonNode list=read(mvc.perform(get("/api/v1/reviews").with(as(OUTSIDER))));
         assertThat(list.findValuesAsText("id")).doesNotContain(id);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM app.violations WHERE final_resolution IS NOT NULL AND review_id=CAST(? AS uuid)",Integer.class,id)).isZero();
-    }
-
-    @Test
-    void reReviewClearsViolationsAndDecision(){
-        String id=reviewWithTwoFindings();
-        jdbc.update("UPDATE app.reviews SET hitl_status='rejected',decided_at=now() WHERE id=CAST(? AS uuid)",id);
-        violations.resetForNewVersion(id);
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM app.violations WHERE review_id=CAST(? AS uuid)",Integer.class,id)).isZero();
-        assertThat(jdbc.queryForObject("SELECT hitl_status FROM app.reviews WHERE id=CAST(? AS uuid)",String.class,id)).isEqualTo("pending");
     }
 
     @Test

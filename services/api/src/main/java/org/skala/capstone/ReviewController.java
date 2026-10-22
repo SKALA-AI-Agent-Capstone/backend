@@ -26,18 +26,8 @@ public class ReviewController {
     @PostMapping(value="/api/v1/reviews",consumes=MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ObjectNode> create(@AuthenticationPrincipal Jwt jwt,@RequestParam String metadata,
         @RequestPart List<MultipartFile> files,@RequestPart(required=false)List<MultipartFile> evidence){
-        ObjectNode doc=reviews.submit(jwt,metadata,files,evidence==null?List.of():evidence,null);
+        ObjectNode doc=reviews.submit(jwt,metadata,files,evidence==null?List.of():evidence);
         return ResponseEntity.accepted().body(violations.view(jwt.getClaimAsString("tenantId"),doc.path("id").asText()));
-    }
-    @PostMapping(value="/api/v1/reviews/{id}/re-review",consumes=MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<ObjectNode> version(@AuthenticationPrincipal Jwt jwt,@PathVariable String id,@RequestParam String metadata,
-        @RequestPart List<MultipartFile> files,@RequestPart(required=false)List<MultipartFile> evidence){
-        reviews.submit(jwt,metadata,files,evidence==null?List.of():evidence,id);
-        return ResponseEntity.accepted().body(violations.view(jwt.getClaimAsString("tenantId"),id));
-    }
-    @PostMapping("/api/v1/reviews/{id}/decision")
-    public ObjectNode decide(@AuthenticationPrincipal Jwt jwt,@PathVariable String id,@RequestBody JsonNode input){
-        return violations.decideReview(jwt,id,input);
     }
     @PostMapping("/api/v1/reviews/{id}/violations/{violationId}/decision")
     public ObjectNode decideViolation(@AuthenticationPrincipal Jwt jwt,@PathVariable String id,@PathVariable String violationId,@RequestBody JsonNode input){
@@ -97,18 +87,16 @@ public class ReviewController {
     }
     /**
      * Progress stream for one review (text/event-stream). The first event is a snapshot of the stored review;
-     * then started, step_done, tool_started, tool_finished, retry_scheduled, approval_required and finally
-     * completed or failed. After a decision it relays resume_completed or resume_failed.
-     * A review that is neither running nor waiting for a resume gets only the snapshot.
+     * then started, step_done, tool_started, tool_finished, retry_scheduled and finally completed or failed.
+     * A review that is not running gets only the snapshot.
      */
     @GetMapping(value="/api/v1/reviews/{id}/events",produces=MediaType.TEXT_EVENT_STREAM_VALUE)
     public ResponseEntity<SseEmitter> events(@AuthenticationPrincipal Jwt jwt,@PathVariable String id,
         @RequestHeader(value="Last-Event-ID",required=false)String lastEventId){
         ObjectNode snapshot=violations.view(jwt.getClaimAsString("tenantId"),id);
         JsonNode latest=ReviewStore.latest(snapshot);
-        // 분석 중이거나 결정 후 Agent 재개를 기다리는 동안 스트림을 연다.
-        boolean running=Set.of("queued","analyzing").contains(latest.path("status").asText())
-            || "pending".equals(latest.path("approval").path("agentResume").asText());
+        // 분석 중인 동안만 스트림을 연다.
+        boolean running=Set.of("queued","analyzing").contains(latest.path("status").asText());
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).header("X-Accel-Buffering","no")
             .body(events.subscribe(id,snapshot,running,lastEventId));
     }
