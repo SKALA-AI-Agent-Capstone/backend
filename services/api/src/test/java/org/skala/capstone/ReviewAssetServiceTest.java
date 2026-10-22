@@ -14,6 +14,7 @@ import org.skala.capstone.review.AssetRepository;
 import org.skala.capstone.review.ReviewAssetService;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.web.server.ResponseStatusException;
 
 class ReviewAssetServiceTest {
@@ -57,5 +58,19 @@ class ReviewAssetServiceTest {
         missing.put("bytes",null);
         when(repository.scopedOriginal("review",1,"asset")).thenReturn(List.of(missing));
         assertEquals(410,assertThrows(ResponseStatusException.class,()->assets.readRunAsset("review",1,"asset")).getStatusCode().value());
+    }
+
+    @Test void repeatedReadsBypassRedisAfterTheFirstConnectionFailure() {
+        when(values.get(anyString())).thenThrow(new RedisConnectionFailureException("synthetic outage"));
+        assertArrayEquals(bytes,assets.readRunAsset("review",1,"asset").bytes());
+        assertArrayEquals(bytes,assets.readRunAsset("review",1,"asset").bytes());
+        verify(values,times(1)).get(anyString());
+        verify(values,never()).set(anyString(),anyString(),any());
+    }
+
+    @Test void storingOriginalsDoesNotWaitForRedis() {
+        assets.store("asset","review",1,"ad.png","image/png","advertisement","",bytes);
+        verifyNoInteractions(redis);
+        verify(repository).create(eq("asset"),eq("review"),eq(1),eq("ad.png"),eq("image/png"),eq("advertisement"),eq(""),eq(bytes),anyString());
     }
 }

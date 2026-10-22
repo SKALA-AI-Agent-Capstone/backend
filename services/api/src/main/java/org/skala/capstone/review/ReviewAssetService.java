@@ -5,13 +5,12 @@ import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
@@ -19,6 +18,7 @@ public class ReviewAssetService {
     private static final Logger log = LoggerFactory.getLogger(ReviewAssetService.class);
     private final AssetRepository repository;
     private final StringRedisTemplate cache;
+    private final AtomicLong unavailableUntil = new AtomicLong();
 
     public ReviewAssetService(AssetRepository repository, StringRedisTemplate cache) {
         this.repository = repository;
@@ -48,23 +48,35 @@ public class ReviewAssetService {
 
     public void store(String assetId, String reviewId, int version, String name, String mime, String role, String docType, byte[] raw) {
         repository.create(assetId, reviewId, version, name, mime, role, docType, raw, hash(raw));
-        // 롤백된 원본은 캐시에 쓰지 않는다. 캐시 장애는 접수 커밋을 실패시키지 않는다.
-        if (TransactionSynchronizationManager.isActualTransactionActive()) {
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override public void afterCommit() {
-                    cache(assetId, raw);
-                }
-            });
-        } else {
-            cache(assetId, raw);
+        // 접수 응답은 Redis를 기다리지 않는다. 커밋 후 첫 조회에서 캐시를 채운다.
+    }
+
+    private boolean cacheAvailable() {
+        long until = unavailableUntil.get();
+        return until == 0 || System.nanoTime() - until >= 0;
+    }
+
+    private void cacheUnavailable(String id, RuntimeException failure) {
+        unavailableUntil.set(System.nanoTime() + Duration.ofSeconds(30).toNanos());
+        log.warn("Asset cache bypassed for 30 seconds after {} ({})", id, failure.getClass().getSimpleName());
+    }
+
+    private String cached(String id) {
+        if (!cacheAvailable()) return null;
+        try {
+            return cache.opsForValue().get(assetKey(id));
+        } catch (RuntimeException unavailable) {
+            cacheUnavailable(id, unavailable);
+            return null;
         }
     }
 
     private void cache(String id, byte[] bytes) {
+        if (!cacheAvailable()) return;
         try {
             cache.opsForValue().set(assetKey(id), Base64.getEncoder().encodeToString(bytes), Duration.ofMinutes(30));
         } catch (RuntimeException unavailable) {
-            log.warn("Asset cache write skipped for {} ({})", id, unavailable.getClass().getSimpleName());
+            cacheUnavailable(id, unavailable);
         }
     }
 
@@ -73,11 +85,11 @@ public class ReviewAssetService {
         var rows = repository.scopedMime(reviewId, version, assetId);
         if (rows.isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "ASSET_NOT_FOUND");
         String mime = rows.getFirst().get("mime_type").toString();
+        String value = cached(assetId);
         try {
-            String value = cache.opsForValue().get(assetKey(assetId));
             if (value != null) return new PersistedAsset(Base64.getDecoder().decode(value), mime);
-        } catch (RuntimeException unavailable) {
-            log.warn("Asset cache read skipped for {} ({})", assetId, unavailable.getClass().getSimpleName());
+        } catch (IllegalArgumentException corrupt) {
+            log.warn("Invalid cached original ignored for {}", assetId);
         }
         var originals = repository.scopedOriginal(reviewId, version, assetId);
         if (originals.isEmpty() || originals.getFirst().get("bytes") == null) {
@@ -90,12 +102,14 @@ public class ReviewAssetService {
 
     /** 처리 종료에는 Redis 캐시만 비운다. DB 원본 보존 정책은 그대로 유지한다. */
     public void purge(String reviewId, int version) {
+        if (!cacheAvailable()) return;
         try {
             for (var row : repository.ids(reviewId, version)) {
                 try {
                     cache.delete(assetKey(row.get("id").toString()));
                 } catch (RuntimeException unavailable) {
-                    log.warn("Asset cache cleanup deferred to TTL for review {}", reviewId);
+                    cacheUnavailable(reviewId, unavailable);
+                    return;
                 }
             }
         } catch (RuntimeException unavailable) {

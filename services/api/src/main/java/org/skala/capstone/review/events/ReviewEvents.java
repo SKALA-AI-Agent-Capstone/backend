@@ -57,12 +57,22 @@ public class ReviewEvents {
             emitter.send(SseEmitter.event().name("snapshot").data(snapshot).reconnectTime(3000));
             if(!running){emitter.complete();return emitter;}
             long after=parse(lastEventId);
-            for(Event event:replay(reviewId))if(event.id()>after)emitter.send(frame(event));
-        }catch(IOException closed){emitter.completeWithError(closed);return emitter;}
-        List<SseEmitter> list=subscribers.computeIfAbsent(reviewId,k->new CopyOnWriteArrayList<>());
-        list.add(emitter);
-        Runnable remove=()->list.remove(emitter);
-        emitter.onCompletion(remove);emitter.onTimeout(remove);emitter.onError(e->remove.run());
+            Deque<Event> buffer=recent.computeIfAbsent(reviewId,k->new ArrayDeque<>());
+            synchronized(buffer){
+                // 재생과 구독 등록 사이에 완료 이벤트를 놓치지 않도록 같은 잠금을 쓴다.
+                for(Event event:buffer){
+                    if(event.id()>after)emitter.send(frame(event));
+                    if(TERMINAL.contains(event.type())){emitter.complete();return emitter;}
+                }
+                List<SseEmitter> list=subscribers.compute(reviewId,(id,current)->{
+                    if(current==null)current=new CopyOnWriteArrayList<>();
+                    current.add(emitter);
+                    return current;
+                });
+                Runnable remove=()->list.remove(emitter);
+                emitter.onCompletion(remove);emitter.onTimeout(remove);emitter.onError(e->remove.run());
+            }
+        }catch(IOException closed){emitter.completeWithError(closed);}
         return emitter;
     }
 
@@ -71,14 +81,18 @@ public class ReviewEvents {
         ObjectNode data=json.createObjectNode().put("type",type).put("reviewId",reviewId).put("versionNo",versionNo)
             .put("at",Instant.now().toString());
         if(extra!=null)extra.fieldNames().forEachRemaining(k->{if(!data.has(k))data.set(k,extra.get(k));});
-        Event event=new Event(sequence.incrementAndGet(),type,data);
+        Event event;
+        List<SseEmitter> targets;
         Deque<Event> buffer=recent.computeIfAbsent(reviewId,k->new ArrayDeque<>());
         synchronized(buffer){
+            event=new Event(sequence.incrementAndGet(),type,data);
             if(type.equals("started"))buffer.clear();
             buffer.addLast(event);
             while(buffer.size()>REPLAY)buffer.removeFirst();
+            targets=List.copyOf(subscribers.getOrDefault(reviewId,List.of()));
+            if(TERMINAL.contains(type))subscribers.remove(reviewId);
         }
-        for(SseEmitter emitter:subscribers.getOrDefault(reviewId,List.of())){
+        for(SseEmitter emitter:targets){
             try{
                 emitter.send(frame(event));
                 if(TERMINAL.contains(type))emitter.complete();
@@ -86,7 +100,6 @@ public class ReviewEvents {
                 emitter.completeWithError(closed);
             }
         }
-        if(TERMINAL.contains(type))subscribers.remove(reviewId);
     }
 
     public void publish(String reviewId,int versionNo,String type){publish(reviewId,versionNo,type,null);}
@@ -100,7 +113,7 @@ public class ReviewEvents {
                 catch(Exception closed){list.remove(emitter);emitter.completeWithError(closed);}
             }
         });
-        subscribers.values().removeIf(List::isEmpty);
+        subscribers.forEach((id,list)->subscribers.computeIfPresent(id,(key,current)->current.isEmpty()?null:current));
     }
 
     public int subscriberCount(String reviewId){return subscribers.getOrDefault(reviewId,List.of()).size();}
