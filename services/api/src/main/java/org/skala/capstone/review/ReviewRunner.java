@@ -11,9 +11,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Service
 public class ReviewRunner implements AutoCloseable {
+    private static final Logger log = LoggerFactory.getLogger(ReviewRunner.class);
     private final ReviewRepository store;
     private final ReviewAssetService assets;
     private final ObjectMapper json;
@@ -22,13 +25,14 @@ public class ReviewRunner implements AutoCloseable {
     private final CreditLedgerService credits;
     private final TransactionTemplate tx;
     private final ReviewEvents events;
+    private final ReviewFailureService failures;
     private final ExecutorService jobs=new ThreadPoolExecutor(2,2,0,TimeUnit.SECONDS,new ArrayBlockingQueue<>(8),
         Thread.ofPlatform().name("review-job-",0).factory(),new ThreadPoolExecutor.AbortPolicy());
 
     public ReviewRunner(ReviewRepository store,ReviewAssetService assets,ObjectMapper json,AgentClient agent,
-            ResultWriter results,CreditLedgerService credits,TransactionTemplate tx,ReviewEvents events) {
+            ResultWriter results,CreditLedgerService credits,TransactionTemplate tx,ReviewEvents events,ReviewFailureService failures) {
         this.store=store;this.assets=assets;this.json=json;this.agent=agent;this.results=results;
-        this.credits=credits;this.tx=tx;this.events=events;
+        this.credits=credits;this.tx=tx;this.events=events;this.failures=failures;
     }
 
     public void afterCommit(ObjectNode request) {
@@ -56,7 +60,11 @@ public class ReviewRunner implements AutoCloseable {
     }
     public void runQueued(JsonNode request)throws Exception{
         String tenant=request.path("tenantId").asText(),id=request.path("reviewId").asText();int no=request.path("versionNo").asInt();
-        store.mutate(tenant,id,d->ReviewRepository.version(d,no).put("status","analyzing"));
+        store.mutate(tenant,id,d->{
+            var version=ReviewRepository.version(d,no);
+            if ("failed".equals(version.path("status").asText())) throw new IllegalStateException("REVIEW_ALREADY_FAILED");
+            version.put("status","analyzing");
+        });
         events.publish(id,no,"started");
         JsonNode response=callAgent("/internal/runs",request);
         tx.executeWithoutResult(status->{
@@ -91,17 +99,15 @@ public class ReviewRunner implements AutoCloseable {
     }
     public JsonNode callAgent(String path,JsonNode body)throws Exception{return agent.post(path,body);}
     public void fail(String tenant,String id,int no,String error){
-        try{store.mutate(tenant,id,d->{var v=ReviewRepository.version(d,no);v.put("status","failed").put("error",error);});}catch(Exception ignored){}
-        try{credits.release(id,no);}catch(Exception ignored){}
-        events.publish(id,no,"failed",json.createObjectNode().put("error",error));
+        try {
+            failures.fail(tenant,id,no,error);
+        } catch (Exception pending) {
+            log.warn("Review failure settlement will be recovered for {} v{}",id,no);
+        }
     }
     public void failQueued(String tenant,String id,int no){
-        // Both operations are idempotent, so a redelivery can finish either one after a crash.
-        credits.release(id,no);
-        store.mutate(tenant,id,d->{var v=ReviewRepository.version(d,no);
-            v.put("status","failed").put("error","ANALYSIS_FAILED_REUPLOAD_REQUIRED");});
+        failures.fail(tenant,id,no,"ANALYSIS_FAILED_REUPLOAD_REQUIRED");
         assets.purge(id,no);
-        events.publish(id,no,"failed",json.createObjectNode().put("error","ANALYSIS_FAILED_REUPLOAD_REQUIRED"));
     }
 
     @Override public void close(){jobs.shutdown();}

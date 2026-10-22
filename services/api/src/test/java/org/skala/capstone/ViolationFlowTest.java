@@ -27,6 +27,7 @@ import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
@@ -68,6 +69,9 @@ class ViolationFlowTest {
     @Autowired org.skala.capstone.review.RunTokenRepository tokens;
     @Autowired org.skala.capstone.auth.UserRepository users;
     @Autowired org.skala.capstone.review.queue.JobRepository jobs;
+    @Autowired org.skala.capstone.review.ReviewFailureService failures;
+    @MockitoSpyBean org.skala.capstone.billing.CreditRepository creditRepository;
+    @MockitoSpyBean org.skala.capstone.review.ReviewFailureRepository failureRepository;
     @Autowired org.springframework.transaction.support.TransactionTemplate tx;
     @MockitoBean AgentClient agent;
     @MockitoBean StringRedisTemplate redis;
@@ -229,6 +233,66 @@ class ViolationFlowTest {
         assertThat(balance()).isEqualTo(500);
         reviews.failQueued(TENANT,id,1);
         assertThat(balance()).isEqualTo(500);
+    }
+
+    @Test
+    void refundFailureKeepsDurableIntentAndRollsBackBothStateAndBalance() {
+        String id=reserveReview();
+        doThrow(new IllegalStateException("synthetic refund write failure")).when(creditRepository).refundBalance(anyMap());
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
+            () -> failures.fail(TENANT,id,1,"ANALYSIS_FAILED_REUPLOAD_REQUIRED"));
+        assertThat(read(id).path("versions").get(0).path("status").asText()).isEqualTo("analyzing");
+        assertThat(chargeStatus(id)).isEqualTo("reserved");
+        assertThat(balance()).isEqualTo(400);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM app.review_failure_requests WHERE review_id=CAST(? AS uuid)",Integer.class,id)).isEqualTo(1);
+        assertThat(events.replay(id)).isEmpty();
+
+        doCallRealMethod().when(creditRepository).refundBalance(anyMap());
+        failures.recover();
+        assertThat(read(id).path("versions").get(0).path("status").asText()).isEqualTo("failed");
+        assertThat(chargeStatus(id)).isEqualTo("released");
+        assertThat(balance()).isEqualTo(500);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM app.review_failure_requests WHERE review_id=CAST(? AS uuid)",Integer.class,id)).isZero();
+        assertThat(events.replay(id)).extracting(org.skala.capstone.review.events.ReviewEvents.Event::type).containsExactly("failed");
+        failures.recover();
+        assertThat(balance()).isEqualTo(500);
+    }
+
+    @Test
+    void lostFailureIntentIsRecoveredFromAnAbandonedLocalReservation() {
+        String id=reserveReview();
+        doThrow(new IllegalStateException("synthetic database outage")).when(failureRepository).enqueue(any());
+        reviews.fail(TENANT,id,1,"ANALYSIS_FAILED_REUPLOAD_REQUIRED");
+        assertThat(chargeStatus(id)).isEqualTo("reserved");
+        assertThat(events.replay(id)).isEmpty();
+        doCallRealMethod().when(failureRepository).enqueue(any());
+        jdbc.update("UPDATE app.reviews SET updated_at=now()-interval '8 minutes' WHERE id=CAST(? AS uuid)",id);
+        failures.recover();
+        assertThat(chargeStatus(id)).isEqualTo("released");
+        assertThat(balance()).isEqualTo(500);
+    }
+
+    @Test
+    void recoveryLeavesFreshLocalRunsAndQueueRetriesAlone() {
+        String fresh=reserveReview();
+        failures.recover();
+        assertThat(chargeStatus(fresh)).isEqualTo("reserved");
+        jdbc.update("INSERT INTO app.review_jobs(review_id,version_no,request,status) VALUES (CAST(? AS uuid),1,'{}','retry')",fresh);
+        jdbc.update("UPDATE app.reviews SET updated_at=now()-interval '8 minutes' WHERE id=CAST(? AS uuid)",fresh);
+        failures.recover();
+        assertThat(chargeStatus(fresh)).isEqualTo("reserved");
+        credits.release(fresh,1);
+    }
+
+    @Test
+    void lateFailureNeverOverwritesACompletedAndChargedReview() throws Exception {
+        String id=reserveReview();
+        when(agent.post(eq("/internal/runs"),any())).thenReturn(result("complete","complete"));
+        reviews.runQueued(run(id));
+        failures.fail(TENANT,id,1,"ANALYSIS_FAILED_REUPLOAD_REQUIRED");
+        assertThat(read(id).path("versions").get(0).path("status").asText()).isEqualTo("done");
+        assertThat(chargeStatus(id)).isEqualTo("charged");
+        assertThat(balance()).isEqualTo(400);
     }
 
     @Test

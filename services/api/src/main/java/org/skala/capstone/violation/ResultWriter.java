@@ -36,6 +36,9 @@ public class ResultWriter {
             boolean[] latest={false};
             store.mutate(tenant,id,d->{
                 ObjectNode v=ReviewRepository.version(d,no);
+                if ("failed".equals(v.path("status").asText())) {
+                    throw new IllegalStateException("REVIEW_ALREADY_FAILED");
+                }
                 v.set("result",result);v.put("status","done");
                 v.set("steps",json.valueToTree(List.of(100,100,100,100,100)));
                 latest[0]=ReviewRepository.latest(d).path("no").asInt()==no;
