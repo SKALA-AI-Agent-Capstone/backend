@@ -10,8 +10,6 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.context.annotation.Import;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(EnvironmentController.class)
@@ -31,13 +29,6 @@ class BootstrapBoundaryTest {
     @Test
     void internalApiRejectsMissingToken() throws Exception {
         mvc.perform(get("/internal/bootstrap")).andExpect(status().isUnauthorized());
-    }
-
-    @Test
-    void reviewSubmissionDoesNotPretendToAcceptWork() throws Exception {
-        mvc.perform(post("/api/reviews"))
-            .andExpect(status().isNotImplemented())
-            .andExpect(jsonPath("$.code").value("NOT_IMPLEMENTED"));
     }
 
     @Test

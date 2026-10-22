@@ -63,7 +63,7 @@ public class SecurityConfig {
 
     @Bean @Order(1)
     SecurityFilterChain internal(HttpSecurity http) throws Exception {
-        return http.securityMatcher("/internal/**", "/actuator/**", "/api/dev/**", "/api/reviews")
+        return http.securityMatcher("/internal/**", "/actuator/**", "/api/dev/**")
             .csrf(c -> c.disable()).authorizeHttpRequests(a -> a.anyRequest().permitAll())
             .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS)).build();
     }

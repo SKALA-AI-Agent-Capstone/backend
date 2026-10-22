@@ -208,7 +208,6 @@ Agent API, Worker와 Graph는 노션 Graph에 따라 하나의 Agent 서비스 �
 | GET Agent /health/live | Agent 프로세스 확인 |
 | GET Agent /health/ready | Agent DB 연결 확인 |
 | GET Agent /internal/environment | 내부 토큰 검증 후 MCP 목록과 DB 확인 |
-| POST /api/reviews | HTTP 501, NOT_IMPLEMENTED |
 | POST Agent /internal/runs | 신규 MVP의 scoped RunRequest 필요, 인증 후 빈 입력은 422 |
 
 내부 API는 Authorization: Bearer <INTERNAL_SERVICE_TOKEN>을 요구한다.
@@ -316,7 +315,7 @@ GET /api/v1/reviews/{reviewId}/events, `text/event-stream`. 일반 JSON API와 �
 | failed | Spring, 최종 실패. 스트림을 닫는다 | error |
 
 15초마다 `:ping` 주석을 보낸다. Agent는 POST /internal/reviews/{id}/events(내부 토큰과 X-Run-Token)로 step_done, tool_started, tool_finished만 보낼 수 있다.
-기존 /internal/reviews/{id}/progress는 step_done으로 처리한다. 저장된 결과가 원본이며 이벤트는 보조 신호다.
+옛 /internal/reviews/{id}/progress는 2026-10-22에 지웠다(호출하는 Agent 없음). 저장된 결과가 원본이며 이벤트는 보조 신호다.
 구독자와 재전송 버퍼는 API 프로세스 메모리에 있다. API를 여러 대로 늘리면 Redis pub/sub 같은 공유 채널이 필요하다.
 
 내부 /internal/runs와 /internal/runs/resume의 원본 모델은 packages/shared/src/capstone_shared/review_contracts.py,
