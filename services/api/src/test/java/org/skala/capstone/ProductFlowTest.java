@@ -169,7 +169,7 @@ class ProductFlowTest {
         assertThat(original).isEqualTo(png);
         byte[] thumbnail = mvc.perform(get("/api/v1/products/" + id + "/image/thumbnail").with(author()))
                 .andExpect(status().isOk())
-                .andExpect(content().contentType("image/jpeg"))
+                .andExpect(content().contentType("image/png"))
                 .andReturn().getResponse().getContentAsByteArray();
         assertThat(ImageIO.read(new ByteArrayInputStream(thumbnail)).getWidth()).isEqualTo(160);
 
@@ -239,7 +239,14 @@ class ProductFlowTest {
         assertThat(read(mvc.perform(get("/api/v1/products/" + bare + "/image").with(author()))
                 .andExpect(status().isNotFound())).path("message").asText()).isEqualTo("PRODUCT_IMAGE_NOT_FOUND");
 
-        // WebP는 대표 이미지로 받지만 썸네일은 만들 수 없다
+        // 진짜 WebP는 썸네일을 만든다(배경을 지운 이미지는 브라우저가 WebP로 바꿔 올린다)
+        JsonNode real = read(createProduct("{\"name\":\"" + unique("진짜 웹피") + "\"}", ThumbnailRendererTest.TINY_WEBP, author())
+                .andExpect(status().isCreated()));
+        assertThat(real.path("image").path("thumbnail").asBoolean()).isTrue();
+        mvc.perform(get("/api/v1/products/" + real.path("id").asText() + "/image/thumbnail").with(author()))
+                .andExpect(status().isOk()).andExpect(content().contentType("image/png"));
+
+        // 머리만 WebP인 손상 파일은 대표 이미지로 받지만 썸네일은 만들 수 없다
         byte[] webp = {'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'E', 'B', 'P', 'V', 'P', '8', ' '};
         JsonNode created = read(createProduct("{\"name\":\"" + unique("웹피") + "\"}", webp, author())
                 .andExpect(status().isCreated()));

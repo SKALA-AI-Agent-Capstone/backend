@@ -78,7 +78,7 @@ public class ProductController {
         return image(products.image(tenant(jwt), id, false));
     }
 
-    /** 목록 카드용 썸네일(너비 160px JPEG). */
+    /** 목록 카드용 썸네일(너비 160px PNG, 투명도 유지). */
     @GetMapping("/{id}/image/thumbnail")
     public ResponseEntity<byte[]> thumbnail(
             @AuthenticationPrincipal Jwt jwt, @PathVariable String id) {

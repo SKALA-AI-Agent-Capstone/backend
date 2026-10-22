@@ -128,7 +128,7 @@ public class ProductService {
         if (!(row.get("bytes") instanceof byte[] bytes)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "THUMBNAIL_UNAVAILABLE");
         }
-        return new StoredImage(bytes, thumbnail ? "image/jpeg" : row.get("image_mime").toString());
+        return new StoredImage(bytes, thumbnail ? "image/png" : row.get("image_mime").toString());
     }
 
     public static String name(String raw) {
@@ -164,7 +164,7 @@ public class ProductService {
             throw new ResponseStatusException(
                     HttpStatus.UNSUPPORTED_MEDIA_TYPE, "IMAGE_TYPE_UNSUPPORTED");
         }
-        byte[] thumbnail = thumbnails.render(bytes, mime).orElse(null);
+        byte[] thumbnail = thumbnails.renderTransparent(bytes, mime).orElse(null);
         return new ProductImage(bytes, mime, ReviewAssetService.hash(bytes), thumbnail);
     }
 

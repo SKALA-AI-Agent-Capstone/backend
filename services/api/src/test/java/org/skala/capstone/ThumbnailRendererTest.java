@@ -93,6 +93,38 @@ class ThumbnailRendererTest {
         assertThat(new Color(thumb.getRGB(80, 80)).getRed()).isGreaterThan(200);
     }
 
+    /** 1x1 무손실 WebP. Java 기본 ImageIO는 못 읽고 TwelveMonkeys 플러그인으로 읽는다. */
+    static final byte[] TINY_WEBP =
+            java.util.Base64.getDecoder().decode("UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==");
+
+    @Test
+    void webpImagesAreReadWithThePlugin() throws Exception {
+        BufferedImage thumb = read(renderer.render(TINY_WEBP, "image/webp").orElseThrow());
+        assertThat(thumb.getWidth()).isEqualTo(160);
+    }
+
+    @Test
+    void productThumbnailsKeepTransparencyAsPng() throws Exception {
+        BufferedImage cutout = new BufferedImage(400, 400, BufferedImage.TYPE_INT_ARGB);
+        var graphics = cutout.createGraphics();
+        graphics.setColor(Color.RED);
+        graphics.fillRect(100, 100, 200, 200);
+        graphics.dispose();
+        var out = new ByteArrayOutputStream();
+        ImageIO.write(cutout, "png", out);
+
+        byte[] png = renderer.renderTransparent(out.toByteArray(), "image/png").orElseThrow();
+        assertThat(png[1]).isEqualTo((byte) 'P');
+        BufferedImage thumb = ImageIO.read(new ByteArrayInputStream(png));
+        assertThat(thumb.getWidth()).isEqualTo(160);
+        assertThat(thumb.getColorModel().hasAlpha()).isTrue();
+        assertThat(thumb.getRGB(2, 2) >>> 24).isZero(); // 모서리는 투명
+        assertThat(new Color(thumb.getRGB(80, 80), true).getAlpha()).isEqualTo(255);
+        // 광고 썸네일은 예전처럼 JPEG이고 투명한 부분은 흰색이다
+        BufferedImage ad = read(renderer.render(out.toByteArray(), "image/png").orElseThrow());
+        assertThat(new Color(ad.getRGB(2, 2)).getRed()).isGreaterThan(240);
+    }
+
     @Test
     void unsupportedOrBrokenFilesGiveNoThumbnail() {
         byte[] webpHeader = {'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'E', 'B', 'P', 'V', 'P', '8', ' '};

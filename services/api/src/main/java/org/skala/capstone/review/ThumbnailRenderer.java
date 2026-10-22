@@ -26,8 +26,10 @@ import org.apache.pdfbox.rendering.PDFRenderer;
 import org.springframework.stereotype.Component;
 
 /**
- * 목록 화면 썸네일(너비 160px JPEG)을 만든다. 화면은 광고의 위쪽만 보여 주므로 높이는 240px까지 위에서부터 자른다.
+ * 목록 화면 썸네일(너비 160px)을 만든다. 화면은 광고의 위쪽만 보여 주므로 높이는 240px까지 위에서부터 자른다.
  * 큰 사진을 통째로 풀지 않도록 이미지는 위쪽 영역만 목표의 약 2배 크기로 줄여 읽고, PDF는 첫 쪽만 낮은 해상도로 그린다.
+ * 광고 썸네일은 JPEG(투명한 부분은 흰색), 제품 대표 이미지 썸네일은 배경을 지운 이미지가 많아 투명도를 지키는 PNG다.
+ * WebP는 TwelveMonkeys 플러그인으로 읽는다.
  */
 @Component
 public class ThumbnailRenderer {
@@ -37,15 +39,29 @@ public class ThumbnailRenderer {
     private static final float MIN_DPI = 18f;
     private static final float MAX_DPI = 72f;
 
-    /** 만들 수 없는 형식(WebP, CMYK JPEG 등)이나 손상, 암호 걸린 파일이면 빈 값이다. */
+    static {
+        // Spring Boot 실행 jar 안의 ImageIO 플러그인(WebP)은 자동으로 등록되지 않을 수 있어 한 번 다시 찾는다
+        ImageIO.scanForPlugins();
+    }
+
+    /** 광고 썸네일(JPEG). 만들 수 없는 형식(CMYK JPEG 등)이나 손상, 암호 걸린 파일이면 빈 값이다. */
     public Optional<byte[]> render(byte[] original, String mime) {
+        return render(original, mime, false);
+    }
+
+    /** 제품 대표 이미지 썸네일(투명도를 지키는 PNG). 만들 수 없으면 빈 값이다. */
+    public Optional<byte[]> renderTransparent(byte[] original, String mime) {
+        return render(original, mime, true);
+    }
+
+    private Optional<byte[]> render(byte[] original, String mime, boolean transparent) {
         try {
             BufferedImage source =
                     "application/pdf".equals(mime) ? firstPdfPage(original) : imageTop(original);
             if (source == null || source.getWidth() <= 0 || source.getHeight() <= 0) {
                 return Optional.empty();
             }
-            return Optional.of(jpeg(fit(source)));
+            return Optional.of(transparent ? png(fit(source, true)) : jpeg(fit(source, false)));
         } catch (IOException | RuntimeException unreadable) {
             return Optional.empty();
         }
@@ -85,6 +101,10 @@ public class ThumbnailRenderer {
     }
 
     static BufferedImage fit(BufferedImage source) {
+        return fit(source, false);
+    }
+
+    static BufferedImage fit(BufferedImage source, boolean transparent) {
         int height =
                 Math.max(
                         1,
@@ -95,12 +115,18 @@ public class ThumbnailRenderer {
                 Math.min(
                         source.getHeight(),
                         Math.max(1, Math.round((float) height * source.getWidth() / WIDTH)));
-        BufferedImage out = new BufferedImage(WIDTH, height, BufferedImage.TYPE_INT_RGB);
+        BufferedImage out =
+                new BufferedImage(
+                        WIDTH,
+                        height,
+                        transparent ? BufferedImage.TYPE_INT_ARGB : BufferedImage.TYPE_INT_RGB);
         Graphics2D graphics = out.createGraphics();
         try {
-            // 투명한 부분은 흰 배경으로 채운다(JPEG에는 투명도가 없다).
-            graphics.setColor(Color.WHITE);
-            graphics.fillRect(0, 0, WIDTH, height);
+            if (!transparent) {
+                // 투명한 부분은 흰 배경으로 채운다(JPEG에는 투명도가 없다).
+                graphics.setColor(Color.WHITE);
+                graphics.fillRect(0, 0, WIDTH, height);
+            }
             graphics.setRenderingHint(
                     RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
             graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
@@ -110,6 +136,12 @@ public class ThumbnailRenderer {
             graphics.dispose();
         }
         return out;
+    }
+
+    private static byte[] png(BufferedImage image) throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        if (!ImageIO.write(image, "png", bytes)) throw new IOException("PNG_WRITER_MISSING");
+        return bytes.toByteArray();
     }
 
     private static byte[] jpeg(BufferedImage image) throws IOException {

@@ -416,7 +416,7 @@ DB 장애 중에는 반환이 지연될 수 있으며, 즉시 반환을 보장�
 2026-10-22 목록 썸네일과 원본 캐시: `GET /api/v1/reviews/{id}/assets/{assetId}/thumbnail`은 너비 160px JPEG를 돌려준다.
 기업 범위는 원본 API와 같고(다른 기업이나 없는 asset은 404 `ASSET_NOT_FOUND`), 높이는 원본 위쪽만 240px까지 자른다.
 처음 요청 때 원본으로 만들어 `review_assets.thumbnail`에 저장하고 이후에는 저장본을 준다. 이미지는 위쪽 영역만 줄여 읽고,
-PDF는 PDFBox로 첫 쪽만 낮은 해상도로 그린다. WebP, CMYK JPEG, 손상이나 암호 걸린 파일처럼 만들 수 없으면 저장하지 않고
+PDF는 PDFBox로 첫 쪽만 낮은 해상도로 그린다. WebP는 2026-10-23부터 TwelveMonkeys 플러그인으로 읽는다. CMYK JPEG, 손상이나 암호 걸린 파일처럼 만들 수 없으면 저장하지 않고
 404 `THUMBNAIL_UNAVAILABLE`이며 화면은 형식 아이콘으로 대신한다.
 사용자용 원본 API와 썸네일 API는 asset id마다 내용이 바뀌지 않아 `Cache-Control: max-age=86400, private`를 보낸다.
 private이라 CDN 같은 공용 캐시에는 남지 않지만, 같은 브라우저에서는 로그아웃 뒤에도 하루 동안 캐시가 남을 수 있다.
@@ -430,7 +430,7 @@ private이라 CDN 같은 공용 캐시에는 남지 않지만, 같은 브라우�
 제품 응답: `{id, name, type, image, reviewCount, latestReviewAt, createdAt, updatedAt}`.
 - `type`: `general`(일반화장품), `functional`(기능성화장품), `children`(영유아, 어린이용 화장품), `customized`(맞춤형화장품).
 - `image`: 없으면 null, 있으면 `{version, mime, thumbnail}`. version은 이미지 내용 해시 앞 16자라 이미지를 바꾸면 달라진다.
-  thumbnail은 썸네일을 만들 수 있었는지다(WebP는 false).
+  thumbnail은 썸네일을 만들 수 있었는지다(손상된 이미지는 false).
 - `reviewCount`, `latestReviewAt`: 이 제품의 검토 수와 가장 최근 검토의 갱신 시각(없으면 null).
 
 | API | 설명 |
@@ -442,7 +442,7 @@ private이라 CDN 같은 공용 캐시에는 남지 않지만, 같은 브라우�
 | DELETE /api/v1/products/{id} | 검토가 0건인 제품만 지운다. `{"ok":true}` |
 | PUT /api/v1/products/{id}/image | multipart `image`로 대표 이미지를 바꾼다 |
 | GET /api/v1/products/{id}/image | 대표 이미지 원본 |
-| GET /api/v1/products/{id}/image/thumbnail | 너비 160px JPEG 썸네일 |
+| GET /api/v1/products/{id}/image/thumbnail | 너비 160px PNG 썸네일. 배경을 지운 이미지의 투명도를 지킨다 |
 | GET /api/v1/products/{id}/reviews | 이 제품의 검토. 형식, 순서, 한도와 `view=summary`는 GET /api/v1/reviews와 같다 |
 
 - 이름은 앞뒤 공백을 빼고 1~200자이며 기업 안에서 겹칠 수 없다. 비면 400 `PRODUCT_NAME_REQUIRED`, 길면 400 `PRODUCT_NAME_TOO_LONG`,

@@ -22,6 +22,8 @@
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-amqp</artifactId></dependency>
     <!-- 목록 썸네일용 PDF 첫 쪽 렌더링 -->
     <dependency><groupId>org.apache.pdfbox</groupId><artifactId>pdfbox</artifactId><version>3.0.3</version></dependency>
+    <!-- 썸네일용 WebP 읽기(순수 Java). Java 기본 ImageIO는 WebP를 읽지 못한다 -->
+    <dependency><groupId>com.twelvemonkeys.imageio</groupId><artifactId>imageio-webp</artifactId><version>3.12.0</version></dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-web</artifactId>
