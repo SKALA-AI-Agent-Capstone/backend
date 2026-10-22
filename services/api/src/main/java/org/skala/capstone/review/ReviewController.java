@@ -39,9 +39,15 @@ public class ReviewController {
         this.json = json;
     }
 
+    /**
+     * 검토 목록. view=summary면 버전마다 result 대신 분석 시각과 위험도별 문구 수만 싣는다(목록 화면용).
+     * 값이 없거나 다른 값이면 예전과 같은 전체 문서다(배포 순서가 달라도 깨지지 않게 기본값을 유지한다).
+     */
     @GetMapping("/api/v1/reviews")
-    public List<ObjectNode> list(@AuthenticationPrincipal Jwt jwt) {
-        return views.list(jwt.getClaimAsString("tenantId"));
+    public List<ObjectNode> list(
+            @AuthenticationPrincipal Jwt jwt, @RequestParam(required = false) String view) {
+        String tenant = jwt.getClaimAsString("tenantId");
+        return "summary".equals(view) ? views.summaries(tenant) : views.list(tenant);
     }
 
     @GetMapping("/api/v1/reviews/{id}")

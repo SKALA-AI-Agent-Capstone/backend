@@ -47,6 +47,40 @@ public class ReviewViewAssembler {
         return docs;
     }
 
+    /**
+     * 목록 화면용 요약. 버전마다 result 전체(문구별 판단, 법령 근거 원문, OCR 문구 등) 대신
+     * 분석 시각과 위험도별 문구 수만 싣는다. 나머지 필드(input, 상태, 단계, 결정 진행률 hitl)는 전체 목록과 같다.
+     * 프론트가 상세 데이터를 요약으로 덮어쓰지 않도록 summary=true를 붙인다.
+     */
+    public List<ObjectNode> summaries(String tenant) {
+        List<ObjectNode> docs = list(tenant);
+        for (ObjectNode doc : docs) {
+            doc.put("summary", true);
+            for (JsonNode version : doc.withArray("versions")) {
+                if (version instanceof ObjectNode node && node.path("result").isObject()) {
+                    node.set("result", resultSummary(node.path("result")));
+                }
+            }
+        }
+        return docs;
+    }
+
+    private ObjectNode resultSummary(JsonNode result) {
+        ObjectNode counts = json.createObjectNode().put("high", 0).put("medium", 0).put("low", 0);
+        int total = 0;
+        for (JsonNode finding : result.path("findings")) {
+            // 저장된 위험도 값을 그대로(소문자) 센다. high, medium, low 외 값도 별도 키로 남는다.
+            String severity = finding.path("severity").asText("").toLowerCase(Locale.ROOT);
+            if (!severity.isEmpty()) counts.put(severity, counts.path(severity).asInt() + 1);
+            total++;
+        }
+        ObjectNode summary = json.createObjectNode();
+        summary.set("analyzedAt", result.path("analyzedAt").isMissingNode() ? json.nullNode() : result.path("analyzedAt"));
+        summary.put("findingCount", total);
+        summary.set("severityCounts", counts);
+        return summary;
+    }
+
     private void attach(ObjectNode doc, String id) {
         Map<String, String> findingIds = new HashMap<>();
         Map<String, Integer> order = new HashMap<>();
