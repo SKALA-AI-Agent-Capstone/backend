@@ -37,7 +37,7 @@ public class ReviewAssetService {
         return "review:asset:" + id;
     }
 
-    String mime(byte[] bytes) {
+    public static String mime(byte[] bytes) {
         if (bytes.length > 5 && new String(bytes, 0, 5, StandardCharsets.US_ASCII).equals("%PDF-")) return "application/pdf";
         if (bytes.length > 8 && bytes[0] == (byte)137 && bytes[1] == 80 && bytes[2] == 78 && bytes[3] == 71) return "image/png";
         if (bytes.length > 3 && bytes[0] == (byte)255 && bytes[1] == (byte)216 && bytes[2] == (byte)255) return "image/jpeg";

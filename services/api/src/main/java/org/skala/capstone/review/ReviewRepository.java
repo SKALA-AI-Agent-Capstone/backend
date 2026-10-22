@@ -48,6 +48,16 @@ public class ReviewRepository {
                 tenant);
     }
 
+    /** 한 제품의 광고 검토. 순서와 한도는 전체 목록과 같다. */
+    public List<ObjectNode> listByProduct(String tenant, String productId) {
+        return jdbc.query(
+                "SELECT document::text FROM app.reviews WHERE tenant_id=CAST(? AS uuid) AND"
+                    + " product_id=CAST(? AS uuid) ORDER BY updated_at DESC LIMIT 200",
+                (rs, n) -> parse(rs.getString(1)),
+                tenant,
+                productId);
+    }
+
     @Transactional
     public ObjectNode mutate(String tenant, String id, Consumer<ObjectNode> action) {
         var rows =
@@ -69,13 +79,14 @@ public class ReviewRepository {
         return doc;
     }
 
-    public void create(String id, String tenant, String author, ObjectNode doc) {
+    public void create(String id, String tenant, String author, String productId, ObjectNode doc) {
         jdbc.update(
-                "INSERT INTO app.reviews(id,tenant_id,author_id,document) VALUES (CAST(? AS"
-                    + " uuid),CAST(? AS uuid),CAST(? AS uuid),CAST(? AS jsonb))",
+                "INSERT INTO app.reviews(id,tenant_id,author_id,product_id,document) VALUES (CAST(?"
+                    + " AS uuid),CAST(? AS uuid),CAST(? AS uuid),CAST(? AS uuid),CAST(? AS jsonb))",
                 id,
                 tenant,
                 author,
+                productId,
                 doc.toString());
     }
 

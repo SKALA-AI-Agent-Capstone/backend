@@ -275,6 +275,7 @@ Agent 및 MCP 밖의 별도 Application 서비스가 책임진다. 중도 실패
 - POST /api/v1/users/team: 관리자만 같은 기업의 author 또는 reviewer 생성.
 - POST /api/v1/reviews: multipart metadata(JSON 문자열), files(광고 PDF/이미지 배열), evidence(선택 증빙 배열).
 - metadata: product, media, evidence의 docType 목록. 직접 광고 카피 입력은 받지 않는다.
+  2026-10-22부터 productId(선택)를 받는다. 자세한 규칙은 아래 "제품 단위 검토" 절을 본다.
 - GET /api/v1/reviews 및 /{reviewId}: 기업 범위의 서버 저장 결과. 현재 200건 한도.
 - POST /api/v1/reviews/{reviewId}/re-review: 같은 multipart 형식, 새 원본 필수, 새 버전과 별도 승인 이력.
 - POST /api/v1/reviews/{reviewId}/decision: versionNo, state, comment. 모든 결정에 의견 필수, 서버 역할 및 최신 버전 검증.
@@ -419,6 +420,43 @@ PDF는 PDFBox로 첫 쪽만 낮은 해상도로 그린다. WebP, CMYK JPEG, 손�
 404 `THUMBNAIL_UNAVAILABLE`이며 화면은 형식 아이콘으로 대신한다.
 사용자용 원본 API와 썸네일 API는 asset id마다 내용이 바뀌지 않아 `Cache-Control: max-age=86400, private`를 보낸다.
 private이라 CDN 같은 공용 캐시에는 남지 않지만, 같은 브라우저에서는 로그아웃 뒤에도 하루 동안 캐시가 남을 수 있다.
+
+### 제품 단위 검토 (2026-10-22, 1단계)
+
+광고 검토는 제품에 속한다. 화면은 제품 목록 → 제품 상세(그 제품의 광고 검토 내역) → 검토 리포트 순서다.
+같은 기업의 사용자는 역할과 관계없이 제품을 등록하고 고칠 수 있다. 다른 기업의 제품이나 없는 id는 모두 404 `PRODUCT_NOT_FOUND`다.
+증빙 서류를 제품에 붙이고 한 번만 요약하는 기능은 다음 단계이며, 지금은 예전처럼 검토마다 증빙을 받는다.
+
+제품 응답: `{id, name, type, image, reviewCount, latestReviewAt, createdAt, updatedAt}`.
+- `type`: `general` 또는 `functional`.
+- `image`: 없으면 null, 있으면 `{version, mime, thumbnail}`. version은 이미지 내용 해시 앞 16자라 이미지를 바꾸면 달라진다.
+  thumbnail은 썸네일을 만들 수 있었는지다(WebP는 false).
+- `reviewCount`, `latestReviewAt`: 이 제품의 검토 수와 가장 최근 검토의 갱신 시각(없으면 null).
+
+| API | 설명 |
+| --- | --- |
+| GET /api/v1/products | 기업의 제품. 최근에 검토가 있었거나 수정된 순, 200건 한도 |
+| POST /api/v1/products | multipart `metadata`(JSON `{name, type}`, type 생략 시 general)와 선택 `image`. 201 |
+| GET /api/v1/products/{id} | 제품 하나 |
+| PATCH /api/v1/products/{id} | JSON `{name?, type?}`. 보낸 필드만 바꾼다 |
+| PUT /api/v1/products/{id}/image | multipart `image`로 대표 이미지를 바꾼다 |
+| GET /api/v1/products/{id}/image | 대표 이미지 원본 |
+| GET /api/v1/products/{id}/image/thumbnail | 너비 160px JPEG 썸네일 |
+| GET /api/v1/products/{id}/reviews | 이 제품의 검토. 형식, 순서, 한도와 `view=summary`는 GET /api/v1/reviews와 같다 |
+
+- 이름은 앞뒤 공백을 빼고 1~200자이며 기업 안에서 겹칠 수 없다. 비면 400 `PRODUCT_NAME_REQUIRED`, 길면 400 `PRODUCT_NAME_TOO_LONG`,
+  겹치면 409 `PRODUCT_NAME_TAKEN`. 잘못된 유형은 400 `INVALID_PRODUCT_TYPE`, metadata가 JSON 객체가 아니면 400 `INVALID_METADATA`.
+- 대표 이미지는 PNG, JPEG, WebP만 받고(그 외는 415 `IMAGE_TYPE_UNSUPPORTED`, PDF 포함) 10MiB까지다(413 `IMAGE_LIMIT_10_MIB`).
+  등록할 때 썸네일까지 만들어 저장한다. 이미지가 없으면 404 `PRODUCT_IMAGE_NOT_FOUND`, 썸네일을 만들 수 없던 이미지는 404 `THUMBNAIL_UNAVAILABLE`.
+- 이미지 URL은 바뀌지 않으므로 프론트는 `?v={image.version}`을 붙여 부른다. 그래서 두 이미지 API는 `Cache-Control: max-age=86400, private`를 보낸다.
+- 제품 이름을 바꿔도 이미 접수된 검토의 productName(접수 당시 이름)은 바뀌지 않는다. 제품 삭제 API는 아직 없다.
+
+검토 접수(POST /api/v1/reviews)와 제품:
+- metadata에 `productId`가 있으면 이 기업의 제품인지 확인하고(아니면 404 `PRODUCT_NOT_FOUND`) 그 제품으로 접수한다.
+  metadata.product.name은 제품의 현재 이름으로 바꿔 저장하고 Agent에 넘긴다. 다른 이름을 같이 보내도 무시한다.
+- productId가 없으면 예전처럼 product.name이 필요하고(비면 400 `PRODUCT_NAME_REQUIRED`) 같은 이름의 제품을 찾아 쓰거나 general 유형으로 새로 만든다.
+  이름은 앞뒤 공백을 빼고 비교하며 200자를 넘으면 400 `PRODUCT_NAME_TOO_LONG`이다.
+- review 문서에 `productId`가 추가된다(목록, 요약 목록, 상세 모두). Agent로 가는 실행 요청은 바뀌지 않는다.
 
 입력 검증 변경: 파일 검증과 읽기를 DB 저장 및 크레딧 예약 전에 끝낸다. 잘못된 metadata JSON은
 400 `INVALID_METADATA`, 파일 읽기 실패는 400 `UPLOAD_READ_FAILED`로 반환한다.

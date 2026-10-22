@@ -66,6 +66,8 @@ class ViolationFlowTest {
     @Autowired ReviewRunner reviews;
     @Autowired org.skala.capstone.review.ReviewService submissions;
     @Autowired org.skala.capstone.review.ReviewRepository reviewRepository;
+    @Autowired org.skala.capstone.product.ProductService productService;
+    @Autowired org.skala.capstone.product.ProductRepository productRepository;
     @Autowired org.skala.capstone.review.ReviewAssetService assets;
     @Autowired org.skala.capstone.review.RunTokenRepository tokens;
     @Autowired org.skala.capstone.auth.UserRepository users;
@@ -321,6 +323,8 @@ class ViolationFlowTest {
                         jobs,
                         reviews,
                         credits,
+                        productService,
+                        productRepository,
                         json,
                         tx,
                         true);
@@ -380,6 +384,8 @@ class ViolationFlowTest {
                         jobs,
                         reviews,
                         credits,
+                        productService,
+                        productRepository,
                         json,
                         tx,
                         true);
@@ -849,12 +855,16 @@ class ViolationFlowTest {
         v.putObject("input").putArray("files");
         v.putNull("result");
         v.putObject("approval").put("state", "pending").putArray("history");
+        // 2026-10-22부터 모든 검토는 제품에 속한다
+        String productId = productRepository.findOrCreate(TENANT, "p", AUTHOR.id());
+        doc.put("productId", productId);
         jdbc.update(
-                "INSERT INTO app.reviews(id,tenant_id,author_id,document) VALUES (CAST(? AS"
-                    + " uuid),CAST(? AS uuid),CAST(? AS uuid),CAST(? AS jsonb))",
+                "INSERT INTO app.reviews(id,tenant_id,author_id,product_id,document) VALUES (CAST(?"
+                    + " AS uuid),CAST(? AS uuid),CAST(? AS uuid),CAST(? AS uuid),CAST(? AS jsonb))",
                 id,
                 TENANT,
                 AUTHOR.id(),
+                productId,
                 doc.toString());
         return id;
     }
