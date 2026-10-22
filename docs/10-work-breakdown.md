@@ -59,6 +59,8 @@ backend/services/api/src/main/java/org/skala/capstone/
   system/                    EnvironmentController, EnvironmentService, SystemRepository
   review/                    사용자 및 내부 Controller, ReviewService, ReviewRunner
                              ReviewAssetService, ReviewRepository, AssetRepository, RunTokenRepository
+                             ReviewFailureService, ReviewFailureRepository와 실패 정산 복구
+    model/                   ReviewDocument, ReviewVersion, ReviewStatus, AnalysisResult, ReviewSubmission
     events/                  ReviewEvents와 SSE
     queue/                   ReviewJobQueue, ReviewQueueTopology, JobRepository
   violation/                 ViolationDecisionService, ResultWriter, ReviewViewAssembler, ViolationRepository

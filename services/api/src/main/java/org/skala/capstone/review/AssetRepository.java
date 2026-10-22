@@ -33,4 +33,9 @@ public class AssetRepository {
         return jdbc.queryForList("SELECT mime_type FROM app.review_assets "
             + "WHERE id=CAST(? AS uuid) AND review_id=CAST(? AS uuid) AND version_no=?", assetId, reviewId, version);
     }
+
+    public List<Map<String, Object>> scopedOriginal(String reviewId, int version, String assetId) {
+        return jdbc.queryForList("SELECT bytes FROM app.review_assets "
+            + "WHERE id=CAST(? AS uuid) AND review_id=CAST(? AS uuid) AND version_no=?", assetId, reviewId, version);
+    }
 }
