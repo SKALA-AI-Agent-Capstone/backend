@@ -39,4 +39,7 @@ public class UserRepository {
         jdbc.update("INSERT INTO app.users (id,tenant_id,email,name,password_hash,role) "
             + "VALUES (?,CAST(? AS uuid),?,?,?,?)", id, tenant, email, name, passwordHash, role);
     }
+    public String name(String userId) {
+        return jdbc.queryForObject("SELECT name FROM app.users WHERE id=CAST(? AS uuid)",String.class,userId);
+    }
 }

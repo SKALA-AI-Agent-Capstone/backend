@@ -14,7 +14,7 @@ Python 공통 모델과 생성 JSON Schema는 ai_agent/packages/shared와 ai_age
 
 ## 현재 실행 구조
 
-### Java API 코드 배치 (2026-10-22 구조 정리 B)
+### Java API 코드 배치 (2026-10-22 구조 정리 B, C)
 
 `org.skala.capstone` 아래에서 `common`은 인증 설정과 공통 오류 및 Agent HTTP 클라이언트를,
 `auth`는 사용자 인증과 세션을, `billing`은 결제와 크레딧 원장을 소유한다.
@@ -23,7 +23,25 @@ Python 공통 모델과 생성 JSON Schema는 ai_agent/packages/shared와 ai_age
 SQL은 UserRepository, SessionRepository, CreditRepository, SystemRepository에서 실행한다.
 JDBC와 기존 DB 스키마를 유지하며 회원가입, 팀원 추가, Refresh 회전, 결제 확정의
 트랜잭션은 Service로 이동했다. Refresh 재사용 시 세션 폐기를 커밋하는 규칙도 유지한다.
-리뷰와 문구 결정의 패키지 분리는 구조 정리 C에서 이어서 진행한다.
+
+`review`의 ReviewController는 사용자 조회와 접수 및 삭제, InternalReviewController는
+Agent의 실행 범위가 제한된 파일 조회와 진행 이벤트를 받는다. ReviewService는 접수와
+삭제, ReviewRunner는 Agent 실행과 성공 및 실패 정산, ReviewAssetService는 파일 검증과
+영구 원본 및 Redis 캐시를 담당한다. ReviewRepository, AssetRepository, RunTokenRepository가
+리뷰 문서, 원본, 실행 토큰의 SQL을 소유하며 JdbcTemplate을 외부로 노출하지 않는다.
+`review.events`는 SSE, `review.queue`는 큐 선언과 발행 및 소비를 담당하고 JobRepository가
+outbox SQL을 소유한다.
+
+`violation`의 ResultWriter는 Agent 결과와 위반 문구 저장, ViolationDecisionService는
+문구별 결정과 다시쓰기, ReviewViewAssembler는 목록과 상세 응답 조립을 맡는다.
+ViolationRepository는 위반 문구 및 수정안 SQL과 조회용 record를 제공한다.
+
+접수, 크레딧 예약, 실행 토큰과 outbox 저장은 같은 트랜잭션이다. 큐를 끄면 커밋 후에만
+기존 크기의 실행 풀에 제출한다. 결과 저장과 과금 정산은 같은 TransactionTemplate에서
+실행하고 실패 환불은 REQUIRES_NEW를 유지한다. 문구 결정의 review 및 violation FOR UPDATE,
+Agent 호출을 잠금 밖에서 수행하는 순서, 큐의 publisher confirm과 수동 ACK,
+5초 및 30초 재시도, 최대 3회 시도와 7분 정체 작업 복구도 유지한다.
+이번 구조 정리에서는 URL과 JSON 응답, DB 스키마 및 설정을 변경하지 않았다.
 
 인증 동작 변경은 구조 이동과 별도 커밋이다. 회원가입과 팀원 추가는 비밀번호의 앞뒤 공백을
 보존하고 로그인은 입력 원문을 비교한다. 기존 최소 길이 검사는 유지하며 원문도 최대 72자로

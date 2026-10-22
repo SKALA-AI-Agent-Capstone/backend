@@ -1,10 +1,5 @@
 package org.skala.capstone;
 
-import org.skala.capstone.common.AgentClient;
-
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
-
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rabbitmq.client.Channel;
 import java.io.IOException;
@@ -13,18 +8,24 @@ import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.skala.capstone.common.AgentClient;
+import org.skala.capstone.review.ReviewRunner;
+import org.skala.capstone.review.queue.JobRepository;
+import org.skala.capstone.review.queue.ReviewJobQueue;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageProperties;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
 class ReviewJobQueueTest {
     static final String ID="00000000-0000-0000-0000-000000000001";
     JdbcTemplate jdbc=mock(JdbcTemplate.class);
     RabbitTemplate rabbit=mock(RabbitTemplate.class);
-    ReviewService reviews=mock(ReviewService.class);
+    ReviewRunner reviews=mock(ReviewRunner.class);
     Channel channel=mock(Channel.class);
-    ReviewJobQueue queue=new ReviewJobQueue(jdbc,rabbit,new ObjectMapper(),reviews);
+    ReviewJobQueue queue=new ReviewJobQueue(new JobRepository(jdbc),rabbit,new ObjectMapper(),reviews);
 
     Message message(){
         MessageProperties props=new MessageProperties();

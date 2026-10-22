@@ -87,4 +87,8 @@ public class CreditRepository {
         jdbc.update("UPDATE app.users SET credit_balance=credit_balance+? WHERE id=? AND tenant_id=?",
             reservation.get("credits"), reservation.get("user_id"), reservation.get("tenant_id"));
     }
+    public String status(String reviewId,int version) {
+        return jdbc.queryForObject("SELECT status FROM app.review_credit_charges WHERE review_id=CAST(? AS uuid) AND version_no=?",
+            String.class,reviewId,version);
+    }
 }

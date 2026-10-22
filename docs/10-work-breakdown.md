@@ -39,8 +39,8 @@
 
 ## 2. 코드 배치
 
-현재 존재하는 서비스 폴더 아래에 다음 모듈을 순차적으로 추가하는 안이다.
-존재하지 않는 경로를 이미 구현된 코드로 표시하지 않는다.
+아래 Java API 패키지는 2026-10-22 구조 정리 B, C의 실제 배치다.
+다른 서비스의 하위 모듈은 개발 제안이며, 존재하지 않는 경로를 구현된 코드로 표시하지 않는다.
 
 ~~~text
 frontend/src/
@@ -57,7 +57,11 @@ backend/services/api/src/main/java/org/skala/capstone/
     dto/                     OrderRequest, TossConfirmRequest
   reference/                 ReferenceController
   system/                    EnvironmentController, EnvironmentService, SystemRepository
-  (루트의 리뷰 관련 클래스)    구조 정리 C에서 review와 violation으로 분리 예정
+  review/                    사용자 및 내부 Controller, ReviewService, ReviewRunner
+                             ReviewAssetService, ReviewRepository, AssetRepository, RunTokenRepository
+    events/                  ReviewEvents와 SSE
+    queue/                   ReviewJobQueue, ReviewQueueTopology, JobRepository
+  violation/                 ViolationDecisionService, ResultWriter, ReviewViewAssembler, ViolationRepository
 
 ai_agent/services/agent/src/capstone_agent/
   nodes/                     입력, 주장, 검색, 대조, 초안, 승인과 리포트
@@ -79,6 +83,11 @@ ai_agent/services/rag-mcp/src/capstone_rag_mcp/
 backend/packages/shared/     Pydantic과 공통 계약
 backend/contracts/           생성된 JSON Schema
 ~~~
+
+Java 구조 정리는 JDBC를 유지한다. B는 공통, 인증, 결제, 근거와 환경 확인을 먼저 분리하고,
+인증 입력 버그 수정은 별도 커밋으로 둔다. C는 B 위에서 리뷰, 위반 문구와 큐를 분리한다.
+B 병합 전 C의 비교 기준은 B이며, squash 병합 뒤에는 C의 고유 커밋만 새 main 위로 옮긴다.
+팀 공지를 마쳤으며 작업은 별도 worktree에서 수행한다. push와 PR 생성 및 병합은 별도 요청 시 진행한다.
 
 큐 발행과 소비는 기존 services/agent 안의 모듈로 구분하는 제안이다. 노션 Graph는 별도 Agent Worker 배포를 요구하지 않는다.
 과금은 별도 서비스이며 실제 경로와 언어는 후속 결정이다. 빈 서비스만 늘리지 않는다.
