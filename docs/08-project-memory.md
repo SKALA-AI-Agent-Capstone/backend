@@ -16,7 +16,7 @@ Notion 연동 API가 해당 페이지를 반환하지 않아 브라우저에서 
   rewritten_manual은 재검증 통과(final_text_validated) 뒤에만 저장한다. 사람 다시쓰기 한도(M)는 violation_rewrites.requested_by_human 행 수로 센다.
   review 전체 판단은 reviews.hitl_status(pending/approved/rejected/revision_requested)이며 "모든 violation 결정 뒤에만 approved"는 앱에서 검증한다.
 - PR merge 버튼은 사용자가 직접 누른다. Claude가 PR을 만들고 본문 템플릿을 채운 뒤 CI 결과를 확인해 전달한다.
-- 남은 확인 거리: 인증 시나리오(회전, 재사용, 로그아웃)를 저장소 테스트로 옮기기. scripts/mvp_smoke.py는 OpenAI 키가 있는 환경에서 사진 단계 assert가 실패한다(키 없는 환경 전제).
+- 인증 시나리오(회전, 재사용, 로그아웃, 팀원 추가)는 2026-10-22 AuthFlowTest로 옮겼다. 남은 확인 거리: scripts/mvp_smoke.py는 OpenAI 키가 있는 환경에서 사진 단계 assert가 실패한다(키 없는 환경 전제).
 
 ## 2026-10-21 분리 코드 main 반영
 
