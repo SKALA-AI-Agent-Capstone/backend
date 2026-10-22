@@ -1,42 +1,44 @@
 package org.skala.capstone;
 
-import org.skala.capstone.billing.CreditCatalog;
-import org.skala.capstone.billing.CreditLedgerService;
-import org.skala.capstone.common.AgentClient;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
-
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.*;
 import java.util.*;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.*;
+import org.skala.capstone.billing.CreditCatalog;
+import org.skala.capstone.billing.CreditLedgerService;
+import org.skala.capstone.common.AgentClient;
+import org.skala.capstone.review.ReviewAssetService;
+import org.skala.capstone.review.ReviewRunner;
+import org.skala.capstone.review.events.ReviewEvents;
+import org.skala.capstone.violation.ResultWriter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
-import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /** 실제 PostgreSQL(Flyway V1~V5)에서 결과 저장, 문구별 결정, 전체 승인과 기업 범위를 검증한다. Agent와 Redis는 대체한다. */
 @SpringBootTest
@@ -55,11 +57,17 @@ class ViolationFlowTest {
     @Autowired MockMvc mvc;
     @Autowired JdbcTemplate jdbc;
     @Autowired ObjectMapper json;
-    @Autowired ViolationService violations;
+    @Autowired ResultWriter violations;
     @Autowired CreditLedgerService credits;
     @Autowired CreditCatalog catalog;
     @Autowired DataSource dataSource;
-    @Autowired ReviewService reviews;
+    @Autowired ReviewRunner reviews;
+    @Autowired org.skala.capstone.review.ReviewService submissions;
+    @Autowired org.skala.capstone.review.ReviewRepository reviewRepository;
+    @Autowired org.skala.capstone.review.ReviewAssetService assets;
+    @Autowired org.skala.capstone.review.RunTokenRepository tokens;
+    @Autowired org.skala.capstone.auth.UserRepository users;
+    @Autowired org.skala.capstone.review.queue.JobRepository jobs;
     @Autowired org.springframework.transaction.support.TransactionTemplate tx;
     @MockitoBean AgentClient agent;
     @MockitoBean StringRedisTemplate redis;
@@ -164,6 +172,53 @@ class ViolationFlowTest {
         verifyNoInteractions(agent);
     }
 
+    private org.springframework.security.oauth2.jwt.Jwt authorJwt() {
+        return org.springframework.security.oauth2.jwt.Jwt.withTokenValue("test").header("alg", "none")
+            .subject(AUTHOR.id()).claim("tenantId", TENANT).claim("role", "author").build();
+    }
+
+    private MockMultipartFile validAd() {
+        return new MockMultipartFile("files", "ad.png", "image/png", new byte[]{(byte)137,80,78,71,13,10,26,10,0});
+    }
+
+    @Test
+    void queuedSubmissionCommitsItsOutboxAndReservationTogether() {
+        jdbc.update("UPDATE app.users SET credit_balance=500 WHERE id=CAST(? AS uuid)", AUTHOR.id());
+        @SuppressWarnings("unchecked") ValueOperations<String,String> values=mock(ValueOperations.class);
+        when(redis.opsForValue()).thenReturn(values);
+        var queued = new org.skala.capstone.review.ReviewService(reviewRepository, assets, tokens, users, jobs,
+            reviews, credits, json, true);
+        ObjectNode submitted = tx.execute(status -> queued.submit(authorJwt(), "{\"product\":{\"name\":\"검사\"}}",
+            List.of(validAd()), List.of()));
+        String id = submitted.path("id").asText();
+        assertThat(balance()).isEqualTo(400);
+        assertThat(chargeStatus(id)).isEqualTo("reserved");
+        var job = jdbc.queryForMap("SELECT status,request::text FROM app.review_jobs WHERE review_id=CAST(? AS uuid)", id);
+        assertThat(job.get("status")).isEqualTo("pending");
+        assertThat(job.get("request").toString()).contains(id).contains("runToken");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM app.review_assets WHERE review_id=CAST(? AS uuid)", Integer.class, id)).isEqualTo(1);
+        verifyNoInteractions(agent);
+        credits.release(id, 1);
+    }
+
+    @Test
+    void rolledBackSubmissionDoesNotStartAnAfterCommitAnalysis() {
+        jdbc.update("UPDATE app.users SET credit_balance=500 WHERE id=CAST(? AS uuid)", AUTHOR.id());
+        @SuppressWarnings("unchecked") ValueOperations<String,String> values=mock(ValueOperations.class);
+        when(redis.opsForValue()).thenReturn(values);
+        String[] id = {null};
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class, () -> tx.executeWithoutResult(status -> {
+            id[0] = submissions.submit(authorJwt(), "{\"product\":{\"name\":\"검사\"}}", List.of(validAd()), List.of()).path("id").asText();
+            throw new IllegalStateException("synthetic failure before commit");
+        }));
+        assertThat(balance()).isEqualTo(500);
+        for (String table : List.of("reviews", "review_assets", "review_runs", "review_jobs", "review_credit_charges")) {
+            String column = table.equals("reviews") ? "id" : "review_id";
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM app." + table + " WHERE " + column + "=CAST(? AS uuid)", Integer.class, id[0])).isZero();
+        }
+        verifyNoInteractions(agent);
+    }
+
     @Test
     void analysisFailureReturnsReservedCreditOnlyOnce()throws Exception{
         String id=reserveReview();
@@ -224,7 +279,7 @@ class ViolationFlowTest {
         String id=review();
         jdbc.update("UPDATE app.reviews SET document=jsonb_set(document,'{versions,0,steps}','[0,0,0,0,0]'::jsonb) WHERE id=CAST(? AS uuid)",id);
         String token="run-token-for-sse-test-0123456789abcdef";
-        jdbc.update("INSERT INTO app.review_runs VALUES (CAST(? AS uuid),1,?)",id,ReviewService.hash(token.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        jdbc.update("INSERT INTO app.review_runs VALUES (CAST(? AS uuid),1,?)",id,ReviewAssetService.hash(token.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         String internal="Bearer unit-test-only-token-not-for-production-12345";
 
         // 다른 기업은 스트림을 열 수 없다.

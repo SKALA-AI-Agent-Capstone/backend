@@ -52,4 +52,8 @@ public class CreditLedgerService {
             credits.refundBalance(reservations.getFirst());
         }
     }
+
+    public String status(String reviewId, int version) {
+        return credits.status(reviewId, version);
+    }
 }

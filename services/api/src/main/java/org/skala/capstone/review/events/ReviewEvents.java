@@ -1,4 +1,4 @@
-package org.skala.capstone;
+package org.skala.capstone.review.events;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -19,12 +19,12 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
  */
 @Component
 public class ReviewEvents {
-    static final Set<String> AGENT_TYPES=Set.of("step_done","tool_started","tool_finished");
+    public static final Set<String> AGENT_TYPES=Set.of("step_done","tool_started","tool_finished");
     static final Set<String> TERMINAL=Set.of("completed","failed");
     static final long TIMEOUT_MS=10*60*1000L;
     static final int REPLAY=50;
 
-    record Event(long id,String type,ObjectNode data){}
+    public record Event(long id,String type,ObjectNode data){}
 
     private final ObjectMapper json;
     private final AtomicLong sequence=new AtomicLong();
@@ -36,7 +36,7 @@ public class ReviewEvents {
     public ReviewEvents(ObjectMapper json){this.json=json;}
 
     /** Opens a stream. The caller has already checked that the review belongs to the user's tenant. */
-    SseEmitter subscribe(String reviewId,ObjectNode snapshot,boolean running,String lastEventId){
+    public SseEmitter subscribe(String reviewId,ObjectNode snapshot,boolean running,String lastEventId){
         SseEmitter emitter=new SseEmitter(TIMEOUT_MS);
         try{
             emitter.send(SseEmitter.event().name("snapshot").data(snapshot).reconnectTime(3000));
@@ -52,7 +52,7 @@ public class ReviewEvents {
     }
 
     /** Sends one event to every open stream of the review and keeps it for reconnecting clients. */
-    void publish(String reviewId,int versionNo,String type,ObjectNode extra){
+    public void publish(String reviewId,int versionNo,String type,ObjectNode extra){
         ObjectNode data=json.createObjectNode().put("type",type).put("reviewId",reviewId).put("versionNo",versionNo)
             .put("at",Instant.now().toString());
         if(extra!=null)extra.fieldNames().forEachRemaining(k->{if(!data.has(k))data.set(k,extra.get(k));});
@@ -74,7 +74,7 @@ public class ReviewEvents {
         if(TERMINAL.contains(type))subscribers.remove(reviewId);
     }
 
-    void publish(String reviewId,int versionNo,String type){publish(reviewId,versionNo,type,null);}
+    public void publish(String reviewId,int versionNo,String type){publish(reviewId,versionNo,type,null);}
 
     /** Proxies close idle connections. A comment every 15 seconds keeps the stream open and finds dead clients. */
     @Scheduled(fixedDelay=15000,initialDelay=15000)
@@ -88,9 +88,9 @@ public class ReviewEvents {
         subscribers.values().removeIf(List::isEmpty);
     }
 
-    int subscriberCount(String reviewId){return subscribers.getOrDefault(reviewId,List.of()).size();}
+    public int subscriberCount(String reviewId){return subscribers.getOrDefault(reviewId,List.of()).size();}
 
-    List<Event> replay(String reviewId){
+    public List<Event> replay(String reviewId){
         Deque<Event> buffer=recent.get(reviewId);
         if(buffer==null)return List.of();
         synchronized(buffer){return new ArrayList<>(buffer);}

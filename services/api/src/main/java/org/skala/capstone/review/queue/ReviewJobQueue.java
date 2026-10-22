@@ -1,6 +1,4 @@
-package org.skala.capstone;
-
-import org.skala.capstone.common.AgentClient;
+package org.skala.capstone.review.queue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rabbitmq.client.Channel;
@@ -8,38 +6,17 @@ import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import org.skala.capstone.common.AgentClient;
+import org.skala.capstone.review.ReviewRunner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.core.*;
-import org.springframework.amqp.rabbit.annotation.EnableRabbit;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-
-/** Durable task notification; the database remains the source of job state and input. */
-@Configuration
-@EnableRabbit
-@ConditionalOnProperty(name="capstone.review.queue-enabled",havingValue="true")
-class ReviewQueueTopology {
-    static final String MAIN="review.run";
-    static final String DEAD="review.run.dead";
-    static final String DEAD_EXCHANGE="review.dead";
-
-    @Bean Queue reviewRunQueue(){
-        return QueueBuilder.durable(MAIN).quorum().deadLetterExchange(DEAD_EXCHANGE).build();
-    }
-    @Bean Queue reviewDeadQueue(){return QueueBuilder.durable(DEAD).build();}
-    @Bean DirectExchange reviewDeadExchange(){return new DirectExchange(DEAD_EXCHANGE);}
-    @Bean Binding reviewDeadBinding(Queue reviewDeadQueue,DirectExchange reviewDeadExchange){
-        return BindingBuilder.bind(reviewDeadQueue).to(reviewDeadExchange).with(MAIN);
-    }
-}
 
 @Component
 @ConditionalOnProperty(name="capstone.review.queue-enabled",havingValue="true")
@@ -49,13 +26,13 @@ public class ReviewJobQueue {
     static final int MAX_ATTEMPTS=3;
     /** 승인 뒤 Agent 재개(kind=resume)는 2026-10-22 승인을 없애면서 지웠다. 남은 종류는 분석(run)뿐이다. */
     static final String RUN="run";
-    private final JdbcTemplate jdbc;
+    private final JobRepository jobs;
     private final RabbitTemplate rabbit;
     private final ObjectMapper json;
-    private final ReviewService reviews;
+    private final ReviewRunner reviews;
 
-    public ReviewJobQueue(JdbcTemplate jdbc,RabbitTemplate rabbit,ObjectMapper json,ReviewService reviews){
-        this.jdbc=jdbc;this.rabbit=rabbit;this.json=json;this.reviews=reviews;
+    public ReviewJobQueue(JobRepository jobs,RabbitTemplate rabbit,ObjectMapper json,ReviewRunner reviews){
+        this.jobs=jobs;this.rabbit=rabbit;this.json=json;this.reviews=reviews;
         rabbit.setMandatory(true);
     }
 
@@ -64,8 +41,7 @@ public class ReviewJobQueue {
     /** Outbox publisher: an API restart cannot lose a committed job. Duplicate publishes are harmless. */
     @Scheduled(fixedDelay=3000,initialDelay=3000)
     public void dispatch(){
-        var rows=jdbc.queryForList("SELECT review_id::text,version_no,kind FROM app.review_jobs "+
-            "WHERE status IN ('pending','retry') AND kind='run' AND next_attempt_at<=now() ORDER BY next_attempt_at LIMIT 20");
+        var rows=jobs.ready();
         for(var row:rows){
             String id=row.get("review_id").toString(),kind=row.get("kind").toString();
             int no=((Number)row.get("version_no")).intValue();
@@ -75,8 +51,7 @@ public class ReviewJobQueue {
                 var result=confirmation.getFuture().get(10,TimeUnit.SECONDS);
                 if(!result.isAck() || confirmation.getReturned()!=null)
                     throw new IllegalStateException("REVIEW_QUEUE_PUBLISH_NOT_CONFIRMED");
-                jdbc.update("UPDATE app.review_jobs SET status='published',updated_at=now() "+
-                    "WHERE review_id=CAST(? AS uuid) AND version_no=? AND status IN ('pending','retry') AND kind=?",id,no,kind);
+                jobs.published(id,no,kind);
             }catch(Exception error){
                 log.warn("Review {} job publish failed for {} v{}",kind,id,no,error);
             }
@@ -98,10 +73,7 @@ public class ReviewJobQueue {
         try{no=Integer.parseInt(key[1]);UUID.fromString(id);}
         catch(IllegalArgumentException invalid){channel.basicReject(tag,false);return;}
         if(!RUN.equals(kind)){channel.basicReject(tag,false);return;}
-        var claimed=jdbc.queryForList("UPDATE app.review_jobs SET status='running',attempts=attempts+1,updated_at=now() "+
-            "WHERE review_id=CAST(? AS uuid) AND version_no=? AND status IN ('pending','published','retry') "+
-            "AND next_attempt_at<=now() AND kind=? "+
-            "RETURNING request::text,attempts",id,no,kind);
+        var claimed=jobs.claim(id,no,kind);
         if(claimed.isEmpty()){channel.basicAck(tag,false);return;}
         Map<String,Object> row=claimed.getFirst();
         int attempt=((Number)row.get("attempts")).intValue();
@@ -117,15 +89,12 @@ public class ReviewJobQueue {
                 String trace=agentFailure==null?null:agentFailure.traceId;
                 if(!permanent && attempt<MAX_ATTEMPTS){
                     int delay=retryDelay(attempt);
-                    jdbc.update("UPDATE app.review_jobs SET status='retry',updated_at=now(), "+
-                        "next_attempt_at=now()+(? * interval '1 second'),last_error=?,last_trace_id=? "+
-                        "WHERE review_id=CAST(? AS uuid) AND version_no=? AND kind=?",delay,failure.getClass().getSimpleName(),trace,id,no,kind);
+                    jobs.retry(id,no,kind,delay,failure.getClass().getSimpleName(),trace);
                     channel.basicAck(tag,false);
                     reviews.retryScheduled(id,no,attempt,delay);
                 }else{
                     reviews.failQueued(tenant,id,no);
-                    jdbc.update("UPDATE app.review_jobs SET status='failed',request='{}'::jsonb,updated_at=now(),last_error=?,last_trace_id=? "+
-                        "WHERE review_id=CAST(? AS uuid) AND version_no=? AND kind=?",failure.getClass().getSimpleName(),trace,id,no,kind);
+                    jobs.failed(id,no,kind,failure.getClass().getSimpleName(),trace);
                     channel.basicReject(tag,false);
                 }
             }catch(Exception settlementError){
@@ -135,8 +104,7 @@ public class ReviewJobQueue {
             return;
         }
         try{
-            jdbc.update("UPDATE app.review_jobs SET status='done',request='{}'::jsonb,updated_at=now(),last_error=NULL,last_trace_id=NULL "+
-                "WHERE review_id=CAST(? AS uuid) AND version_no=? AND kind=?",id,no,kind);
+            jobs.done(id,no,kind);
             channel.basicAck(tag,false);
         }catch(Exception settlementError){
             log.error("Review {} job completion could not be recorded for {} v{}",kind,id,no,settlementError);
@@ -149,8 +117,7 @@ public class ReviewJobQueue {
      */
     @Scheduled(fixedDelay=60000,initialDelay=60000)
     public void recoverStale(){
-        var rows=jdbc.queryForList("SELECT review_id::text,version_no,kind,attempts,request->>'tenantId' AS tenant "+
-            "FROM app.review_jobs WHERE status='running' AND kind='run' AND updated_at<now()-interval '7 minutes' LIMIT 20");
+        var rows=jobs.stale();
         for(var row:rows){
             String id=row.get("review_id").toString(),kind=row.get("kind").toString();
             int no=((Number)row.get("version_no")).intValue(),attempts=((Number)row.get("attempts")).intValue();
@@ -160,10 +127,7 @@ public class ReviewJobQueue {
                 boolean failed=reviews.terminalFailure(tenant,id,no);
                 if(!done && !failed && attempts>=MAX_ATTEMPTS){reviews.failQueued(tenant,id,no);failed=true;}
                 String status=done?"done":failed?"failed":"retry";
-                jdbc.update("UPDATE app.review_jobs SET status=?,request=CASE WHEN ?='retry' THEN request ELSE '{}'::jsonb END, "+
-                    "next_attempt_at=now(),updated_at=now() "+
-                    "WHERE review_id=CAST(? AS uuid) AND version_no=? AND kind=? AND status='running' AND updated_at<now()-interval '7 minutes'",
-                    status,status,id,no,kind);
+                jobs.recover(id,no,kind,status);
             }catch(Exception error){
                 log.warn("Stale review {} job recovery failed for {} v{}",kind,id,no,error);
             }
