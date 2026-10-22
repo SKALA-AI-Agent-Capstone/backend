@@ -8,6 +8,7 @@ import java.util.UUID;
 import org.skala.capstone.auth.dto.LoginRequest;
 import org.skala.capstone.auth.dto.SignupRequest;
 import org.skala.capstone.auth.dto.TeamMemberRequest;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseCookie;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -42,13 +43,27 @@ public class AuthService {
         return value;
     }
 
-    @Transactional
-    public Session signup(SignupRequest input, String previous) {
-        String email = value(input.email(), "email", 3, 200).toLowerCase(Locale.ROOT);
+    private static String email(String input) {
+        String email = value(input, "email", 3, 200).toLowerCase(Locale.ROOT);
         if (!email.matches("[^\\s@]+@[^\\s@]+\\.[^\\s@]+")) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "INVALID_EMAIL");
         }
-        String password = value(input.password(), "password", 10, 72);
+        return email;
+    }
+
+    private static String password(String input) {
+        // 길이 검사는 유지하되 실제 비밀번호의 공백은 저장과 비교에서 그대로 보존한다.
+        value(input, "password", 10, 72);
+        if (input.length() > 72) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "INVALID_PASSWORD");
+        }
+        return input;
+    }
+
+    @Transactional
+    public Session signup(SignupRequest input, String previous) {
+        String email = email(input.email());
+        String password = password(input.password());
         String name = value(input.name(), "name", 1, 80);
         String company = value(input.tenantName(), "tenantName", 1, 120);
         if (users.emailExists(email)) {
@@ -114,8 +129,16 @@ public class AuthService {
         if (!Set.of("author", "reviewer").contains(role)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "INVALID_ROLE");
         }
-        String email = value(input.email(), "email", 3, 200).toLowerCase(Locale.ROOT);
-        users.createUser(UUID.randomUUID(), jwt.getClaimAsString("tenantId"), email,
-            value(input.name(), "name", 1, 80), passwords.encode(value(input.password(), "password", 10, 72)), role);
+        String email = email(input.email());
+        if (users.emailExists(email)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "EMAIL_EXISTS");
+        }
+        try {
+            users.createUser(UUID.randomUUID(), jwt.getClaimAsString("tenantId"), email,
+                value(input.name(), "name", 1, 80), passwords.encode(password(input.password())), role);
+        } catch (DuplicateKeyException duplicate) {
+            // 사전 확인 뒤 다른 요청이 같은 이메일을 먼저 만든 경우도 같은 코드로 응답한다.
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "EMAIL_EXISTS");
+        }
     }
 }

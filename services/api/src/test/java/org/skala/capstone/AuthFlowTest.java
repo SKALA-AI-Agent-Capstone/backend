@@ -288,41 +288,57 @@ class AuthFlowTest {
             .andExpect(status().isBadRequest()).andExpect(jsonPath("$.message").value("INVALID_ROLE"));
     }
 
-    // ── 지금 동작을 그대로 적은 것. 고칠지는 따로 정한다(PR 본문의 "발견한 차이" 참고). ──
+    // 인증 입력 회귀: 가입과 팀원 추가의 규칙을 동일하게 적용한다.
 
     @Test
-    void currentBehaviorTeamDuplicateEmailUsesAGenericCode() throws Exception {
+    void teamDuplicateEmailUsesTheSignupErrorCode() throws Exception {
         Session admin = signup(email());
         String taken = email();
         signup(taken);
         mvc.perform(post("/api/v1/users/team").header(HttpHeaders.AUTHORIZATION, "Bearer " + admin.access())
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(json.writeValueAsString(Map.of("email", taken, "password", PASSWORD, "name", "n", "role", "author"))))
-            // 회원가입은 EMAIL_EXISTS인데 팀원 추가는 DB 고유 키 위반이 일반 처리기로 가서 ALREADY_EXISTS다
-            .andExpect(status().isConflict()).andExpect(jsonPath("$.message").value("ALREADY_EXISTS"));
+            // 회원가입과 팀원 추가가 같은 중복 이메일 코드를 반환한다
+            .andExpect(status().isConflict()).andExpect(jsonPath("$.message").value("EMAIL_EXISTS"));
     }
 
     @Test
-    void currentBehaviorTeamDoesNotCheckTheEmailFormat() throws Exception {
+    void teamRejectsAnInvalidEmail() throws Exception {
         Session admin = signup(email());
         mvc.perform(post("/api/v1/users/team").header(HttpHeaders.AUTHORIZATION, "Bearer " + admin.access())
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(json.writeValueAsString(Map.of("email", "no-at-sign-" + UUID.randomUUID(), "password", PASSWORD, "name", "n", "role", "author"))))
-            // 회원가입은 INVALID_EMAIL로 막지만 팀원 추가는 형식을 보지 않는다
-            .andExpect(status().isOk());
+            // 형식 오류는 사용자를 생성하기 전에 거절한다
+            .andExpect(status().isBadRequest()).andExpect(jsonPath("$.message").value("INVALID_EMAIL"));
     }
 
     @Test
-    void currentBehaviorPasswordWithOuterSpacesCannotLogInAfterSignup() throws Exception {
+    void passwordWithOuterSpacesIsPreservedAtSignupAndLogin() throws Exception {
         String email = email();
         String spaced = "  " + PASSWORD + "  ";
         postJson("/api/v1/users/signup", Map.of("email", email, "password", spaced, "name", "n", "tenantName", "t"))
             .andExpect(status().isOk());
-        // 회원가입은 앞뒤 공백을 지운 값을 저장하지만 로그인은 입력을 그대로 비교한다
+        // 같은 원문으로 로그인하고 공백을 제거한 다른 비밀번호는 거절한다
         postJson("/api/v1/users/login", Map.of("email", email, "password", spaced))
-            .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.message").value("INVALID_LOGIN"));
-        postJson("/api/v1/users/login", Map.of("email", email, "password", PASSWORD))
             .andExpect(status().isOk());
+        postJson("/api/v1/users/login", Map.of("email", email, "password", PASSWORD))
+            .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.message").value("INVALID_LOGIN"));
+    }
+
+    @Test
+    void teamMemberPasswordAlsoPreservesOuterSpaces() throws Exception {
+        Session admin = signup(email());
+        String member = email();
+        String spaced = "  " + PASSWORD + "  ";
+        mvc.perform(post("/api/v1/users/team").header(HttpHeaders.AUTHORIZATION, "Bearer " + admin.access())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json.writeValueAsString(Map.of("email", member.toUpperCase(Locale.ROOT), "password", spaced,
+                    "name", "팀원", "role", "reviewer"))))
+            .andExpect(status().isOk());
+        postJson("/api/v1/users/login", Map.of("email", member, "password", spaced))
+            .andExpect(status().isOk());
+        postJson("/api/v1/users/login", Map.of("email", member, "password", PASSWORD))
+            .andExpect(status().isUnauthorized());
     }
 
     static List<String> fieldNames(JsonNode node) {
