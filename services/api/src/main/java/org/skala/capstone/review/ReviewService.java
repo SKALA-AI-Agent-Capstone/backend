@@ -56,7 +56,6 @@ public class ReviewService {
         // This transaction also owns the review/version insert. Invalid uploads roll back the reservation.
         credits.reserve(tenant,jwt.getSubject(),id,no);
         ArrayNode ads=json.createArrayNode(),docs=json.createArrayNode(),assets=json.createArrayNode();
-        List<String> cached=new ArrayList<>();
         try{
             for(int i=0;i<all.size();i++){
                 MultipartFile file=all.get(i);
@@ -66,7 +65,7 @@ public class ReviewService {
                 if(name.length()>200)name=name.substring(name.length()-200);
                 String role=i<files.size()?"advertisement":"evidence";
                 String docType=i<files.size()?"":meta.path("evidence").path(i-files.size()).path("docType").asText("other");
-                assetsService.store(assetId,id,no,name,contentType,role,docType,raw);cached.add(assetId);
+                assetsService.store(assetId,id,no,name,contentType,role,docType,raw);
                 ObjectNode asset=json.createObjectNode().put("id",assetId).put("name",name).put("size",raw.length).put("mime",contentType).put("role",role).put("docType",docType)
                     .put("kind",contentType.equals("application/pdf")?"detail_page":"image");
                 assets.add(asset);if(i<files.size())ads.add(asset.deepCopy());else docs.add(asset.deepCopy());
@@ -88,7 +87,7 @@ public class ReviewService {
                 runner.afterCommit(request);
             }
             return store.get(tenant,id);
-        }catch(Exception e){for(String asset:cached)assetsService.discardCached(asset);if(e instanceof ResponseStatusException status)throw status;
+        }catch(Exception e){if(e instanceof ResponseStatusException status)throw status;
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,"UPLOAD_STORAGE_FAILED");}
     }
     public Map<String,Boolean> delete(Jwt jwt,String id){

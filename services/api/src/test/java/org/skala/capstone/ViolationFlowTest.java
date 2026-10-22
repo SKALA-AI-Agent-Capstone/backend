@@ -72,6 +72,7 @@ class ViolationFlowTest {
     @Autowired org.skala.capstone.review.ReviewFailureService failures;
     @MockitoSpyBean org.skala.capstone.billing.CreditRepository creditRepository;
     @MockitoSpyBean org.skala.capstone.review.ReviewFailureRepository failureRepository;
+    @MockitoSpyBean org.skala.capstone.review.AssetRepository assetRepository;
     @Autowired org.springframework.transaction.support.TransactionTemplate tx;
     @MockitoBean AgentClient agent;
     @MockitoBean StringRedisTemplate redis;
@@ -158,14 +159,15 @@ class ViolationFlowTest {
     }
 
     @Test
-    void redisUploadFailureRollsBackCreditAndReview()throws Exception{
+    void durableAssetFailureRollsBackCreditAndReview()throws Exception{
         jdbc.update("UPDATE app.users SET credit_balance=500 WHERE id=CAST(? AS uuid)",AUTHOR.id());
         int beforeReviews=jdbc.queryForObject("SELECT count(*) FROM app.reviews",Integer.class);
         int beforeCharges=jdbc.queryForObject("SELECT count(*) FROM app.review_credit_charges",Integer.class);
         int beforeAssets=jdbc.queryForObject("SELECT count(*) FROM app.review_assets",Integer.class);
         @SuppressWarnings("unchecked") ValueOperations<String,String> values=mock(ValueOperations.class);
         when(redis.opsForValue()).thenReturn(values);
-        doThrow(new RedisConnectionFailureException("synthetic Redis outage")).when(values).set(anyString(),anyString(),any(java.time.Duration.class));
+        doThrow(new IllegalStateException("synthetic asset storage failure")).when(assetRepository)
+            .create(anyString(),anyString(),anyInt(),anyString(),anyString(),anyString(),anyString(),any(byte[].class),anyString());
         var file=new MockMultipartFile("files","ad.png","image/png",new byte[]{(byte)137,80,78,71,13,10,26,10,0});
         mvc.perform(multipart("/api/v1/reviews").file(file).param("metadata","{\"product\":{\"name\":\"검사\"}}").with(as(AUTHOR)))
             .andExpect(status().isBadGateway()).andExpect(jsonPath("$.message").value("UPLOAD_STORAGE_FAILED"));
@@ -186,10 +188,12 @@ class ViolationFlowTest {
     }
 
     @Test
-    void queuedSubmissionCommitsItsOutboxAndReservationTogether() {
+    void queuedSubmissionCommitsItsOutboxAndReservationEvenWhenRedisIsDown() {
         jdbc.update("UPDATE app.users SET credit_balance=500 WHERE id=CAST(? AS uuid)", AUTHOR.id());
         @SuppressWarnings("unchecked") ValueOperations<String,String> values=mock(ValueOperations.class);
         when(redis.opsForValue()).thenReturn(values);
+        doThrow(new RedisConnectionFailureException("synthetic Redis outage")).when(values)
+            .set(anyString(),anyString(),any(java.time.Duration.class));
         var queued = new org.skala.capstone.review.ReviewService(reviewRepository, assets, tokens, users, jobs,
             reviews, credits, json, true);
         ObjectNode submitted = tx.execute(status -> queued.submit(authorJwt(), "{\"product\":{\"name\":\"검사\"}}",
@@ -221,6 +225,7 @@ class ViolationFlowTest {
             assertThat(jdbc.queryForObject("SELECT count(*) FROM app." + table + " WHERE " + column + "=CAST(? AS uuid)", Integer.class, id[0])).isZero();
         }
         verifyNoInteractions(agent);
+        verify(values,never()).set(anyString(),anyString(),any(java.time.Duration.class));
     }
 
     @Test
@@ -585,6 +590,31 @@ class ViolationFlowTest {
 
         mvc.perform(get("/api/v1/reviews/"+id+"/assets/"+assetId).with(as(OUTSIDER))).andExpect(status().isNotFound());
         mvc.perform(get("/api/v1/reviews/"+id+"/assets/"+UUID.randomUUID()).with(as(AUTHOR))).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void internalOriginalFallsBackToDatabaseWithoutWideningRunScope() throws Exception {
+        String id=review(), other=review(), assetId=UUID.randomUUID().toString();
+        byte[] png=validAd().getBytes();
+        assetRepository.create(assetId,id,1,"ad.png","image/png","advertisement","",png,ReviewAssetService.hash(png));
+        String token="asset-run-token-for-database-fallback";
+        tokens.create(id,1,ReviewAssetService.hash(token.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        tokens.create(other,1,ReviewAssetService.hash(token.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        @SuppressWarnings("unchecked") ValueOperations<String,String> values=mock(ValueOperations.class);
+        when(redis.opsForValue()).thenReturn(values);
+        when(values.get(anyString())).thenThrow(new RedisConnectionFailureException("synthetic outage"));
+        doThrow(new RedisConnectionFailureException("synthetic outage")).when(values)
+            .set(anyString(),anyString(),any(java.time.Duration.class));
+        String internal="Bearer unit-test-only-token-not-for-production-12345";
+        mvc.perform(get("/internal/reviews/"+id+"/assets/"+assetId).param("versionNo","1")
+                .header("Authorization",internal).header("X-Run-Token",token))
+            .andExpect(status().isOk()).andExpect(content().bytes(png));
+        mvc.perform(get("/internal/reviews/"+other+"/assets/"+assetId).param("versionNo","1")
+                .header("Authorization",internal).header("X-Run-Token",token)).andExpect(status().isNotFound());
+        mvc.perform(get("/internal/reviews/"+id+"/assets/"+assetId).param("versionNo","2")
+                .header("Authorization",internal).header("X-Run-Token",token)).andExpect(status().isForbidden());
+        mvc.perform(get("/internal/reviews/"+id+"/assets/"+assetId).param("versionNo","1")
+                .header("Authorization",internal).header("X-Run-Token","wrong")).andExpect(status().isForbidden());
     }
 
     @Test
