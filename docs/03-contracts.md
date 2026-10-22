@@ -428,7 +428,7 @@ private이라 CDN 같은 공용 캐시에는 남지 않지만, 같은 브라우�
 증빙 서류를 제품에 붙이고 한 번만 요약하는 기능은 다음 단계이며, 지금은 예전처럼 검토마다 증빙을 받는다.
 
 제품 응답: `{id, name, type, image, reviewCount, latestReviewAt, createdAt, updatedAt}`.
-- `type`: `general` 또는 `functional`.
+- `type`: `general`(일반화장품), `functional`(기능성화장품), `children`(영유아, 어린이용 화장품), `customized`(맞춤형화장품).
 - `image`: 없으면 null, 있으면 `{version, mime, thumbnail}`. version은 이미지 내용 해시 앞 16자라 이미지를 바꾸면 달라진다.
   thumbnail은 썸네일을 만들 수 있었는지다(WebP는 false).
 - `reviewCount`, `latestReviewAt`: 이 제품의 검토 수와 가장 최근 검토의 갱신 시각(없으면 null).

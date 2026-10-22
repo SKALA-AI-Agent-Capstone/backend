@@ -190,6 +190,25 @@ class ProductFlowTest {
     }
 
     @Test
+    void childrenAndCustomizedTypesAreCreatedReadAndUpdated() throws Exception {
+        for (String type : new String[] {"children", "customized"}) {
+            String metadata = json.createObjectNode()
+                    .put("name", unique("추가 유형 " + type)).put("type", type).toString();
+            JsonNode created = read(createProduct(metadata, null, author()).andExpect(status().isCreated()));
+            String id = created.path("id").asText();
+            assertThat(created.path("type").asText()).isEqualTo(type);
+            mvc.perform(get("/api/v1/products/" + id).with(author()))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.type").value(type));
+            mvc.perform(patch("/api/v1/products/" + id).with(author())
+                            .contentType("application/json").content("{\"type\":\"general\"}"))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.type").value("general"));
+            mvc.perform(patch("/api/v1/products/" + id).with(author())
+                            .contentType("application/json").content("{\"type\":\"" + type + "\"}"))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.type").value(type));
+        }
+    }
+
+    @Test
     void invalidProductsAreRejected() throws Exception {
         String name = unique("중복 제품");
         product(name);

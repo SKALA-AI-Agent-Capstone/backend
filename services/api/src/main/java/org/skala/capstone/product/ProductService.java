@@ -28,7 +28,7 @@ import org.springframework.web.server.ResponseStatusException;
 public class ProductService {
     public static final int NAME_MAX = 200;
     static final long IMAGE_MAX_BYTES = 10L * 1024 * 1024;
-    static final Set<String> TYPES = Set.of("general", "functional");
+    static final Set<String> TYPES = Set.of("general", "functional", "children", "customized");
     static final Set<String> IMAGE_TYPES = Set.of("image/png", "image/jpeg", "image/webp");
 
     private final ProductRepository products;
