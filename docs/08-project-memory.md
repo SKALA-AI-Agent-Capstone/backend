@@ -6,6 +6,18 @@
 Notion 연동 API가 해당 페이지를 반환하지 않아 브라우저에서 본문과 상세 문서, 시퀀스 원본 이미지를 읽었다.
 노션 원문과 API 등록부 자체는 수정하지 않았다.
 
+## 2026-10-22 Phase 1 마무리와 Phase 2 인계
+
+- Phase 2는 Phase 1 결과를 고도화하는 단계다. 새 기능보다 기존 경계와 계약을 유지한 채 품질과 완성도를 높인다.
+- 인증: Access JWT 15분(sid 클레임으로 app.sessions 확인, clock skew 0), Refresh Token 14일은 HttpOnly·Secure·SameSite=Strict 쿠키로만 전달하고 DB에는 SHA-256 해시만 둔다.
+  재발급할 때마다 회전하며, 이미 회전된 토큰이 30초 안에 오면 REFRESH_TOKEN_ROTATED(탭 간 동시 재발급), 그 뒤면 세션 전체 폐기다. 계약은 docs/03-contracts.md "인증 토큰" 절.
+- 비밀번호는 BCrypt, Refresh Token은 SHA-256 해시로 저장한다. 같은 브라우저에서 다시 로그인하면 이전 세션을 폐기한다.
+- ERD 확정(V4): 재검토 버전 구조 없이 violation은 review_id만 참조한다. violation은 final_resolution(kept/rewritten/rewritten_manual)과 final_text로 확정하고,
+  rewritten_manual은 재검증 통과(final_text_validated) 뒤에만 저장한다. 사람 다시쓰기 한도(M)는 violation_rewrites.requested_by_human 행 수로 센다.
+  review 전체 판단은 reviews.hitl_status(pending/approved/rejected/revision_requested)이며 "모든 violation 결정 뒤에만 approved"는 앱에서 검증한다.
+- PR merge 버튼은 사용자가 직접 누른다. Claude가 PR을 만들고 본문 템플릿을 채운 뒤 CI 결과를 확인해 전달한다.
+- 남은 확인 거리: 인증 시나리오(회전, 재사용, 로그아웃)를 저장소 테스트로 옮기기. scripts/mvp_smoke.py는 OpenAI 키가 있는 환경에서 사진 단계 assert가 실패한다(키 없는 환경 전제).
+
 ## 2026-10-21 분리 코드 main 반영
 
 - 사용자가 분리 결과의 main 반영을 명시적으로 요청했다. ai_agent에 최초 main을 게시하고 Backend는 PR로 병합한다.
