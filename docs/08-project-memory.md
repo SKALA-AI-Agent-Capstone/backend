@@ -59,6 +59,12 @@ Notion 연동 API가 해당 페이지를 반환하지 않아 브라우저에서 
 - 화면의 "법령 검색 미연결"은 Agent가 rag-mcp를 호출하지 않고 Frontend 문구가 고정이기 때문이다. RAG 데이터와 도구는 동작한다.
 - 다른 브랜치가 맞출 계약, 화면 basis 매핑, 머지 순서와 충돌 해결은 docs/06-rag-start.md의 통합 가이드에 둔다.
 
+## 2026-10-22 RAG 수집 경로 변경
+
+- 사용자 결정: 화장품법, 시행령, 시행규칙은 법제처 API 현행본만 적재하고 legalize-kr(GitHub) 경로와 GITHUB_TOKEN을 없앤다. 과거 버전은 필요 없다.
+- 사용자 결정: 식약처 화장품 규제정보 API(lookup_ingredient_regulation)는 국내 광고 판단과 무관해 삭제한다.
+- 사용자 결정: 이미지 페이지가 많은 PDF는 검수 MD(data/curated)가 있을 때만 적재한다.
+
 ## 이번에 실제로 읽은 문서
 
 | 문서 | 확인 범위 |

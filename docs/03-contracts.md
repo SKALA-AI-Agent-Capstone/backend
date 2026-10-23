@@ -95,7 +95,7 @@ EvidenceFile의 필드는 노션에서 타입 이름과 PDF 또는 이미지 참
 | rag.check_ingredient_standard | ingredient, review_date=None | prohibited, restricted, not_listed | 2026-10-21 추가. 화장품 안전기준 별표 1, 2를 표 행 단위로 정확 대조 |
 | business.find_functional_reports | product_name, functional_approval_no=None | 정확 일치와 후보 보고품목, 기능 | 2026-10-21 추가. 보고번호 없이 제품명으로 조회하고 효능효과 문구로 기능을 판별 |
 | business.verify_gmp_company | company_name | 상태와 일치 업체 목록 | 2026-10-20 추가. 식약처 GMP 적합 업체현황(API03) 보조 확인 |
-| business.lookup_ingredient_regulation | ingredient_name | 상태와 일치 성분 목록 | 2026-10-20 추가. 식약처 화장품 규제정보(API04)의 금지 및 제한 국가 |
+| business.lookup_ingredient_regulation | ingredient_name | 상태와 일치 성분 목록 | 2026-10-20 추가, 2026-10-22 삭제. 식약처 화장품 규제정보(API04)의 해외 금지 및 제한 국가는 국내 광고 판단과 무관 |
 
 2026-10-20 feat/rag-legal-sources 브랜치에서 rag.search_regulations와 rag.search_precedents를 실제 등록했다.
 노션은 목록 반환만 적었지만, 빈 결과와 장애를 구분하려고 status를 가진 봉투로 감쌌다.

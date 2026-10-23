@@ -242,7 +242,7 @@ erDiagram
 | violation, 문구별 HITL과 리라이트 이력 | V4의 app.violations, app.violation_rewrites와 reviews.hitl_status 등. 재검토 버전 구조 없이 review_id만 참조 | feat/violation-tables에서 저장 경로 전환. Agent 결과 저장 시 findings를 행으로 만들고 문구별 결정, 다시쓰기 요청, 전체 결정이 이 테이블을 원본으로 쓴다. V5가 기존 JSONB 결과를 옮김. 사람 직접 수정(rewritten_manual)은 Agent `/internal/rewrites/verify` 재검증을 통과해야 저장. 프론트 화면 연동 완료(ViolationCard.vue/RevisionOptions.vue) |
 | evidence_structured, violation 근거, claim_match_result, approval_verify_result, patent 결과 | 버전별 result JSONB에 가능한 출력 보존 | 의미 대조와 검색 미구현, 정규화와 근거 스냅샷 FK 설계 |
 | state checkpointer | agent 스키마의 AsyncPostgresSaver | durable Worker 재개와 재시도 확장 |
-| regulation_doc, precedent_doc | knowledge.document_versions의 rules/cases, knowledge.chunks | legalize-kr 코퍼스는 임베딩과 검색 연결됨. 나머지 출처 적재와 출처·적용일 검증은 후속 |
+| regulation_doc, precedent_doc | knowledge.document_versions의 rules/cases, knowledge.chunks | 화장품법 코퍼스(법제처 API)는 임베딩과 검색 연결됨. 나머지 출처 적재와 출처·적용일 검증은 후속 |
 | credit_ledger | 로컬 검사 비용은 app.credit_policy에서 읽고 app.review_credit_charges에 버전별 1회 기록, 별도 DB 계획 유지 | 실제 사용량 기반 reserve/charge/release/refund와 테넌트 락 및 멱등키 |
 | 테스트 결제 주문 및 적립 | app.credit_orders, app.credit_topups, app.users.credit_balance | PG 테스트 승인 후 회원별로 주문당 한 번 적립, 운영 전 별도 과금 DB로 이전 |
 
