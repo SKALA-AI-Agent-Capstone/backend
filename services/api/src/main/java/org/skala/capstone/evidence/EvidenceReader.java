@@ -103,7 +103,7 @@ public class EvidenceReader implements AutoCloseable {
                 result.path("pageCount").asInt(), result.path("pages").toString(),
                 result.path("unreadPages").toString(), result.path("products").toString(),
                 result.hasNonNull("productMatch") ? result.path("productMatch").toString() : null,
-                result.path("warnings").toString());
+                result.path("warnings").toString(), result.path("checkPages").isArray() ? result.path("checkPages").toString() : "[]");
         // 읽는 사이 지워지거나 다시 시작된 행이면 저장되지 않았고, 개정본 판단도 하지 않는다.
         if (saved > 0) markRevisions(tenant, product, id, result);
     }

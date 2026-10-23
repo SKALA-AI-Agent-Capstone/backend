@@ -13,7 +13,7 @@ public class EvidenceRepository {
             "SELECT id::text AS id, product_id::text AS product_id, doc_type, file_name, file_mime, file_size,"
                     + " file_sha256, status, failure_code, reader_version, read_started_at, read_finished_at,"
                     + " issuer_key, issuer_name, codes::text AS codes, version_label, issued_on, page_count,"
-                    + " unread_pages::text AS unread_pages, report_products::text AS report_products,"
+                    + " unread_pages::text AS unread_pages, check_pages::text AS check_pages, report_products::text AS report_products,"
                     + " product_match::text AS product_match, warnings::text AS warnings, is_current,"
                     + " supersedes::text AS supersedes, change_note, created_at, updated_at"
                     + " FROM app.product_evidence WHERE tenant_id = CAST(? AS uuid)";
@@ -72,16 +72,16 @@ public class EvidenceRepository {
     /** Agent가 돌려준 판독 결과를 저장한다. 읽는 중이 아닌 행(그 사이 지워졌거나 다시 시작된 행)은 바꾸지 않는다. */
     public int saveResult(String id, String readerVersion, String issuerKey, String issuerName, String codes,
             String versionLabel, String issuedOn, int pageCount, String pages, String unreadPages,
-            String reportProducts, String productMatch, String warnings) {
+            String reportProducts, String productMatch, String warnings, String checkPages) {
         return jdbc.update(
                 "UPDATE app.product_evidence SET status = 'done', failure_code = NULL, reader_version = ?,"
                         + " issuer_key = ?, issuer_name = ?, codes = CAST(? AS jsonb), version_label = ?, issued_on = ?,"
                         + " page_count = ?, pages = CAST(? AS jsonb), unread_pages = CAST(? AS jsonb),"
                         + " report_products = CAST(? AS jsonb), product_match = CAST(? AS jsonb),"
-                        + " warnings = CAST(? AS jsonb), read_finished_at = now(), updated_at = now()"
+                        + " warnings = CAST(? AS jsonb), check_pages = CAST(? AS jsonb), read_finished_at = now(), updated_at = now()"
                         + " WHERE id = CAST(? AS uuid) AND status = 'reading'",
                 readerVersion, issuerKey, issuerName, codes, versionLabel, issuedOn, pageCount, pages, unreadPages,
-                reportProducts, productMatch, warnings, id);
+                reportProducts, productMatch, warnings, checkPages, id);
     }
 
     public int fail(String id, String code) {
@@ -132,7 +132,7 @@ public class EvidenceRepository {
                 "SELECT e.id::text AS id, e.doc_type, e.file_name, e.issuer_key, e.issuer_name, e.codes::text AS codes,"
                         + " e.version_label, e.page_count, e.unread_pages::text AS unread_pages,"
                         + " e.report_products::text AS report_products, e.product_match::text AS product_match,"
-                        + " e.pages::text AS pages, e.reader_version FROM app.product_evidence e"
+                        + " e.pages::text AS pages, e.check_pages::text AS check_pages, e.reader_version FROM app.product_evidence e"
                         + " JOIN app.reviews r ON r.product_id = e.product_id AND r.tenant_id = e.tenant_id"
                         + " WHERE r.id = CAST(? AS uuid) AND e.status = 'done' AND e.is_current ORDER BY e.created_at",
                 reviewId);

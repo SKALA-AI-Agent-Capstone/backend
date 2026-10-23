@@ -294,6 +294,9 @@ V21은 `app.product_evidence`를 추가한다. 시험 성적서 같은 증빙 �
 `report_products`는 보고서가 다루는 제품별 쪽 범위와 결과, `product_match`는 등록한 제품에 해당하는 항목이다.
 같은 기관의 같은 코드인데 해시가 다르면 개정본으로 보고 예전 행은 `is_current=false`로 남기며 새 행의 `supersedes`와 `change_note`로 잇는다.
 `status`는 reading, done, failed. 읽는 중인 행이 있으면 그 제품의 검토는 접수되지 않는다(409 `PRODUCT_EVIDENCE_READING`).
+스캔 쪽은 OCR(PaddleOCR)과 별개로 비전 모델이 같은 쪽을 옮겨 적고, 두 결과의 숫자(소수와 %)를 비교한다(V23 `check_pages`). 다르면 그 쪽 번호를 남기고,
+등록한 제품의 쪽이면 `product_match.checkPages`에도 남는다. 비전 모델의 글자는 쪽의 본문으로 쓰지 않는다(없는 숫자를 그럴듯하게 지어낼 수 있다).
+글자층이 있는 쪽은 OCR을 거치지 않으므로 비교하지 않는다. 모델이 없거나 실패하면 쪽마다 `check.status`가 unavailable, 한도를 넘으면 skipped로 남는다.
 증빙 읽기는 검토와 같은 방식으로 큐를 거친다(V22 `app.evidence_jobs`가 outbox, RabbitMQ `evidence.read`가 알림, 실패 큐 `evidence.read.dead`).
 검토 큐와 섞이지 않게 따로 두고 소비자는 하나다(PaddleOCR가 한 번에 한 쪽씩 돈다). Agent가 5xx나 시간 초과를 주면 최대 3번 시도하고
 (10초, 60초 뒤), 잘못된 파일(4xx)은 다시 시도하지 않고 그 이유를 `failure_code`로 남긴다. 소비자가 죽어 7분 넘게 running인 작업은 되살리고,
