@@ -190,7 +190,8 @@ public class ProductService {
                         .put("type", row.get("type").toString())
                         .put("createdAt", instant(row.get("created_at")))
                         .put("updatedAt", instant(row.get("updated_at")))
-                        .put("reviewCount", ((Number) row.get("review_count")).intValue());
+                        .put("reviewCount", ((Number) row.get("review_count")).intValue())
+                        .put("evidenceReading", Boolean.TRUE.equals(row.get("evidence_reading")));
         String latest = instant(row.get("latest_review_at"));
         if (latest == null) node.putNull("latestReviewAt");
         else node.put("latestReviewAt", latest);

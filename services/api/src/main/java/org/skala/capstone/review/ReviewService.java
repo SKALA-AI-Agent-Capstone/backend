@@ -10,6 +10,7 @@ import java.util.*;
 import org.skala.capstone.auth.UserRepository;
 import org.skala.capstone.billing.CreditLedgerService;
 import org.skala.capstone.product.ProductRepository;
+import org.skala.capstone.evidence.EvidenceService;
 import org.skala.capstone.product.ProductService;
 import org.skala.capstone.review.model.ReviewDocument;
 import org.skala.capstone.review.model.ReviewStatus;
@@ -34,13 +35,14 @@ public class ReviewService {
     private final CreditLedgerService credits;
     private final ProductService productService;
     private final ProductRepository products;
+    private final EvidenceService productEvidence;
     private final ObjectMapper json;
     private final TransactionTemplate tx;
     private final boolean queueEnabled;
 
     public ReviewService(ReviewRepository store, ReviewAssetService assets, RunTokenRepository tokens,
             UserRepository users, JobRepository jobs, ReviewRunner runner, CreditLedgerService credits,
-            ProductService productService, ProductRepository products, ObjectMapper json,
+            ProductService productService, ProductRepository products, EvidenceService productEvidence, ObjectMapper json,
             TransactionTemplate tx, @Value("${capstone.review.queue-enabled:false}") boolean queueEnabled) {
         this.store = store;
         this.assets = assets;
@@ -51,6 +53,7 @@ public class ReviewService {
         this.credits = credits;
         this.productService = productService;
         this.products = products;
+        this.productEvidence = productEvidence;
         this.json = json;
         this.tx = tx;
         this.queueEnabled = queueEnabled;
@@ -109,6 +112,8 @@ public class ReviewService {
         int no = 1;
         ObjectNode meta = submission.metadata();
         String productId = product(tenant, jwt.getSubject(), meta);
+        // 증빙을 읽는 중이면 검토를 받지 않는다. 크레딧을 잡기 전에 막아 아무것도 남기지 않는다.
+        productEvidence.requireNotReading(tenant, productId);
         String now = Instant.now().toString();
         ObjectNode doc = json.createObjectNode().put("id", id).put("tenantId", tenant).put("authorId", jwt.getSubject())
             .put("createdAt", now).put("updatedAt", now).put("authorName", users.name(jwt.getSubject()))
@@ -144,7 +149,8 @@ public class ReviewService {
             tokens.create(id, no, ReviewAssetService.hash(runToken.getBytes(StandardCharsets.UTF_8)));
             store.mutate(tenant, id, document -> document.withArray("versions").add(version));
             ObjectNode request = json.createObjectNode().put("reviewId", id).put("tenantId", tenant)
-                .put("versionNo", no).put("runToken", runToken);
+                .put("versionNo", no).put("runToken", runToken)
+                .put("productEvidenceCount", productEvidence.readyCount(tenant, productId));
             request.set("assets", descriptors);
             request.set("product", input.path("product"));
             if (queueEnabled) jobs.create(id, no, request.toString());

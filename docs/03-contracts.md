@@ -444,7 +444,18 @@ private이라 CDN 같은 공용 캐시에는 남지 않지만, 같은 브라우�
 | GET /api/v1/products/{id}/image | 대표 이미지 원본 |
 | GET /api/v1/products/{id}/image/thumbnail | 너비 160px PNG 썸네일. 배경을 지운 이미지의 투명도를 지킨다 |
 | GET /api/v1/products/{id}/reviews | 이 제품의 검토. 형식, 순서, 한도와 `view=summary`는 GET /api/v1/reviews와 같다 |
+| GET /api/v1/products/{id}/evidence | 이 제품의 증빙. 현재 판이 먼저. 파일 바이트와 쪽별 글자는 싣지 않는다 |
+| POST /api/v1/products/{id}/evidence | multipart `file`(PDF, PNG, JPEG, WebP, 25MiB까지)과 선택 `docType`. 새 파일은 202(읽는 중), 이미 읽은 같은 파일은 200 `reused: true` |
+| GET /api/v1/products/{id}/evidence/{evidenceId} | 증빙 하나. status, issuer, codes, version, 제품별 쪽 범위(products, productMatch), unreadPages, changeNote |
+| POST /api/v1/products/{id}/evidence/{evidenceId}/reread | 같은 파일을 지금 판독기로 다시 읽는다. 202, 읽는 중이면 409 `EVIDENCE_ALREADY_READING` |
+| DELETE /api/v1/products/{id}/evidence/{evidenceId} | 증빙과 읽은 결과를 지운다 |
+| GET /internal/evidence/{id}/file | Agent가 읽을 파일. 내부 토큰만 |
+| GET /internal/reviews/{id}/product-evidence?versionNo= | 검토의 제품에 등록된 증빙의 읽기 결과(기관, 코드, 버전, 제품 쪽 범위, 글자). run 토큰이 필요하고 보고서가 여러 제품을 다루면 등록한 제품의 쪽만 싣는다. business-mcp의 `structure_evidence`가 쓴다 |
 
+- 검토는 증빙 파일을 다시 읽지 않는다. Agent 실행 요청의 `productEvidenceCount`(읽기가 끝난 현재 판 증빙 수)가 0이면 증빙 도구를 쓰지 않는다.
+- 증빙을 올리면 Spring이 Agent의 `POST /internal/evidence/parse`를 불러 읽고(스캔은 PaddleOCR, 글자층이 있는 쪽은 OCR 없이), 읽는 동안 status는 reading이다.
+  읽는 중인 증빙이 있는 제품에 검토를 접수하면 409 `PRODUCT_EVIDENCE_READING`이며 크레딧도 검토도 남기지 않는다. 제품 응답의 `evidenceReading`이 이를 알려 준다.
+  실패하면 status failed와 `failureCode`(EVIDENCE_PAGE_LIMIT, EVIDENCE_READ_TIMEOUT 등)이고 검토는 막지 않는다. 업로드 오류: 400 `EVIDENCE_FILE_REQUIRED`, 413 `FILE_LIMIT_25_MIB`, 415 `PDF_OR_IMAGE_REQUIRED`.
 - 이름은 앞뒤 공백을 빼고 1~200자이며 기업 안에서 겹칠 수 없다. 비면 400 `PRODUCT_NAME_REQUIRED`, 길면 400 `PRODUCT_NAME_TOO_LONG`,
   겹치면 409 `PRODUCT_NAME_TAKEN`. 잘못된 유형은 400 `INVALID_PRODUCT_TYPE`, metadata가 JSON 객체가 아니면 400 `INVALID_METADATA`.
 - 대표 이미지는 PNG, JPEG, WebP만 받고(그 외는 415 `IMAGE_TYPE_UNSUPPORTED`, PDF 포함) 10MiB까지다(413 `IMAGE_LIMIT_10_MIB`).

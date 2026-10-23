@@ -12,7 +12,9 @@ public class ProductRepository {
     private static final String SUMMARY =
             "SELECT p.id::text AS id, p.name, p.type, p.image_mime, p.image_sha256,"
                     + " p.image_thumbnail IS NOT NULL AS has_thumbnail, p.created_at, p.updated_at,"
-                    + " count(r.id) AS review_count, max(r.updated_at) AS latest_review_at"
+                    + " count(r.id) AS review_count, max(r.updated_at) AS latest_review_at,"
+                    + " EXISTS (SELECT 1 FROM app.product_evidence e WHERE e.product_id = p.id"
+                    + " AND e.status = 'reading') AS evidence_reading"
                     + " FROM app.products p LEFT JOIN app.reviews r ON r.product_id = p.id"
                     + " WHERE p.tenant_id = CAST(? AS uuid)";
 

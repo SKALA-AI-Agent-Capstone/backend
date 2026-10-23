@@ -68,6 +68,7 @@ class ViolationFlowTest {
     @Autowired org.skala.capstone.review.ReviewRepository reviewRepository;
     @Autowired org.skala.capstone.product.ProductService productService;
     @Autowired org.skala.capstone.product.ProductRepository productRepository;
+    @Autowired org.skala.capstone.evidence.EvidenceService productEvidence;
     @Autowired org.skala.capstone.review.ReviewAssetService assets;
     @Autowired org.skala.capstone.review.RunTokenRepository tokens;
     @Autowired org.skala.capstone.auth.UserRepository users;
@@ -325,6 +326,7 @@ class ViolationFlowTest {
                         credits,
                         productService,
                         productRepository,
+                        productEvidence,
                         json,
                         tx,
                         true);
@@ -386,6 +388,7 @@ class ViolationFlowTest {
                         credits,
                         productService,
                         productRepository,
+                        productEvidence,
                         json,
                         tx,
                         true);
