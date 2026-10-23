@@ -72,6 +72,16 @@ public class ProductRepository {
                 createdBy);
     }
 
+    public boolean nameTaken(String tenant, String name) {
+        return Boolean.TRUE.equals(
+                jdbc.queryForObject(
+                        "SELECT EXISTS (SELECT 1 FROM app.products WHERE tenant_id = CAST(? AS uuid)"
+                                + " AND name = ?)",
+                        Boolean.class,
+                        tenant,
+                        name));
+    }
+
     public Optional<String> name(String tenant, String id) {
         return jdbc
                 .queryForList(

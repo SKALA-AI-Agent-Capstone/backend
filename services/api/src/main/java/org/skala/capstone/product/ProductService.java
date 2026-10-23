@@ -59,6 +59,10 @@ public class ProductService {
         JsonNode meta = parse(metadata);
         String name = name(meta.path("name").asText(""));
         String type = meta.hasNonNull("type") ? type(meta.path("type").asText()) : "general";
+        // 썸네일을 만들기 전에 이름부터 확인한다(겹치면 이미지 작업이 헛수고다). 동시에 등록되면 아래 UNIQUE가 막는다.
+        if (products.nameTaken(tenant, name)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "PRODUCT_NAME_TAKEN");
+        }
         ProductImage prepared = image == null || image.isEmpty() ? null : prepare(image);
         String id = UUID.randomUUID().toString();
         try {

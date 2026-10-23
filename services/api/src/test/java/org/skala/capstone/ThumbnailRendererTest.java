@@ -144,6 +144,30 @@ class ThumbnailRendererTest {
     }
 
     @Test
+    void hugeResolutionsAreRefusedBeforeDecoding() throws Exception {
+        assertThat(ThumbnailRenderer.tooLarge(8000, 5000)).isFalse(); // 4천만 픽셀까지는 만든다
+        assertThat(ThumbnailRenderer.tooLarge(8000, 5001)).isTrue();
+        assertThat(ThumbnailRenderer.tooLarge(30_000, 30_000)).isTrue(); // int 곱셈이면 넘쳐서 음수가 된다
+        // 머리만 30000x30000인 PNG: 픽셀을 풀기 전에 거절한다(정상 PNG라면 3.6GB가 필요하다)
+        byte[] huge = pngHeaderOnly(30_000, 30_000);
+        assertThat(renderer.render(huge, "image/png")).isEmpty();
+        assertThat(renderer.renderTransparent(huge, "image/png")).isEmpty();
+    }
+
+    static byte[] pngHeaderOnly(int width, int height) throws IOException {
+        var out = new ByteArrayOutputStream();
+        out.write(new byte[] {(byte) 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A});
+        var ihdr = java.nio.ByteBuffer.allocate(17).put("IHDR".getBytes())
+                .putInt(width).putInt(height).put((byte) 8).put((byte) 6).put((byte) 0).put((byte) 0).put((byte) 0);
+        var crc = new java.util.zip.CRC32();
+        crc.update(ihdr.array());
+        out.write(java.nio.ByteBuffer.allocate(4).putInt(13).array());
+        out.write(ihdr.array());
+        out.write(java.nio.ByteBuffer.allocate(4).putInt((int) crc.getValue()).array());
+        return out.toByteArray();
+    }
+
+    @Test
     void unsupportedOrBrokenFilesGiveNoThumbnail() {
         byte[] webpHeader = {'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'E', 'B', 'P', 'V', 'P', '8', ' '};
         byte[] brokenPng = {(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3, 4};

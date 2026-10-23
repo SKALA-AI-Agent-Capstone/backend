@@ -37,6 +37,11 @@ public class ThumbnailRenderer {
     static final int MAX_HEIGHT = 240;
     /** 제품 썸네일은 자르지 않고 긴 변을 이 길이에 맞춘다(화면 최대 112px의 2배 정도). */
     static final int PRODUCT_MAX_SIDE = 240;
+    /**
+     * 풀기 전에 머리에서 읽은 가로와 세로의 곱이 이보다 크면 썸네일을 만들지 않는다. 파일은 작아도 해상도가 큰 이미지가
+     * 메모리를 넘기지 않게 막는다(Render 무료 512MB). 4천만 픽셀은 일반 사진(최대 수천만 화소)은 통과한다.
+     */
+    static final long MAX_PIXELS = 40_000_000L;
     private static final float QUALITY = 0.8f;
     private static final float MIN_DPI = 18f;
     private static final float MAX_DPI = 72f;
@@ -48,7 +53,16 @@ public class ThumbnailRenderer {
 
     /** 광고 썸네일(JPEG). 만들 수 없는 형식(CMYK JPEG 등)이나 손상, 암호 걸린 파일이면 빈 값이다. */
     public Optional<byte[]> render(byte[] original, String mime) {
-        return render(original, mime, false);
+        try {
+            BufferedImage source =
+                    "application/pdf".equals(mime) ? firstPdfPage(original) : imageTop(original);
+            if (source == null || source.getWidth() <= 0 || source.getHeight() <= 0) {
+                return Optional.empty();
+            }
+            return Optional.of(jpeg(fit(source)));
+        } catch (IOException | RuntimeException unreadable) {
+            return Optional.empty();
+        }
     }
 
 
@@ -68,19 +82,6 @@ public class ThumbnailRenderer {
         }
     }
 
-    private Optional<byte[]> render(byte[] original, String mime, boolean transparent) {
-        try {
-            BufferedImage source =
-                    "application/pdf".equals(mime) ? firstPdfPage(original) : imageTop(original);
-            if (source == null || source.getWidth() <= 0 || source.getHeight() <= 0) {
-                return Optional.empty();
-            }
-            return Optional.of(transparent ? png(fit(source, true)) : jpeg(fit(source, false)));
-        } catch (IOException | RuntimeException unreadable) {
-            return Optional.empty();
-        }
-    }
-
     private static BufferedImage imageTop(byte[] bytes) throws IOException {
         try (ImageInputStream input = ImageIO.createImageInputStream(new ByteArrayInputStream(bytes))) {
             if (input == null) return null;
@@ -91,6 +92,7 @@ public class ThumbnailRenderer {
                 reader.setInput(input, true, true);
                 int width = reader.getWidth(0);
                 int height = reader.getHeight(0);
+                if (tooLarge(width, height)) return null;
                 int regionHeight =
                         Math.min(height, (int) Math.ceil((double) width * MAX_HEIGHT / WIDTH));
                 ImageReadParam param = reader.getDefaultReadParam();
@@ -113,6 +115,7 @@ public class ThumbnailRenderer {
             ImageReader reader = readers.next();
             try {
                 reader.setInput(input, true, true);
+                if (tooLarge(reader.getWidth(0), reader.getHeight(0))) return null;
                 int longest = Math.max(reader.getWidth(0), reader.getHeight(0));
                 ImageReadParam param = reader.getDefaultReadParam();
                 int step = Math.max(1, longest / (PRODUCT_MAX_SIDE * 2));
@@ -142,6 +145,10 @@ public class ThumbnailRenderer {
         return out;
     }
 
+    public static boolean tooLarge(int width, int height) {
+        return (long) width * height > MAX_PIXELS;
+    }
+
     private static BufferedImage firstPdfPage(byte[] bytes) throws IOException {
         try (PDDocument document = Loader.loadPDF(bytes)) {
             if (document.getNumberOfPages() == 0) return null;
@@ -153,10 +160,6 @@ public class ThumbnailRenderer {
     }
 
     static BufferedImage fit(BufferedImage source) {
-        return fit(source, false);
-    }
-
-    static BufferedImage fit(BufferedImage source, boolean transparent) {
         int height =
                 Math.max(
                         1,
@@ -167,18 +170,12 @@ public class ThumbnailRenderer {
                 Math.min(
                         source.getHeight(),
                         Math.max(1, Math.round((float) height * source.getWidth() / WIDTH)));
-        BufferedImage out =
-                new BufferedImage(
-                        WIDTH,
-                        height,
-                        transparent ? BufferedImage.TYPE_INT_ARGB : BufferedImage.TYPE_INT_RGB);
+        BufferedImage out = new BufferedImage(WIDTH, height, BufferedImage.TYPE_INT_RGB);
         Graphics2D graphics = out.createGraphics();
         try {
-            if (!transparent) {
-                // 투명한 부분은 흰 배경으로 채운다(JPEG에는 투명도가 없다).
-                graphics.setColor(Color.WHITE);
-                graphics.fillRect(0, 0, WIDTH, height);
-            }
+            // 투명한 부분은 흰 배경으로 채운다(JPEG에는 투명도가 없다).
+            graphics.setColor(Color.WHITE);
+            graphics.fillRect(0, 0, WIDTH, height);
             graphics.setRenderingHint(
                     RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
             graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
