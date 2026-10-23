@@ -35,6 +35,8 @@ import org.springframework.stereotype.Component;
 public class ThumbnailRenderer {
     static final int WIDTH = 160;
     static final int MAX_HEIGHT = 240;
+    /** 제품 썸네일은 자르지 않고 긴 변을 이 길이에 맞춘다(화면 최대 112px의 2배 정도). */
+    static final int PRODUCT_MAX_SIDE = 240;
     private static final float QUALITY = 0.8f;
     private static final float MIN_DPI = 18f;
     private static final float MAX_DPI = 72f;
@@ -49,9 +51,21 @@ public class ThumbnailRenderer {
         return render(original, mime, false);
     }
 
-    /** 제품 대표 이미지 썸네일(투명도를 지키는 PNG). 만들 수 없으면 빈 값이다. */
+
+    /**
+     * 제품 대표 이미지 썸네일(투명도를 지키는 PNG). 광고와 달리 위쪽만 자르지 않고 이미지 전체를 긴 변 240px에 맞춘다.
+     * 만들 수 없으면 빈 값이다.
+     */
     public Optional<byte[]> renderTransparent(byte[] original, String mime) {
-        return render(original, mime, true);
+        try {
+            BufferedImage source = imageWhole(original);
+            if (source == null || source.getWidth() <= 0 || source.getHeight() <= 0) {
+                return Optional.empty();
+            }
+            return Optional.of(png(fitWithin(source, PRODUCT_MAX_SIDE)));
+        } catch (IOException | RuntimeException unreadable) {
+            return Optional.empty();
+        }
     }
 
     private Optional<byte[]> render(byte[] original, String mime, boolean transparent) {
@@ -88,6 +102,44 @@ public class ThumbnailRenderer {
                 reader.dispose();
             }
         }
+    }
+
+    /** 이미지 전체를 목표의 약 2배 크기로 줄여 읽는다. */
+    private static BufferedImage imageWhole(byte[] bytes) throws IOException {
+        try (ImageInputStream input = ImageIO.createImageInputStream(new ByteArrayInputStream(bytes))) {
+            if (input == null) return null;
+            Iterator<ImageReader> readers = ImageIO.getImageReaders(input);
+            if (!readers.hasNext()) return null;
+            ImageReader reader = readers.next();
+            try {
+                reader.setInput(input, true, true);
+                int longest = Math.max(reader.getWidth(0), reader.getHeight(0));
+                ImageReadParam param = reader.getDefaultReadParam();
+                int step = Math.max(1, longest / (PRODUCT_MAX_SIDE * 2));
+                param.setSourceSubsampling(step, step, 0, 0);
+                return reader.read(0, param);
+            } finally {
+                reader.dispose();
+            }
+        }
+    }
+
+    /** 비율을 지키며 긴 변을 maxSide 이하로 줄인다(작은 이미지는 키우지 않는다). 투명도를 유지한다. */
+    static BufferedImage fitWithin(BufferedImage source, int maxSide) {
+        double scale = Math.min(1.0, (double) maxSide / Math.max(source.getWidth(), source.getHeight()));
+        int width = Math.max(1, (int) Math.round(source.getWidth() * scale));
+        int height = Math.max(1, (int) Math.round(source.getHeight() * scale));
+        BufferedImage out = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D graphics = out.createGraphics();
+        try {
+            graphics.setRenderingHint(
+                    RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+            graphics.drawImage(source, 0, 0, width, height, null);
+        } finally {
+            graphics.dispose();
+        }
+        return out;
     }
 
     private static BufferedImage firstPdfPage(byte[] bytes) throws IOException {

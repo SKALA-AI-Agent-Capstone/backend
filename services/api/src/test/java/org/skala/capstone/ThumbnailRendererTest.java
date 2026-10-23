@@ -116,13 +116,31 @@ class ThumbnailRendererTest {
         byte[] png = renderer.renderTransparent(out.toByteArray(), "image/png").orElseThrow();
         assertThat(png[1]).isEqualTo((byte) 'P');
         BufferedImage thumb = ImageIO.read(new ByteArrayInputStream(png));
-        assertThat(thumb.getWidth()).isEqualTo(160);
+        assertThat(thumb.getWidth()).isEqualTo(240); // 정사각 400px을 긴 변 240px로
+        assertThat(thumb.getHeight()).isEqualTo(240);
         assertThat(thumb.getColorModel().hasAlpha()).isTrue();
         assertThat(thumb.getRGB(2, 2) >>> 24).isZero(); // 모서리는 투명
-        assertThat(new Color(thumb.getRGB(80, 80), true).getAlpha()).isEqualTo(255);
+        assertThat(new Color(thumb.getRGB(120, 120), true).getAlpha()).isEqualTo(255);
         // 광고 썸네일은 예전처럼 JPEG이고 투명한 부분은 흰색이다
         BufferedImage ad = read(renderer.render(out.toByteArray(), "image/png").orElseThrow());
         assertThat(new Color(ad.getRGB(2, 2)).getRed()).isGreaterThan(240);
+    }
+
+    @Test
+    void productThumbnailsShowTheWholeImageWithoutCropping() throws Exception {
+        // 세로로 긴 제품 사진(300x900): 광고 썸네일처럼 위쪽만 자르지 않는다
+        BufferedImage tall = new BufferedImage(300, 900, BufferedImage.TYPE_INT_ARGB);
+        var graphics = tall.createGraphics();
+        graphics.setColor(Color.BLUE);
+        graphics.fillRect(0, 800, 300, 100); // 맨 아래 띠
+        graphics.dispose();
+        var out = new ByteArrayOutputStream();
+        ImageIO.write(tall, "png", out);
+        BufferedImage thumb = ImageIO.read(new ByteArrayInputStream(
+                renderer.renderTransparent(out.toByteArray(), "image/png").orElseThrow()));
+        assertThat(thumb.getHeight()).isEqualTo(240);
+        assertThat(thumb.getWidth()).isEqualTo(80);
+        assertThat(new Color(thumb.getRGB(40, 235), true).getBlue()).isGreaterThan(200); // 아래 띠가 남아 있다
     }
 
     @Test

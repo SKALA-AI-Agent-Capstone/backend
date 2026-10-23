@@ -171,6 +171,8 @@ class ProductFlowTest {
                 .andExpect(status().isOk())
                 .andExpect(content().contentType("image/png"))
                 .andReturn().getResponse().getContentAsByteArray();
+        // 600x900 이미지를 자르지 않고 긴 변 240px에 맞춘다
+        assertThat(ImageIO.read(new ByteArrayInputStream(thumbnail)).getHeight()).isEqualTo(240);
         assertThat(ImageIO.read(new ByteArrayInputStream(thumbnail)).getWidth()).isEqualTo(160);
 
         // 보낸 필드만 바뀐다
