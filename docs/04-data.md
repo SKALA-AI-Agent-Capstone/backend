@@ -176,9 +176,6 @@ erDiagram
       uuid author_id FK
       uuid product_id FK
       jsonb document
-      text hitl_status
-      uuid decided_by FK
-      timestamptz decided_at
       timestamptz updated_at
     }
     VIOLATIONS {
@@ -261,15 +258,17 @@ NFR-17~20도 재확인했다. 현재 비밀번호 해시와 세션 무효화, AP
 2026-10-22 팀 결정으로 검토 전체 승인, 검토 완료 상태, 재검토를 없앴다. 아래 규칙 중 승인과 재검토에 관한 이전 내용은 지웠다.
 
 - 원본: 문구별 위반은 `app.violations`와 `app.violation_rewrites`다. 결정은 잠기지 않아 언제든 다시 바꿀 수 있다.
-- `app.reviews.hitl_status/hitl_comment/decided_by/decided_at` 컬럼과 이전 문서의 JSONB `approval`은 남아 있지만 읽거나 쓰지 않는다.
-  데이터를 지우는 마이그레이션은 팀이 확정한 뒤 별도로 한다. 새 버전 문서는 `approval`을 만들지 않는다.
+- `app.reviews.hitl_status/hitl_comment/decided_by/decided_at` 컬럼은 팀 확인 뒤 V24에서 지웠다(2026-10-23).
+  이전 문서의 JSONB `approval`은 검토 문서 안에 남아 있지만 읽거나 쓰지 않는다. 새 버전 문서는 `approval`을 만들지 않는다.
 - 검토마다 버전은 1 하나다. 승인 제거 전에 만든 v2 이상 문서는 그대로 두며 violations는 최신 버전을 가리킨다.
 - Agent 결과 저장(ReviewService.execute)과 같은 트랜잭션에서 findings를 violations로 만든다. phrase가 비어 있는 finding은 건너뛴다.
   phrase는 text_excerpt, severity는 high/medium/low가 아니면 낮추지 않고 medium, rewrites의 비어 있지 않은 항목은 attempt_no 1..n(requested_by_human=false), 마지막 항목이 rewrite_suggestion이다.
   각 JSONB finding에는 `violationId`를 넣어 finding과 행을 연결한다.
 - 사람 다시쓰기 한도 M은 `capstone.review.human-rewrite-limit`(환경변수 HUMAN_REWRITE_LIMIT, 기본 3)이며 requested_by_human 행 수로 센다.
 - V5는 V4 이전 결과 중 최신 버전이 done인 review의 findings를 옮겼다.
-- V15는 끝나지 않은 승인 후 Agent 재개 작업(app.review_jobs kind=resume)을 `failed`(`REVIEW_APPROVAL_REMOVED`)로 닫는다. kind 컬럼과 제약은 이력으로 남긴다.
+- V15는 끝나지 않은 승인 후 Agent 재개 작업(app.review_jobs kind=resume)을 `failed`(`REVIEW_APPROVAL_REMOVED`)로 닫았다.
+- V24는 재개 작업 행을 지우고 `app.review_jobs`의 기본 키를 (review_id, version_no)로 되돌린 뒤 kind 컬럼과 제약을 지운다.
+  큐 메시지 본문은 예전처럼 `reviewId:versionNo:run`이며, 브로커에 남은 resume 메시지는 실행하지 않고 DLQ로 보낸다.
 
 ## 2026-10-22 목록 썸네일
 

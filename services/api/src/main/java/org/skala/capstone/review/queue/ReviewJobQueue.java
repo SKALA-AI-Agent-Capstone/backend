@@ -26,7 +26,10 @@ public class ReviewJobQueue {
     /** Analysis is paid and slow, so it gets few attempts. */
     static final int MAX_ATTEMPTS = 3;
 
-    /** 승인 뒤 Agent 재개(kind=resume)는 2026-10-22 승인을 없애면서 지웠다. 남은 종류는 분석(run)뿐이다. */
+    /**
+     * 메시지 본문의 작업 종류. 승인 뒤 Agent 재개(resume)는 2026-10-22 없앴고, 작업 행의 kind 컬럼도 V24에서 지웠다.
+     * 본문 형식(reviewId:versionNo:run)은 브로커에 남은 메시지와 맞추려고 그대로 둔다.
+     */
     static final String RUN = "run";
 
     private final JobRepository jobs;
@@ -55,18 +58,18 @@ public class ReviewJobQueue {
     public void dispatch() {
         var rows = jobs.ready();
         for (var row : rows) {
-            String id = row.get("review_id").toString(), kind = row.get("kind").toString();
+            String id = row.get("review_id").toString();
             int no = ((Number) row.get("version_no")).intValue();
             try {
                 CorrelationData confirmation = new CorrelationData(UUID.randomUUID().toString());
                 rabbit.convertAndSend(
-                        "", ReviewQueueTopology.MAIN, id + ":" + no + ":" + kind, confirmation);
+                        "", ReviewQueueTopology.MAIN, id + ":" + no + ":" + RUN, confirmation);
                 var result = confirmation.getFuture().get(10, TimeUnit.SECONDS);
                 if (!result.isAck() || confirmation.getReturned() != null)
                     throw new IllegalStateException("REVIEW_QUEUE_PUBLISH_NOT_CONFIRMED");
-                jobs.published(id, no, kind);
+                jobs.published(id, no);
             } catch (Exception error) {
-                log.warn("Review {} job publish failed for {} v{}", kind, id, no, error);
+                log.warn("Review job publish failed for {} v{}", id, no, error);
             }
         }
     }
@@ -74,7 +77,7 @@ public class ReviewJobQueue {
     /**
      * A task is ACKed only after its outcome or next retry has been recorded in PostgreSQL. The
      * body is reviewId:versionNo:kind. Messages published before V14 have no kind and are analysis
-     * runs. A leftover resume message is rejected to the dead-letter queue; V15 closed its job row.
+     * runs. A leftover resume message is rejected to the dead-letter queue; V24 removed its job row.
      */
     @RabbitListener(queues = ReviewQueueTopology.MAIN, ackMode = "MANUAL", concurrency = "2")
     public void consume(org.springframework.amqp.core.Message message, Channel channel)
@@ -98,7 +101,7 @@ public class ReviewJobQueue {
             channel.basicReject(tag, false);
             return;
         }
-        var claimed = jobs.claim(id, no, kind);
+        var claimed = jobs.claim(id, no);
         if (claimed.isEmpty()) {
             channel.basicAck(tag, false);
             return;
@@ -120,18 +123,17 @@ public class ReviewJobQueue {
                 String trace = agentFailure == null ? null : agentFailure.traceId;
                 if (!permanent && attempt < MAX_ATTEMPTS) {
                     int delay = retryDelay(attempt);
-                    jobs.retry(id, no, kind, delay, failure.getClass().getSimpleName(), trace);
+                    jobs.retry(id, no, delay, failure.getClass().getSimpleName(), trace);
                     channel.basicAck(tag, false);
                     reviews.retryScheduled(id, no, attempt, delay);
                 } else {
                     reviews.failQueued(tenant, id, no);
-                    jobs.failed(id, no, kind, failure.getClass().getSimpleName(), trace);
+                    jobs.failed(id, no, failure.getClass().getSimpleName(), trace);
                     channel.basicReject(tag, false);
                 }
             } catch (Exception settlementError) {
                 log.error(
-                        "Review {} job failure could not be recorded for {} v{}",
-                        kind,
+                        "Review job failure could not be recorded for {} v{}",
                         id,
                         no,
                         settlementError);
@@ -140,12 +142,11 @@ public class ReviewJobQueue {
             return;
         }
         try {
-            jobs.done(id, no, kind);
+            jobs.done(id, no);
             channel.basicAck(tag, false);
         } catch (Exception settlementError) {
             log.error(
-                    "Review {} job completion could not be recorded for {} v{}",
-                    kind,
+                    "Review job completion could not be recorded for {} v{}",
                     id,
                     no,
                     settlementError);
@@ -161,7 +162,7 @@ public class ReviewJobQueue {
     public void recoverStale() {
         var rows = jobs.stale();
         for (var row : rows) {
-            String id = row.get("review_id").toString(), kind = row.get("kind").toString();
+            String id = row.get("review_id").toString();
             int no = ((Number) row.get("version_no")).intValue(),
                     attempts = ((Number) row.get("attempts")).intValue();
             String tenant = row.get("tenant").toString();
@@ -173,9 +174,9 @@ public class ReviewJobQueue {
                     failed = true;
                 }
                 String status = done ? "done" : failed ? "failed" : "retry";
-                jobs.recover(id, no, kind, status);
+                jobs.recover(id, no, status);
             } catch (Exception error) {
-                log.warn("Stale review {} job recovery failed for {} v{}", kind, id, no, error);
+                log.warn("Stale review job recovery failed for {} v{}", id, no, error);
             }
         }
     }

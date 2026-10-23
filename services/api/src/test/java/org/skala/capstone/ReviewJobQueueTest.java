@@ -33,7 +33,7 @@ class ReviewJobQueueTest {
         return new Message((ID+":1").getBytes(StandardCharsets.UTF_8),props);
     }
     @BeforeEach void setup(){
-        when(jdbc.queryForList(startsWith("UPDATE app.review_jobs SET status='running'"),eq(ID),eq(1),eq("run")))
+        when(jdbc.queryForList(startsWith("UPDATE app.review_jobs SET status='running'"),eq(ID),eq(1)))
             .thenReturn(List.of(Map.of("request","{\"reviewId\":\""+ID+"\",\"tenantId\":\"tenant\",\"versionNo\":1}",
                 "attempts",1)));
     }
@@ -42,28 +42,28 @@ class ReviewJobQueueTest {
         queue.consume(message(),channel);
         var order=inOrder(reviews,jdbc,channel);
         order.verify(reviews).runQueued(any());
-        order.verify(jdbc).update(startsWith("UPDATE app.review_jobs SET status='done'"),eq(ID),eq(1),eq("run"));
+        order.verify(jdbc).update(startsWith("UPDATE app.review_jobs SET status='done'"),eq(ID),eq(1));
         order.verify(channel).basicAck(7,false);
     }
 
     @Test void transientFailureSchedulesRetryAndAcknowledgesOriginal()throws Exception{
         doThrow(new IOException("temporary")).when(reviews).runQueued(any());
         queue.consume(message(),channel);
-        verify(jdbc).queryForList(contains("AND next_attempt_at<=now()"),eq(ID),eq(1),eq("run"));
-        verify(jdbc).update(contains("status='retry'"),eq(5),eq("IOException"),isNull(),eq(ID),eq(1),eq("run"));
+        verify(jdbc).queryForList(contains("AND next_attempt_at<=now()"),eq(ID),eq(1));
+        verify(jdbc).update(contains("status='retry'"),eq(5),eq("IOException"),isNull(),eq(ID),eq(1));
         verify(channel).basicAck(7,false);
         verify(reviews,never()).failQueued(anyString(),anyString(),anyInt());
     }
 
     @Test void exhaustedFailureReleasesCreditAndDeadLetters()throws Exception{
-        when(jdbc.queryForList(startsWith("UPDATE app.review_jobs SET status='running'"),eq(ID),eq(1),eq("run")))
+        when(jdbc.queryForList(startsWith("UPDATE app.review_jobs SET status='running'"),eq(ID),eq(1)))
             .thenReturn(List.of(Map.of("request","{\"reviewId\":\""+ID+"\",\"tenantId\":\"tenant\",\"versionNo\":1}",
                 "attempts",3)));
         doThrow(new IOException("temporary")).when(reviews).runQueued(any());
         queue.consume(message(),channel);
         var order=inOrder(reviews,jdbc,channel);
         order.verify(reviews).failQueued("tenant",ID,1);
-        order.verify(jdbc).update(contains("status='failed'"),eq("IOException"),isNull(),eq(ID),eq(1),eq("run"));
+        order.verify(jdbc).update(contains("status='failed'"),eq("IOException"),isNull(),eq(ID),eq(1));
         order.verify(channel).basicReject(7,false);
     }
 
@@ -71,17 +71,17 @@ class ReviewJobQueueTest {
         String trace="0b6f1f3c-7a5e-4d0c-9a51-2b8f0d6c1e11";
         doThrow(new AgentClient.AgentFailure(500,"RUN_FAILED",trace)).when(reviews).runQueued(any());
         queue.consume(message(),channel);
-        verify(jdbc).update(contains("last_trace_id=?"),eq(5),eq("AgentFailure"),eq(trace),eq(ID),eq(1),eq("run"));
+        verify(jdbc).update(contains("last_trace_id=?"),eq(5),eq("AgentFailure"),eq(trace),eq(ID),eq(1));
 
-        when(jdbc.queryForList(startsWith("UPDATE app.review_jobs SET status='running'"),eq(ID),eq(1),eq("run")))
+        when(jdbc.queryForList(startsWith("UPDATE app.review_jobs SET status='running'"),eq(ID),eq(1)))
             .thenReturn(List.of(Map.of("request","{\"reviewId\":\""+ID+"\",\"tenantId\":\"tenant\",\"versionNo\":1}",
                 "attempts",3)));
         queue.consume(message(),channel);
-        verify(jdbc).update(contains("status='failed'"),eq("AgentFailure"),eq(trace),eq(ID),eq(1),eq("run"));
+        verify(jdbc).update(contains("status='failed'"),eq("AgentFailure"),eq(trace),eq(ID),eq(1));
     }
 
     @Test void duplicateDeliveryDoesNotRerunOrCharge()throws Exception{
-        when(jdbc.queryForList(startsWith("UPDATE app.review_jobs SET status='running'"),eq(ID),eq(1),eq("run")))
+        when(jdbc.queryForList(startsWith("UPDATE app.review_jobs SET status='running'"),eq(ID),eq(1)))
             .thenReturn(List.of());
         queue.consume(message(),channel);
         verify(channel).basicAck(7,false);
@@ -89,7 +89,7 @@ class ReviewJobQueueTest {
     }
 
     @Test void completionWriteFailureNeverTurnsCompletedReviewIntoFailure()throws Exception{
-        when(jdbc.update(startsWith("UPDATE app.review_jobs SET status='done'"),eq(ID),eq(1),eq("run")))
+        when(jdbc.update(startsWith("UPDATE app.review_jobs SET status='done'"),eq(ID),eq(1)))
             .thenThrow(new IllegalStateException("database temporarily unavailable"));
         queue.consume(message(),channel);
         verify(channel).basicNack(7,false,true);
@@ -123,18 +123,27 @@ class ReviewJobQueueTest {
         verify(jdbc,never()).queryForList(anyString(),any(Object[].class));
     }
 
-    @Test void staleRunUsesAnalysisChecksAndOnlyRunJobsAreRecovered(){
-        when(jdbc.queryForList(startsWith("SELECT review_id::text,version_no,kind,attempts"))).thenReturn(List.of(
-            Map.of("review_id",ID,"version_no",1,"kind","run","attempts",1,"tenant","tenant")));
+    @Test void staleRunUsesAnalysisChecks(){
+        when(jdbc.queryForList(startsWith("SELECT review_id::text,version_no,attempts"))).thenReturn(List.of(
+            Map.of("review_id",ID,"version_no",1,"attempts",1,"tenant","tenant")));
         when(reviews.completed("tenant",ID,1)).thenReturn(true);
         queue.recoverStale();
-        verify(jdbc).queryForList(contains("kind='run'"));
-        verify(jdbc).update(contains("status=?"),eq("done"),eq("done"),eq(ID),eq(1),eq("run"));
+        verify(jdbc).queryForList(startsWith("SELECT review_id::text,version_no,attempts"));
+        verify(jdbc).update(contains("status=?"),eq("done"),eq("done"),eq(ID),eq(1));
         verify(reviews,never()).failQueued(anyString(),anyString(),anyInt());
     }
 
-    @Test void dispatcherPublishesOnlyRunJobs(){
+    /** 작업 행에는 종류가 없고, 메시지 본문은 예전처럼 reviewId:versionNo:run이다. */
+    @Test void dispatcherPublishesRunMessages(){
+        when(jdbc.queryForList(startsWith("SELECT review_id::text,version_no FROM app.review_jobs"))).thenReturn(List.of(
+            Map.of("review_id",ID,"version_no",1)));
+        doAnswer(call->{
+            ((org.springframework.amqp.rabbit.connection.CorrelationData)call.getArgument(3)).getFuture()
+                .complete(new org.springframework.amqp.rabbit.connection.CorrelationData.Confirm(true,null));
+            return null;
+        }).when(rabbit).convertAndSend(eq(""),anyString(),any(Object.class),any(org.springframework.amqp.rabbit.connection.CorrelationData.class));
         queue.dispatch();
-        verify(jdbc).queryForList(contains("kind='run'"));
+        verify(rabbit).convertAndSend(eq(""),anyString(),eq(ID+":1:run"),any(org.springframework.amqp.rabbit.connection.CorrelationData.class));
+        verify(jdbc).update(startsWith("UPDATE app.review_jobs SET status='published'"),eq(ID),eq(1));
     }
 }
