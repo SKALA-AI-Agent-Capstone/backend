@@ -284,3 +284,18 @@ V18은 `app.products`(기업, 이름, 유형 general 또는 functional, 대표 �
 V19는 기존 검토를 같은 기업의 제품 이름(앞뒤 공백 제외, 200자까지)으로 묶어 제품을 만들고 연결한 뒤 `product_id`를 NOT NULL로 바꾼다.
 이름이 빈 검토는 '이름 없는 제품'으로 묶고, 유형은 알 수 없어 general로 둔다. 검토 문서에는 productId를 넣고 updated_at은 바꾸지 않는다.
 제품의 대표 이미지는 제품 행에 있고, 광고 원본은 그대로 `review_assets`에 있다. 제품은 검토가 0건일 때만 지울 수 있어(외래 키도 막는다) 제품 없는 검토는 생기지 않는다.
+
+## 2026-10-23 제품 증빙
+
+V21은 `app.product_evidence`를 추가한다. 시험 성적서 같은 증빙 파일(원본 바이트, sha256)과 읽은 결과를 한 행에 두고 제품과는 `product_id`로만 잇는다
+(제품을 지우면 함께 지운다). 증빙의 정체는 종류 + 기관이 붙인 코드(`issuer_key`, `codes`: 라벨, 값, 확인된 쪽 수, 상태) + 버전(`version_label`, `issued_on`) + 파일 해시이고,
+같은 제품 안에서 같은 해시는 한 행이다(UNIQUE tenant_id, product_id, file_sha256). 기관마다 코드 형식과 라벨이 다를 수 있어 코드는 jsonb 목록으로 둔다.
+`reader_version`은 읽은 판독기의 버전이며, Agent가 지금 쓰는 버전과 다르면 같은 파일도 다시 읽는다. `pages`는 쪽별 읽은 방법과 글자(상세 API에는 싣지 않는다),
+`report_products`는 보고서가 다루는 제품별 쪽 범위와 결과, `product_match`는 등록한 제품에 해당하는 항목이다.
+같은 기관의 같은 코드인데 해시가 다르면 개정본으로 보고 예전 행은 `is_current=false`로 남기며 새 행의 `supersedes`와 `change_note`로 잇는다.
+`status`는 reading, done, failed. 읽는 중인 행이 있으면 그 제품의 검토는 접수되지 않는다(409 `PRODUCT_EVIDENCE_READING`).
+증빙 읽기는 검토와 같은 방식으로 큐를 거친다(V22 `app.evidence_jobs`가 outbox, RabbitMQ `evidence.read`가 알림, 실패 큐 `evidence.read.dead`).
+검토 큐와 섞이지 않게 따로 두고 소비자는 하나다(PaddleOCR가 한 번에 한 쪽씩 돈다). Agent가 5xx나 시간 초과를 주면 최대 3번 시도하고
+(10초, 60초 뒤), 잘못된 파일(4xx)은 다시 시도하지 않고 그 이유를 `failure_code`로 남긴다. 소비자가 죽어 7분 넘게 running인 작업은 되살리고,
+시도를 다 썼으면 failed `READ_INTERRUPTED`로 닫는다. 큐를 끈 실행(`REVIEW_QUEUE_ENABLED=false`)에서는 서버 스레드 하나가 읽고
+10분 넘게 reading인 행을 1분마다 닫는다.

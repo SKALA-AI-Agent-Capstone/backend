@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.*;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.*;
+import org.skala.capstone.evidence.EvidenceService;
 import org.skala.capstone.review.events.ReviewEvents;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
@@ -17,6 +18,7 @@ public class InternalReviewController {
     private final ReviewAssetService assets;
     private final RunTokenRepository tokens;
     private final ReviewEvents events;
+    private final EvidenceService productEvidence;
     private final com.fasterxml.jackson.databind.ObjectMapper json;
 
     public InternalReviewController(
@@ -24,11 +26,13 @@ public class InternalReviewController {
             ReviewAssetService assets,
             RunTokenRepository tokens,
             ReviewEvents events,
+            EvidenceService productEvidence,
             com.fasterxml.jackson.databind.ObjectMapper json) {
         this.store = store;
         this.assets = assets;
         this.tokens = tokens;
         this.events = events;
+        this.productEvidence = productEvidence;
         this.json = json;
     }
 
@@ -45,6 +49,15 @@ public class InternalReviewController {
                 .cacheControl(CacheControl.noStore())
                 .contentType(MediaType.parseMediaType(asset.mimeType()))
                 .body(asset.bytes());
+    }
+
+    /** 이 검토의 제품에 등록된 증빙의 읽기 결과. 검토는 증빙 파일을 다시 읽지 않고 이것을 쓴다. */
+    @GetMapping("/internal/reviews/{id}/product-evidence")
+    public Map<String, Object> productEvidence(
+            @PathVariable String id, @RequestParam int versionNo, @RequestHeader("X-Run-Token") String token) {
+        authorizeRun(id, versionNo, token);
+        requireActiveRun(id, versionNo);
+        return Map.of("documents", productEvidence.forRun(id));
     }
 
     /**
