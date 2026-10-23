@@ -294,4 +294,8 @@ V21은 `app.product_evidence`를 추가한다. 시험 성적서 같은 증빙 �
 `report_products`는 보고서가 다루는 제품별 쪽 범위와 결과, `product_match`는 등록한 제품에 해당하는 항목이다.
 같은 기관의 같은 코드인데 해시가 다르면 개정본으로 보고 예전 행은 `is_current=false`로 남기며 새 행의 `supersedes`와 `change_note`로 잇는다.
 `status`는 reading, done, failed. 읽는 중인 행이 있으면 그 제품의 검토는 접수되지 않는다(409 `PRODUCT_EVIDENCE_READING`).
-10분 넘게 reading인 행은 서버가 멈췄던 것으로 보고 1분마다 failed `READ_INTERRUPTED`로 닫는다.
+증빙 읽기는 검토와 같은 방식으로 큐를 거친다(V22 `app.evidence_jobs`가 outbox, RabbitMQ `evidence.read`가 알림, 실패 큐 `evidence.read.dead`).
+검토 큐와 섞이지 않게 따로 두고 소비자는 하나다(PaddleOCR가 한 번에 한 쪽씩 돈다). Agent가 5xx나 시간 초과를 주면 최대 3번 시도하고
+(10초, 60초 뒤), 잘못된 파일(4xx)은 다시 시도하지 않고 그 이유를 `failure_code`로 남긴다. 소비자가 죽어 7분 넘게 running인 작업은 되살리고,
+시도를 다 썼으면 failed `READ_INTERRUPTED`로 닫는다. 큐를 끈 실행(`REVIEW_QUEUE_ENABLED=false`)에서는 서버 스레드 하나가 읽고
+10분 넘게 reading인 행을 1분마다 닫는다.

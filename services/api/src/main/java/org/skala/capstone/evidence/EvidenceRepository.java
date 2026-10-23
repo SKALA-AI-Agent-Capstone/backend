@@ -153,6 +153,17 @@ public class EvidenceRepository {
                         Boolean.class, tenant, product));
     }
 
+    /** 증빙이 속한 기업과 제품, 현재 상태. 큐 소비자는 id만 받으므로 여기서 찾는다. 지워졌으면 빈 값이다. */
+    public Optional<Map<String, Object>> owner(String id) {
+        return jdbc
+                .queryForList(
+                        "SELECT tenant_id::text AS tenant, product_id::text AS product, status FROM app.product_evidence"
+                                + " WHERE id = CAST(? AS uuid)",
+                        id)
+                .stream()
+                .findFirst();
+    }
+
     public Optional<String> productName(String tenant, String product) {
         return jdbc
                 .queryForList("SELECT name FROM app.products WHERE tenant_id = CAST(? AS uuid) AND id = CAST(? AS uuid)",

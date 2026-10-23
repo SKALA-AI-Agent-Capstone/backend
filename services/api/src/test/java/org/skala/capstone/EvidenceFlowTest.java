@@ -54,6 +54,7 @@ class EvidenceFlowTest {
     @Autowired MockMvc mvc;
     @Autowired JdbcTemplate jdbc;
     @Autowired ObjectMapper json;
+    @Autowired org.skala.capstone.evidence.EvidenceJobRepository jobs;
     @MockitoBean AgentClient agent;
     @MockitoBean StringRedisTemplate redis;
 
@@ -387,5 +388,37 @@ class EvidenceFlowTest {
         } finally {
             release.countDown();
         }
+    }
+
+    @Test
+    void evidenceJobRowsFollowTheQueueLifecycleAndDisappearWithTheEvidence() throws Exception {
+        answer(parsed("ksrc", "HBSE-MGE-24032", "Version 1.0 · 2024-04"));
+        String product = product();
+        String id = read(upload(product, pdf("job")).andExpect(status().isAccepted())).path("id").asText();
+        waitFor(product, id, "done");
+        jobs.create(id);
+        assertThat(jobs.ready()).contains(id);
+        jobs.published(id);
+        assertThat(jobs.ready()).doesNotContain(id);
+        assertThat(jobs.claim(id)).hasSize(1).first().satisfies(row -> assertThat(((Number) row.get("attempts")).intValue()).isEqualTo(1));
+        assertThat(jobs.claim(id)).isEmpty();
+        // 다음 재시도 시각 전에는 나가지 않는다
+        jobs.retry(id, 3600, "IOException");
+        assertThat(jobs.ready()).doesNotContain(id);
+        jdbc.update("UPDATE app.evidence_jobs SET next_attempt_at = now() WHERE evidence_id = CAST(? AS uuid)", id);
+        assertThat(jobs.ready()).contains(id);
+        assertThat(((Number) jobs.claim(id).getFirst().get("attempts")).intValue()).isEqualTo(2);
+        // 소비자가 죽어 running으로 남으면 일정 시간 뒤 되살릴 수 있다
+        assertThat(jobs.stale()).isEmpty();
+        jdbc.update("UPDATE app.evidence_jobs SET updated_at = now() - interval '8 minutes' WHERE evidence_id = CAST(? AS uuid)", id);
+        assertThat(jobs.stale()).extracting(row -> row.get("id")).contains(id);
+        jobs.recover(id, "retry");
+        assertThat(jobs.ready()).contains(id);
+        // 다시 읽기는 같은 행을 처음 상태로 돌린다
+        jobs.done(id);
+        jobs.create(id);
+        assertThat(jdbc.queryForObject("SELECT attempts FROM app.evidence_jobs WHERE evidence_id = CAST(? AS uuid)", Integer.class, id)).isZero();
+        mvc.perform(delete("/api/v1/products/" + product + "/evidence/" + id).with(author())).andExpect(status().isOk());
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM app.evidence_jobs WHERE evidence_id = CAST(? AS uuid)", Integer.class, id)).isZero();
     }
 }

@@ -73,7 +73,7 @@ public class EvidenceService {
         } catch (DuplicateKeyException sameTime) {
             return known(tenant, productId, evidence.findByHash(tenant, productId, sha).orElseThrow());
         }
-        reader.submit(tenant, productId, id);
+        reader.submit(id);
         return new Upload(get(tenant, productId, id), false);
     }
 
@@ -84,7 +84,7 @@ public class EvidenceService {
         boolean stale = status.equals("failed")
                 || (status.equals("done") && current != null && !current.equals(row.get("reader_version")));
         if (stale && evidence.restart(tenant, id) > 0) {
-            reader.submit(tenant, product, id);
+            reader.submit(id);
             return new Upload(get(tenant, product, id), false);
         }
         return new Upload(view(row), true);
@@ -97,7 +97,7 @@ public class EvidenceService {
         if (evidence.restart(tenant, uuid(id)) == 0) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "EVIDENCE_ALREADY_READING");
         }
-        reader.submit(tenant, productId, uuid(id));
+        reader.submit(uuid(id));
         return get(tenant, productId, id);
     }
 
