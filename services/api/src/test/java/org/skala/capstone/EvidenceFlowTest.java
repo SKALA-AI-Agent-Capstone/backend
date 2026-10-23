@@ -77,14 +77,29 @@ class EvidenceFlowTest {
         jdbc.update("INSERT INTO app.users (id,tenant_id,email,name,password_hash,role,credit_balance) "
                 + "VALUES (CAST(? AS uuid),CAST(? AS uuid),'evidence-outsider@test','외부','x','author',1000) "
                 + "ON CONFLICT (id) DO UPDATE SET credit_balance=1000", OUTSIDER, OTHER_TENANT);
-        when(redis.opsForValue()).thenReturn(mock(ValueOperations.class));
-        when(agent.get("/internal/evidence/reader")).thenAnswer(call -> json.createObjectNode().put("readerVersion", readerVersion));
+        doReturn(mock(ValueOperations.class)).when(redis).opsForValue();
+        doAnswer(call -> json.createObjectNode().put("readerVersion", readerVersion)).when(agent).get("/internal/evidence/reader");
         ObjectNode review = json.createObjectNode();
         ObjectNode result = review.putObject("result");
         result.putArray("findings");
         result.putArray("visualFindings");
         result.putObject("pipelineStatus").put("text", "complete").put("visual", "complete");
-        when(agent.post(eq("/internal/runs"), any())).thenReturn(review);
+        doReturn(review).when(agent).post(eq("/internal/runs"), any());
+    }
+
+    /** 앞 테스트가 남긴 검토 실행과 증빙 읽기가 끝날 때까지 기다린다. 다음 테스트가 목을 바꾸는 사이에 그 스레드가 끼어들지 않게 한다. */
+    @org.junit.jupiter.api.AfterEach
+    void drain() throws Exception {
+        Instant deadline = Instant.now().plus(Duration.ofSeconds(20));
+        while (Instant.now().isBefore(deadline)) {
+            Integer busy = jdbc.queryForObject(
+                    "SELECT (SELECT count(*) FROM app.reviews WHERE tenant_id = CAST(? AS uuid)"
+                            + " AND document->'versions'->-1->>'status' IN ('queued', 'analyzing'))"
+                            + " + (SELECT count(*) FROM app.product_evidence WHERE tenant_id = CAST(? AS uuid) AND status = 'reading')",
+                    Integer.class, TENANT, TENANT);
+            if (busy == 0) return;
+            Thread.sleep(50);
+        }
     }
 
     RequestPostProcessor author() {
@@ -130,7 +145,7 @@ class EvidenceFlowTest {
     }
 
     void answer(ObjectNode result) throws Exception {
-        when(agent.post(eq("/internal/evidence/parse"), any(), any(Duration.class))).thenReturn(result);
+        doReturn(result).when(agent).post(eq("/internal/evidence/parse"), any(), any(Duration.class));
     }
 
     String waitFor(String product, String id, String... wanted) throws Exception {
@@ -227,10 +242,10 @@ class EvidenceFlowTest {
     void reviewsOfAProductAreBlockedWhileItsEvidenceIsBeingRead() throws Exception {
         CountDownLatch release = new CountDownLatch(1);
         ObjectNode result = parsed("ksrc", "HBSE-MGE-24032", "Version 1.0 · 2024-04");
-        when(agent.post(eq("/internal/evidence/parse"), any(), any(Duration.class))).thenAnswer(call -> {
+        doAnswer(call -> {
             release.await(20, TimeUnit.SECONDS);
             return result;
-        });
+        }).when(agent).post(eq("/internal/evidence/parse"), any(), any(Duration.class));
         String product = product();
         String id = read(upload(product, pdf("slow")).andExpect(status().isAccepted())).path("id").asText();
         try {
@@ -255,8 +270,8 @@ class EvidenceFlowTest {
 
     @Test
     void failedReadingShowsItsCodeDoesNotBlockReviewsAndCanBeReread() throws Exception {
-        when(agent.post(eq("/internal/evidence/parse"), any(), any(Duration.class)))
-                .thenThrow(new AgentClient.AgentFailure(422, "EVIDENCE_PAGE_LIMIT"));
+        doThrow(new AgentClient.AgentFailure(422, "EVIDENCE_PAGE_LIMIT"))
+                .when(agent).post(eq("/internal/evidence/parse"), any(), any(Duration.class));
         String product = product();
         String id = read(upload(product, pdf("big")).andExpect(status().isAccepted())).path("id").asText();
         assertThat(waitFor(product, id, "failed")).isEqualTo("failed");
@@ -317,13 +332,13 @@ class EvidenceFlowTest {
     /** 검토를 접수해 Agent 호출을 붙잡아 두고, 그 호출이 받은 요청(run 토큰 포함)을 돌려준다. */
     JsonNode holdReview(String product, CountDownLatch release) throws Exception {
         AtomicReference<JsonNode> sent = new AtomicReference<>();
-        when(agent.post(eq("/internal/runs"), any())).thenAnswer(call -> {
+        doAnswer(call -> {
             sent.set(call.getArgument(1));
             release.await(20, TimeUnit.SECONDS);
             ObjectNode review = json.createObjectNode();
             review.putObject("result").putArray("findings");
             return review;
-        });
+        }).when(agent).post(eq("/internal/runs"), any());
         byte[] png = {(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3, 4};
         mvc.perform(multipart("/api/v1/reviews").file(new MockMultipartFile("files", "ad.png", "image/png", png))
                 .param("metadata", "{\"productId\":\"" + product + "\",\"product\":{\"name\":\"x\"}}").with(author()))
