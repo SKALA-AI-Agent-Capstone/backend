@@ -369,7 +369,8 @@ POST /api/v1/reviews/{reviewId}/violations/{violationId}/rewrite-requests `{"ret
 Agent 모델 키가 없으면 503 `REWRITE_MODEL_NOT_CONFIGURED`, Agent 연결 실패는 503 `AGENT_UNAVAILABLE`, 생성 실패는 502 `REWRITE_FAILED`이며 이때는 저장하지 않는다.
 
 검토 전체 결정 API와 결정 후 Agent 재개 작업(app.review_jobs kind=resume, /internal/runs/resume 호출)은 2026-10-22에 없앴다.
-V15가 끝나지 않은 재개 작업을 `failed`(`REVIEW_APPROVAL_REMOVED`)로 닫았고, 브로커에 남은 재개 메시지는 실행하지 않고 DLQ로 보낸다.
+V15가 끝나지 않은 재개 작업을 `failed`(`REVIEW_APPROVAL_REMOVED`)로 닫았고, V24가 그 행과 kind 컬럼, 검토 단위 승인 컬럼(reviews.hitl_*)을 지웠다.
+브로커에 남은 재개 메시지는 실행하지 않고 DLQ로 보낸다.
 Agent 그래프의 승인 대기(interrupt)와 /internal/runs/resume은 ai_agent에 남아 있지만 Backend는 더 이상 부르지 않는다. 승인 노드 뒤 report 노드는 하는 일이 없어 기능 영향은 없다.
 
 Agent 내부 POST /internal/rewrites: 입력 contracts/mvp-agent-rewrite.input.schema.json(reviewId, tenantId, phrase, reason, claimType, previousRewrites, retryNote),

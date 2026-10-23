@@ -784,12 +784,15 @@ class ViolationFlowTest {
                 .isZero();
         verify(agent, after(300).never()).post(eq("/internal/runs/resume"), any(), any());
         verify(agent, never()).post(eq("/internal/runs/resume"), any());
+        // 검토 단위 승인 컬럼과 재개 작업 종류는 V24에서 지웠다.
         assertThat(
                         jdbc.queryForObject(
-                                "SELECT hitl_status FROM app.reviews WHERE id=CAST(? AS uuid)",
-                                String.class,
-                                clean))
-                .isEqualTo("pending");
+                                "SELECT count(*) FROM information_schema.columns WHERE table_schema='app'"
+                                    + " AND ((table_name='reviews' AND column_name IN"
+                                    + " ('hitl_status','hitl_comment','decided_by','decided_at'))"
+                                    + " OR (table_name='review_jobs' AND column_name='kind'))",
+                                Integer.class))
+                .isZero();
         JsonNode body =
                 read(
                         mvc.perform(get("/api/v1/reviews/" + clean).with(as(AUTHOR)))
