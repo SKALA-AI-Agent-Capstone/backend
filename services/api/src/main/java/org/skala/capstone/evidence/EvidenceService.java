@@ -147,6 +147,8 @@ public class EvidenceService {
             node.set("codes", tree(row.get("codes")));
             node.set("unreadPages", tree(row.get("unread_pages")));
             node.set("productPages", match.path("pages"));
+            // 이 제품의 쪽 중 OCR과 비전 모델이 숫자를 다르게 읽은 쪽. 그 쪽의 수치는 사람이 원본과 맞춰 봐야 한다.
+            node.set("checkPages", match.path("checkPages").isArray() ? match.path("checkPages") : json.createArrayNode());
             node.set("results", match.path("results"));
             out.add(node);
         }
@@ -191,6 +193,7 @@ public class EvidenceService {
                 .put("name", String.valueOf(row.get("issuer_name")));
         node.set("codes", tree(row.get("codes")));
         node.set("unreadPages", tree(row.get("unread_pages")));
+        node.set("checkPages", tree(row.get("check_pages")));
         node.set("products", tree(row.get("report_products")));
         node.set("productMatch", tree(row.get("product_match")));
         node.set("warnings", tree(row.get("warnings")));
