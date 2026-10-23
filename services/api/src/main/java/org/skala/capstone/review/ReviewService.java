@@ -9,6 +9,8 @@ import java.time.Instant;
 import java.util.*;
 import org.skala.capstone.auth.UserRepository;
 import org.skala.capstone.billing.CreditLedgerService;
+import org.skala.capstone.product.ProductRepository;
+import org.skala.capstone.product.ProductService;
 import org.skala.capstone.review.model.ReviewDocument;
 import org.skala.capstone.review.model.ReviewStatus;
 import org.skala.capstone.review.model.ReviewSubmission;
@@ -30,12 +32,15 @@ public class ReviewService {
     private final JobRepository jobs;
     private final ReviewRunner runner;
     private final CreditLedgerService credits;
+    private final ProductService productService;
+    private final ProductRepository products;
     private final ObjectMapper json;
     private final TransactionTemplate tx;
     private final boolean queueEnabled;
 
     public ReviewService(ReviewRepository store, ReviewAssetService assets, RunTokenRepository tokens,
-            UserRepository users, JobRepository jobs, ReviewRunner runner, CreditLedgerService credits, ObjectMapper json,
+            UserRepository users, JobRepository jobs, ReviewRunner runner, CreditLedgerService credits,
+            ProductService productService, ProductRepository products, ObjectMapper json,
             TransactionTemplate tx, @Value("${capstone.review.queue-enabled:false}") boolean queueEnabled) {
         this.store = store;
         this.assets = assets;
@@ -44,6 +49,8 @@ public class ReviewService {
         this.jobs = jobs;
         this.runner = runner;
         this.credits = credits;
+        this.productService = productService;
+        this.products = products;
         this.json = json;
         this.tx = tx;
         this.queueEnabled = queueEnabled;
@@ -66,7 +73,8 @@ public class ReviewService {
         } catch (Exception invalid) {
             throw error(HttpStatus.BAD_REQUEST, "INVALID_METADATA");
         }
-        if (meta.path("product").path("name").asText("").isBlank()) {
+        // 제품 화면에서 접수하면 productId를, 예전 화면은 제품 이름만 보낸다
+        if (meta.path("productId").asText("").isBlank() && meta.path("product").path("name").asText("").isBlank()) {
             throw error(HttpStatus.BAD_REQUEST, "PRODUCT_NAME_REQUIRED");
         }
         List<MultipartFile> all = new ArrayList<>(files);
@@ -100,12 +108,14 @@ public class ReviewService {
         String tenant = jwt.getClaimAsString("tenantId"), id = UUID.randomUUID().toString();
         int no = 1;
         ObjectNode meta = submission.metadata();
+        String productId = product(tenant, jwt.getSubject(), meta);
         String now = Instant.now().toString();
         ObjectNode doc = json.createObjectNode().put("id", id).put("tenantId", tenant).put("authorId", jwt.getSubject())
             .put("createdAt", now).put("updatedAt", now).put("authorName", users.name(jwt.getSubject()))
+            .put("productId", productId)
             .put("productName", meta.path("product").path("name").asText()).putNull("campaign");
         doc.putArray("versions");
-        store.create(id, tenant, jwt.getSubject(), doc);
+        store.create(id, tenant, jwt.getSubject(), productId, doc);
         credits.reserve(tenant, jwt.getSubject(), id, no);
         try {
             ArrayNode advertisements = json.createArrayNode(), evidence = json.createArrayNode(), descriptors = json.createArrayNode();
@@ -145,6 +155,25 @@ public class ReviewService {
         } catch (Exception unavailable) {
             throw error(HttpStatus.BAD_GATEWAY, "UPLOAD_STORAGE_FAILED");
         }
+    }
+
+    /**
+     * 검토가 속할 제품을 정하고 id를 돌려준다. productId가 오면 이 기업의 제품인지 확인하고, 없으면 제품 이름으로 찾거나 만든다.
+     * 어느 쪽이든 metadata.product.name을 제품의 현재 이름으로 맞춘다(AI에 넘기고 productName으로 남는 값).
+     */
+    private String product(String tenant, String user, ObjectNode meta) {
+        String requested = meta.path("productId").asText("");
+        String name, id;
+        if (!requested.isBlank()) {
+            name = productService.requireName(tenant, requested);
+            id = UUID.fromString(requested).toString();
+        } else {
+            name = ProductService.name(meta.path("product").path("name").asText());
+            id = products.findOrCreate(tenant, name, user);
+        }
+        ObjectNode product = meta.path("product") instanceof ObjectNode node ? node : meta.putObject("product");
+        product.put("name", name);
+        return id;
     }
 
     public Map<String, Boolean> delete(Jwt jwt, String id) {

@@ -135,6 +135,8 @@ erDiagram
     TENANTS ||--o{ USERS : contains
     USERS ||--o{ SESSIONS : authenticates
     TENANTS ||--o{ REVIEWS : owns
+    TENANTS ||--o{ PRODUCTS : owns
+    PRODUCTS ||--o{ REVIEWS : groups
     USERS ||--o{ REVIEWS : authors
     REVIEWS ||--o{ REVIEW_ASSETS : describes
     REVIEWS ||--o{ REVIEW_RUNS : scopes
@@ -160,10 +162,19 @@ erDiagram
       uuid user_id FK
       timestamptz expires_at
     }
+    PRODUCTS {
+      uuid id PK
+      uuid tenant_id FK
+      text name
+      text type
+      bytea image
+      bytea image_thumbnail
+    }
     REVIEWS {
       uuid id PK
       uuid tenant_id FK
       uuid author_id FK
+      uuid product_id FK
       jsonb document
       text hitl_status
       uuid decided_by FK
@@ -226,7 +237,7 @@ erDiagram
 | --- | --- | --- |
 | tenant, app_user | app.tenants, app.users | writer는 Backend 내부 author와 화면에서 매핑 |
 | refresh_token, password_reset_token | app.sessions(로그인 세션)와 app.refresh_tokens(해시, 회전과 재사용 감지), 15분 access JWT | 비밀번호 재설정, failed_login_count와 잠금은 미구현 |
-| product, review와 parent_review_id | app.reviews.document의 product와 versions[] | 제품과 버전의 별도 테이블 정규화 및 parent_review_id 전환 |
+| product, review와 parent_review_id | V18의 app.products와 app.reviews.product_id(2026-10-22). 버전은 여전히 app.reviews.document의 versions[] | 제품 증빙과 증빙 요약 저장, 버전 테이블 정규화. 광고를 고치면 새 검토로 등록하므로 parent_review_id는 쓰지 않을 수 있다 |
 | ad_image, evidence_file | app.review_assets, Redis 임시 원본 | 광고와 증빙 메타데이터를 별도 테이블로 나누는 작업 |
 | violation, 문구별 HITL과 리라이트 이력 | V4의 app.violations, app.violation_rewrites와 reviews.hitl_status 등. 재검토 버전 구조 없이 review_id만 참조 | feat/violation-tables에서 저장 경로 전환. Agent 결과 저장 시 findings를 행으로 만들고 문구별 결정, 다시쓰기 요청, 전체 결정이 이 테이블을 원본으로 쓴다. V5가 기존 JSONB 결과를 옮김. 사람 직접 수정(rewritten_manual)은 Agent `/internal/rewrites/verify` 재검증을 통과해야 저장. 프론트 화면 연동 완료(ViolationCard.vue/RevisionOptions.vue) |
 | evidence_structured, violation 근거, claim_match_result, approval_verify_result, patent 결과 | 버전별 result JSONB에 가능한 출력 보존 | 의미 대조와 검색 미구현, 정규화와 근거 스냅샷 FK 설계 |
@@ -265,3 +276,11 @@ NFR-17~20도 재확인했다. 현재 비밀번호 해시와 세션 무효화, AP
 V17은 `app.review_assets.thumbnail bytea`를 추가한다. 목록 화면 썸네일(너비 160px, 높이 240px까지의 JPEG)을
 첫 요청 때 원본으로 만들어 저장하며, 만들 수 없는 원본은 비워 둔다. 기존 행은 바꾸지 않고 따로 일괄 변환하지 않는다.
 썸네일은 원본과 같은 행에 있어 검토를 지우면 함께 지워진다.
+
+## 2026-10-22 제품 단위 검토
+
+V18은 `app.products`(기업, 이름, 유형 general 또는 functional, 대표 이미지 원본과 형식, 이미지 해시, 썸네일, 만든 사용자, 생성과 수정 시각)와
+`app.reviews.product_id`를 추가한다. 이름은 기업 안에서 겹치지 않는다(UNIQUE tenant_id, name). 대표 이미지 썸네일은 등록할 때 만든다.
+V19는 기존 검토를 같은 기업의 제품 이름(앞뒤 공백 제외, 200자까지)으로 묶어 제품을 만들고 연결한 뒤 `product_id`를 NOT NULL로 바꾼다.
+이름이 빈 검토는 '이름 없는 제품'으로 묶고, 유형은 알 수 없어 general로 둔다. 검토 문서에는 productId를 넣고 updated_at은 바꾸지 않는다.
+제품의 대표 이미지는 제품 행에 있고, 광고 원본은 그대로 `review_assets`에 있다. 제품은 검토가 0건일 때만 지울 수 있어(외래 키도 막는다) 제품 없는 검토는 생기지 않는다.

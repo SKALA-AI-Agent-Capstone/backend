@@ -129,7 +129,7 @@ class ReviewResponseShapeTest {
         assertThat(item).isNotNull();
 
         assertThat(keys(item)).containsExactly(
-            "authorId", "authorName", "campaign", "createdAt", "hitl", "id", "productName", "tenantId", "updatedAt", "versions");
+            "authorId", "authorName", "campaign", "createdAt", "hitl", "id", "productId", "productName", "tenantId", "updatedAt", "versions");
         assertThat(keys(item.path("versions").get(0))).containsExactlyElementsOf(VERSION_FIELDS);
         // 목록은 결정 진행률(hitl)만 싣고 violations는 싣지 않는다
         assertThat(keys(item.path("hitl"))).containsExactlyElementsOf(HITL_FIELDS);
@@ -150,7 +150,7 @@ class ReviewResponseShapeTest {
 
         // 전체 목록과 같은 필드에 summary 표시만 더한다
         assertThat(keys(item)).containsExactly(
-            "authorId", "authorName", "campaign", "createdAt", "hitl", "id", "productName", "summary", "tenantId", "updatedAt", "versions");
+            "authorId", "authorName", "campaign", "createdAt", "hitl", "id", "productId", "productName", "summary", "tenantId", "updatedAt", "versions");
         assertThat(item.path("summary").asBoolean()).isTrue();
         JsonNode version = item.path("versions").get(0);
         assertThat(keys(version)).containsExactlyElementsOf(VERSION_FIELDS);
@@ -175,7 +175,7 @@ class ReviewResponseShapeTest {
         JsonNode version = detail.path("versions").get(0);
 
         assertThat(keys(detail)).containsExactly(
-            "authorId", "authorName", "campaign", "createdAt", "hitl", "id", "productName", "tenantId", "updatedAt", "versions", "violations");
+            "authorId", "authorName", "campaign", "createdAt", "hitl", "id", "productId", "productName", "tenantId", "updatedAt", "versions", "violations");
         assertThat(keys(version)).containsExactlyElementsOf(VERSION_FIELDS);
         assertThat(version.path("status").asText()).isEqualTo("done");
         assertThat(keys(version.path("input"))).containsExactly("copy", "evidence", "files", "media", "product");

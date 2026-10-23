@@ -35,11 +35,17 @@ public class ReviewViewAssembler {
     }
 
     public List<ObjectNode> list(String tenant) {
+        return list(tenant, null);
+    }
+
+    /** productId가 있으면 그 제품의 검토만 싣는다. */
+    public List<ObjectNode> list(String tenant, String productId) {
         Map<String, ObjectNode> progress = new HashMap<>();
         for (var row : violations.progress(tenant)) {
             progress.put(row.reviewId(), hitlNode(row.total(), row.undecided()));
         }
-        List<ObjectNode> docs = reviews.list(tenant);
+        List<ObjectNode> docs =
+                productId == null ? reviews.list(tenant) : reviews.listByProduct(tenant, productId);
         for (ObjectNode doc : docs) {
             ObjectNode hitl = progress.get(doc.path("id").asText());
             if (hitl != null) doc.set("hitl", hitl);
@@ -53,7 +59,11 @@ public class ReviewViewAssembler {
      * 프론트가 상세 데이터를 요약으로 덮어쓰지 않도록 summary=true를 붙인다.
      */
     public List<ObjectNode> summaries(String tenant) {
-        List<ObjectNode> docs = list(tenant);
+        return summaries(tenant, null);
+    }
+
+    public List<ObjectNode> summaries(String tenant, String productId) {
+        List<ObjectNode> docs = list(tenant, productId);
         for (ObjectNode doc : docs) {
             doc.put("summary", true);
             for (JsonNode version : doc.withArray("versions")) {
