@@ -446,7 +446,7 @@ private이라 CDN 같은 공용 캐시에는 남지 않지만, 같은 브라우�
 | GET /api/v1/products/{id}/reviews | 이 제품의 검토. 형식, 순서, 한도와 `view=summary`는 GET /api/v1/reviews와 같다 |
 | GET /api/v1/products/{id}/evidence | 이 제품의 증빙. 현재 판이 먼저. 파일 바이트와 쪽별 글자는 싣지 않는다 |
 | POST /api/v1/products/{id}/evidence | multipart `file`(PDF, PNG, JPEG, WebP, 25MiB까지)과 선택 `docType`. 새 파일은 202(읽는 중), 이미 읽은 같은 파일은 200 `reused: true` |
-| GET /api/v1/products/{id}/evidence/{evidenceId} | 증빙 하나. status, issuer, codes, version, 제품별 쪽 범위(products, productMatch), unreadPages, changeNote |
+| GET /api/v1/products/{id}/evidence/{evidenceId} | 증빙 하나. status, issuer, codes, version, 제품별 쪽 범위(products, productMatch), unreadPages, checkPages(OCR과 비전 모델이 숫자를 다르게 읽은 쪽, 이 제품의 쪽은 productMatch.checkPages), changeNote |
 | POST /api/v1/products/{id}/evidence/{evidenceId}/reread | 같은 파일을 지금 판독기로 다시 읽는다. 202, 읽는 중이면 409 `EVIDENCE_ALREADY_READING` |
 | DELETE /api/v1/products/{id}/evidence/{evidenceId} | 증빙과 읽은 결과를 지운다 |
 | GET /internal/evidence/{id}/file | Agent가 읽을 파일. 내부 토큰만 |

@@ -421,4 +421,31 @@ class EvidenceFlowTest {
         mvc.perform(delete("/api/v1/products/" + product + "/evidence/" + id).with(author())).andExpect(status().isOk());
         assertThat(jdbc.queryForObject("SELECT count(*) FROM app.evidence_jobs WHERE evidence_id = CAST(? AS uuid)", Integer.class, id)).isZero();
     }
+
+    @Test
+    void pagesWhereTheTwoReadersDisagreeAreStoredShownAndPassedToReviews() throws Exception {
+        ObjectNode result = threePages(true);
+        result.putArray("checkPages").add(2).add(3);
+        ((ObjectNode) result.path("productMatch")).putArray("checkPages").add(2);
+        answer(result);
+        String product = product();
+        String id = read(upload(product, pdf("check")).andExpect(status().isAccepted())).path("id").asText();
+        assertThat(waitFor(product, id, "done")).isEqualTo("done");
+        JsonNode view = read(mvc.perform(get("/api/v1/products/" + product + "/evidence/" + id).with(author())));
+        assertThat(view.path("checkPages").toString()).isEqualTo("[2,3]");
+        assertThat(view.path("productMatch").path("checkPages").toString()).isEqualTo("[2]");
+        CountDownLatch release = new CountDownLatch(1);
+        try {
+            JsonNode doc = storedEvidence(holdReview(product, release)).path("documents").path(0);
+            // 이 제품의 쪽 중 숫자가 의심되는 쪽만 검토에 알린다(3쪽은 이 제품 쪽이 아니다)
+            assertThat(doc.path("checkPages").toString()).isEqualTo("[2]");
+        } finally {
+            release.countDown();
+        }
+        // 이 필드가 없는 예전 Agent 응답도 빈 목록으로 저장된다
+        answer(threePages(true));
+        String older = read(upload(product, pdf("no check field")).andExpect(status().isAccepted())).path("id").asText();
+        waitFor(product, older, "done");
+        assertThat(read(mvc.perform(get("/api/v1/products/" + product + "/evidence/" + older).with(author()))).path("checkPages")).isEmpty();
+    }
 }
