@@ -238,6 +238,69 @@ class EvidenceFlowTest {
         assertThat(read(mvc.perform(get("/api/v1/products/" + product + "/evidence/" + second).with(author()))).path("isCurrent").asBoolean()).isTrue();
     }
 
+    /** 프로브엠 보고서: 연구번호(없으면 null)와 시료번호, 표지의 시험 제목. */
+    ObjectNode probem(String study, String sample, String test, String version) {
+        ObjectNode out = parsed("probem", "unused", version);
+        out.putObject("issuer").put("key", "probem").put("name", "프로브엠 피부임상연구센터");
+        var codes = out.putArray("codes");
+        if (study != null) codes.addObject().put("label", "연구번호").put("value", study).put("pages", 30).put("status", "confirmed");
+        codes.addObject().put("label", "시료번호").put("value", sample).put("pages", 3).put("status", "confirmed");
+        out.putArray("pages").addObject().put("n", 1).put("kind", "text").put("method", "text_layer").put("chars", 120)
+                .put("text", study + "\n인체적용시험 결과보고서\n\"투집 포어본드\"의\n" + test + "에 대한\n인체적용시험 결과보고서");
+        return out;
+    }
+
+    String readAs(String product, ObjectNode result, String body) throws Exception {
+        answer(result);
+        String id = read(upload(product, pdf(body)).andExpect(status().isAccepted())).path("id").asText();
+        assertThat(waitFor(product, id, "done")).isEqualTo("done");
+        return id;
+    }
+
+    JsonNode evidence(String product, String id) throws Exception {
+        return read(mvc.perform(get("/api/v1/products/" + product + "/evidence/" + id).with(author())));
+    }
+
+    @Test
+    void reportsOnTheSameSampleButDifferentStudiesAreBothKept() throws Exception {
+        String product = product();
+        String irritation = readAs(product,
+                probem("PM-25J17-SA017", "PM-25SA-018", "피부첩포에 의한 피부 일차자극 평가", "개정 이력 1건 · 2025-01-17"), "irritation");
+        String lifting = readAs(product,
+                probem("PM-25J22-EF031", "PM-25SA-018", "모공부위 리프팅 개선 평가", "2025-02-11"), "lifting");
+        // 연구번호를 읽지 못한 보고서도 시료번호만으로 다른 보고서를 내리지 않는다
+        String unnumbered = readAs(product, probem(null, "PM-25SA-018", "모공 면적 개선 평가", "2025-03"), "unnumbered");
+
+        for (String id : java.util.List.of(irritation, lifting, unnumbered)) {
+            JsonNode row = evidence(product, id);
+            assertThat(row.path("isCurrent").asBoolean()).as(id).isTrue();
+            assertThat(row.path("supersedes").isNull()).as(id).isTrue();
+        }
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM app.product_evidence WHERE product_id = CAST(? AS uuid) AND is_current",
+                Integer.class, product)).isEqualTo(3);
+    }
+
+    @Test
+    void theSameStudyCodeOnADifferentTestIsNotARevisionButTheSameTestIs() throws Exception {
+        String product = product();
+        String first = readAs(product,
+                probem("PM-25J17-SA017", "PM-25SA-018", "피부첩포에 의한 피부 일차자극 평가", "개정 이력 1건 · 2025-01-17"), "v1");
+        // 같은 연구번호라도 표지의 시험 제목이 다르면 다른 시험으로 보고 둘 다 남긴다
+        String other = readAs(product,
+                probem("PM-25J17-SA017", "PM-25SA-018", "모공부위 리프팅 개선 평가", "2025-02-11"), "other test");
+        assertThat(evidence(product, first).path("isCurrent").asBoolean()).isTrue();
+        assertThat(evidence(product, other).path("supersedes").isNull()).isTrue();
+
+        // 같은 연구번호, 같은 시험 제목의 다른 파일은 개정본이다
+        String revised = readAs(product,
+                probem("PM-25J17-SA017", "PM-25SA-018", "피부첩포에 의한 피부 일차자극 평가", "개정 이력 2건 · 2025-02-03"), "v2");
+        Instant deadline = Instant.now().plus(Duration.ofSeconds(5));
+        while (evidence(product, revised).path("supersedes").isNull() && Instant.now().isBefore(deadline)) Thread.sleep(50);
+        assertThat(evidence(product, revised).path("supersedes").asText()).isEqualTo(first);
+        assertThat(evidence(product, first).path("isCurrent").asBoolean()).isFalse();
+        assertThat(evidence(product, other).path("isCurrent").asBoolean()).isTrue();
+    }
+
     @Test
     void reviewsOfAProductAreBlockedWhileItsEvidenceIsBeingRead() throws Exception {
         CountDownLatch release = new CountDownLatch(1);

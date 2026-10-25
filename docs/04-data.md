@@ -291,7 +291,9 @@ V21은 `app.product_evidence`를 추가한다. 시험 성적서 같은 증빙 �
 같은 제품 안에서 같은 해시는 한 행이다(UNIQUE tenant_id, product_id, file_sha256). 기관마다 코드 형식과 라벨이 다를 수 있어 코드는 jsonb 목록으로 둔다.
 `reader_version`은 읽은 판독기의 버전이며, Agent가 지금 쓰는 버전과 다르면 같은 파일도 다시 읽는다. `pages`는 쪽별 읽은 방법과 글자(상세 API에는 싣지 않는다),
 `report_products`는 보고서가 다루는 제품별 쪽 범위와 결과, `product_match`는 등록한 제품에 해당하는 항목이다.
-같은 기관의 같은 코드인데 해시가 다르면 개정본으로 보고 예전 행은 `is_current=false`로 남기며 새 행의 `supersedes`와 `change_note`로 잇는다.
+같은 기관의 같은 연구 코드(연구번호, 연구 코드, 시험번호, 보고서 번호)인데 해시가 다르고 표지의 시험 제목이 다르지 않으면 개정본으로 보고, 예전 행은 `is_current=false`로 남기며 새 행의 `supersedes`와 `change_note`로 잇는다.
+시료번호와 관리번호는 시험 대상이나 문서 관리만 가리켜 같은 시료로 한 다른 시험에도 같으므로 개정본의 근거가 되지 않는다. 연구 코드를 읽지 못한 보고서는 둘 다 현재 판으로 남긴다.
+V25는 시료번호만으로 내려간 예전 행을 되돌린다.
 `status`는 reading, done, failed. 읽는 중인 행이 있으면 그 제품의 검토는 접수되지 않는다(409 `PRODUCT_EVIDENCE_READING`).
 스캔 쪽은 OCR(PaddleOCR)과 별개로 비전 모델이 같은 쪽을 옮겨 적고, 두 결과의 숫자(소수와 %)를 비교한다(V23 `check_pages`). 다르면 그 쪽 번호를 남기고,
 등록한 제품의 쪽이면 `product_match.checkPages`에도 남는다. 비전 모델의 글자는 쪽의 본문으로 쓰지 않는다(없는 숫자를 그럴듯하게 지어낼 수 있다).
