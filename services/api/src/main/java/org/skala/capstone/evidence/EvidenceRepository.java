@@ -100,11 +100,11 @@ public class EvidenceRepository {
                 minutes);
     }
 
-    /** 같은 제품에서 같은 기관·같은 코드로 이미 읽힌 다른 파일(현재 판). */
+    /** 같은 제품에서 같은 기관·같은 코드로 이미 읽힌 다른 파일(현재 판). cover는 첫 쪽의 글자로, 시험 제목을 비교하는 데 쓴다. */
     public List<Map<String, Object>> sameCode(String tenant, String product, String id, String issuerKey, String label,
             String code) {
         return jdbc.queryForList(
-                "SELECT id::text AS id, version_label, issued_on, file_name FROM app.product_evidence"
+                "SELECT id::text AS id, version_label, issued_on, file_name, pages->0->>'text' AS cover FROM app.product_evidence"
                         + " WHERE tenant_id = CAST(? AS uuid) AND product_id = CAST(? AS uuid) AND id <> CAST(? AS uuid)"
                         + " AND status = 'done' AND is_current AND issuer_key = ?"
                         + " AND codes @> CAST(? AS jsonb) ORDER BY created_at DESC",

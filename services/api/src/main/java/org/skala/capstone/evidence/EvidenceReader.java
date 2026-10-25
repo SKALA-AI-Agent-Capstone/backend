@@ -9,6 +9,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.skala.capstone.common.AgentClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -118,15 +120,39 @@ public class EvidenceReader implements AutoCloseable {
         return "EVIDENCE_READ_FAILED";
     }
 
-    /** 같은 기관의 같은 코드인데 파일이 다르면 개정본이다. 예전 행은 지우지 않고 현재 판에서만 내린다. */
+    /** 연구 하나를 가리키는 코드의 라벨(연구번호, 연구 코드, 시험번호, 보고서 번호). 시료번호와 관리번호는 시험 대상이나 문서 관리만 가리킨다. */
+    static final Pattern STUDY_CODE = Pattern.compile("연\\s*구\\s*(번\\s*호|코\\s*드)|시\\s*험\\s*번\\s*호|보\\s*고\\s*서\\s*번\\s*호|Report|Study",
+            Pattern.CASE_INSENSITIVE);
+    /** 표지의 시험 제목. '"투집 포어본드"의 피부첩포에 의한 피부 일차자극 평가에 대한 인체적용시험'에서 '피부첩포에의한피부일차자극평가'. */
+    static final Pattern STUDY_TITLE = Pattern.compile("[\"“”‘’']의([^\"“”‘’']{2,80}?)에대한(?:인체적용시험|시험|연구)");
+
+    static boolean studyCode(String label) {
+        return STUDY_CODE.matcher(label).find();
+    }
+
+    static String studyTitle(String cover) {
+        if (cover == null) return null;
+        Matcher found = STUDY_TITLE.matcher(cover.replaceAll("\\s+", ""));
+        return found.find() ? found.group(1) : null;
+    }
+
+    /**
+     * 같은 연구의 개정본일 때만 예전 판을 현재 판에서 내린다(지우지 않는다). 같은 기관이 같은 연구 코드를 붙였고, 두 표지의 시험 제목이 다르지 않아야 한다.
+     * 시료번호는 시험 대상만 가리켜 같은 시료로 한 다른 시험(피부 자극 시험과 모공 리프팅 시험)에도 같으므로 개정본의 근거가 되지 않는다.
+     * 연구 코드를 찾지 못한 보고서는 판단하지 않고 둘 다 현재 판으로 남긴다. 잘못 내리면 증빙이 분석에서 빠지고, 둘 다 남기면 중복일 뿐이다.
+     */
     private void markRevisions(String tenant, String product, String id, JsonNode result) {
         String issuer = result.path("issuer").path("key").asText("");
         if (issuer.isEmpty()) return;
+        String title = studyTitle(result.path("pages").path(0).path("text").asText(null));
         for (JsonNode code : result.path("codes")) {
             String status = code.path("status").asText();
             if (!status.equals("confirmed") && !status.equals("single_page")) continue;
             String label = code.path("label").asText(), value = code.path("value").asText();
+            if (!studyCode(label)) continue;
             for (var older : evidence.sameCode(tenant, product, id, issuer, label, value)) {
+                String before = studyTitle((String) older.get("cover"));
+                if (title != null && before != null && !title.equals(before)) continue;
                 evidence.supersede(older.get("id").toString(), id, note(value, older, result));
             }
             return;
